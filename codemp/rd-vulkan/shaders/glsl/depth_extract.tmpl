@@ -1,0 +1,49 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "global.h"
+
+#ifdef USE_MSAA
+    layout(set = 0, binding = 0) uniform sampler2DMS depth_texture;
+    layout(set = 1, binding = 0) uniform usampler2DMS stencil_texture;
+#else
+    layout(set = 0, binding = 0) uniform sampler2D depth_texture;
+    layout(set = 1, binding = 0) uniform usampler2D stencil_texture;
+#endif
+
+#define STENCIL_AO_MASK 0x80u   // VK_STENCIL_AO_MASK: character pixels (r_ssao_character)
+
+layout(location = 0) out vec2 out_depth;	// r: linear depth (0 = empty); g: r_charOccHair's alpha-tested character depth, 1e9 = none
+
+layout(push_constant) uniform PushConst
+{
+    vkExtractDepth_t push;
+};
+
+float viewZFromDepth( in float depth )
+{
+    float denom = -depth - push.projection.z;
+
+    if (abs(denom) < 1e-6)
+        return 0.0;
+
+    return push.projection.w / denom;
+}
+
+void main()
+{
+    ivec2 pixel = ivec2( gl_FragCoord.xy );
+    float depth = texelFetch( depth_texture, pixel, 0 ).r;
+
+    if ( depth >= 1.0 )
+    {
+        out_depth = vec2( 0.0, 1e9 );
+        return;
+    }
+
+    out_depth = vec2( -viewZFromDepth( depth ), 1e9 );
+
+    // character pixels carry a negative depth; SSAO reads abs() and keeps only r_ssao_character of its AO there
+    if ( push.pad0.x > 0.5 && ( texelFetch( stencil_texture, pixel, 0 ).r & STENCIL_AO_MASK ) != 0u )
+        out_depth.x = -out_depth.x;
+}

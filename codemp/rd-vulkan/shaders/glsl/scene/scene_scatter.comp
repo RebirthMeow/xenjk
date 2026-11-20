@@ -1,0 +1,56 @@
+#version 450
+// Render scenes (vk_scene.cpp): the visible lists counted, then placed (the count-then-scan cull). scene_cull.comp no
+// longer writes into a range per LOD sized for every instance of its meshes (16 views x 17 M entries on Watson, 1 GB):
+// each visible instance takes a pair in the slot's pool (its instance, its view and LOD's lead command, its slot in that
+// LOD), and the first instance of a LOD in a view lists the LOD as touched. Then, per view (pc.view; the views' commands
+// in an array indexed by that uniform):
+//   mode 0, allocate: one thread a touched LOD of the view: its range, as many entries as its count, taken from the
+//     slot's visible pool (one atomic on the pool's total), written as every one of its parts' commands' firstInstance;
+//   mode 1, scatter: one thread a pair of the view: its instance into its range at its slot.
+// The ranges stay contiguous per LOD (one instanced draw a part), in whatever order the atomics land: the eye's sort
+// (scene_sort.comp) still puts each range in instance order afterwards. A pair the pool had no room for was neither
+// counted nor listed (scene_cull.comp), so no command points past what was placed.
+//
+// The pool's header (vk_scene.cpp Scene_CullPoolReset): 0 pairs taken (past the capacity on overflow), 1 LODs touched,
+// 2 entries placed, 3 instances left out this frame; 4..6 mode 0's dispatch (groups, 1, 1), 8..10 mode 1's; 12 the
+// capacity in pairs; 14 the most pairs taken since the pool was made, 15 instances left out since then (read back by the host)
+
+layout(local_size_x = 64) in;
+
+struct Cmd { uint indexCount, instanceCount, firstIndex; int vertexOffset; uint firstInstance; };
+struct Lod { uint firstPart, numParts; float screen; uint resident; };
+
+const uint VIEWS = 8;	// SCENE_MAX_VIEWS
+layout(std430, set = 0, binding = 0) buffer Pool { uint hdr[16]; uint data[]; } pool;	// data: touched[cap], then pairs[cap] x 3
+layout(std430, set = 0, binding = 1) readonly buffer Lods { Lod lods[]; };
+layout(std430, set = 0, binding = 2) readonly buffer PartCmd { uint partCmd[]; };
+layout(std430, set = 0, binding = 3) buffer Cmds { Cmd cmds[]; } viewCmds[VIEWS];
+layout(std430, set = 0, binding = 4) writeonly buffer Visible { uint visible[]; };
+
+layout(push_constant) uniform Push {
+	uvec4 p;	// x: the view, y: the mode (0 allocate, 1 scatter)
+} pc;
+
+void main()
+{
+	const uint i = gl_GlobalInvocationID.x, v = pc.p.x, cap = pool.hdr[12];
+	if ( pc.p.y == 0u ) {
+		if ( i >= min( pool.hdr[1], cap ) )
+			return;
+		const uint e = pool.data[i];
+		if ( ( e >> 24u ) != v )
+			return;
+		const Lod L = lods[e & 0xffffffu];
+		const uint n = viewCmds[v].cmds[partCmd[L.firstPart]].instanceCount;
+		const uint first = atomicAdd( pool.hdr[2], n );
+		for ( uint p = 0u; p < L.numParts; p++ )
+			viewCmds[v].cmds[partCmd[L.firstPart + p]].firstInstance = first;
+	} else {
+		if ( i >= min( pool.hdr[0], cap ) )
+			return;
+		const uint b = cap + i * 3u, e = pool.data[b + 1u];
+		if ( ( e >> 24u ) != v )
+			return;
+		visible[viewCmds[v].cmds[e & 0xffffffu].firstInstance + pool.data[b + 2u]] = pool.data[b];
+	}
+}

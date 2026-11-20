@@ -1,0 +1,132 @@
+#version 450
+/*
+===========================================================================
+Copyright (C) 2026, xenjk contributors
+
+This file is part of xenjk, an OpenJK derivative.
+
+This program is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License version 2 as
+published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, see <http://www.gnu.org/licenses/>.
+===========================================================================
+*/
+// Garment cloth on the GPU: the instance's render vertices for this frame, three element-parallel stages:
+//   POS: the two latest step states (each in its step's pelvis frame) blended and placed in the bind space of the
+//        reference bone (K), where the Ghoul2 skinning shaders place them with that bone (weight 1);
+//   NRM: area-weighted vertex normals of the sim mesh (unit length, unsigned);
+//   OUT: the dynamic render vertices, each wrapped on three particles (weights, an offset along the interpolated
+//        normal, a normal sign; CLH_O_RSIM): position, normal, the bind tangent made orthogonal to the normal.
+// Pinned render vertices keep the glm's own bind data (written once at creation) and are skinned like the body.
+
+#include "cloth_layout.h"
+
+layout(local_size_x_id = 0) in;
+
+layout(set = 0, binding = 0, std430) coherent buffer InstF { float f[]; };
+layout(set = 0, binding = 3, std430) writeonly buffer RenderF { uint rv[]; };	// words of the packed vertex
+layout(set = 0, binding = 4, std430) readonly buffer TopoF { float tf[]; };
+layout(set = 0, binding = 5, std430) readonly buffer TopoU { uint tu[]; };
+layout(set = 1, binding = 1, std430) readonly buffer FrameU { uint cu[]; };
+
+layout(push_constant) uniform Push { uint rec; uint stage; uint sub; uint pad; } pc;
+
+#define DR_POS 20u
+#define DR_NRM 21u
+#define DR_OUT 22u
+
+vec3 ld(uint off, uint i) { uint j = off + i * 3u; return vec3(f[j], f[j + 1u], f[j + 2u]); }
+void st(uint off, uint i, vec3 v) { uint j = off + i * 3u; f[j] = v.x; f[j + 1u] = v.y; f[j + 2u] = v.z; }
+float C(uint k) { return uintBitsToFloat(cu[pc.rec + k]); }
+uint relOff(uint k) { return k == 2u ? tu[CLH_O_REL2] : k == 1u ? tu[CLH_O_REL1] : tu[CLH_O_REL0]; }
+
+void main() {
+	const uint gid = gl_GlobalInvocationID.x, gsz = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+	const uint N = tu[CLH_N];
+	const uint oD = tu[CLH_O_DPOS], oN = tu[CLH_O_DNRM];
+	if (pc.stage == DR_POS) {
+		const uint oA = relOff(cu[pc.rec + CLD_RELA]), oB = relOff(cu[pc.rec + CLD_RELB]), oZ = relOff(cu[pc.rec + CLD_RELZ]);
+		const float t = C(CLD_T), s = C(CLD_S);
+		const bool lead2 = cu[pc.rec + CLD_LEAD2] != 0u;
+		const vec4 k0 = vec4(C(CLD_K), C(CLD_K + 1u), C(CLD_K + 2u), C(CLD_K + 3u));
+		const vec4 k1 = vec4(C(CLD_K + 4u), C(CLD_K + 5u), C(CLD_K + 6u), C(CLD_K + 7u));
+		const vec4 k2 = vec4(C(CLD_K + 8u), C(CLD_K + 9u), C(CLD_K + 10u), C(CLD_K + 11u));
+		const uint nb = cu[pc.rec + CLD_NB];
+		const vec4 a0 = vec4(C(CLD_A), C(CLD_A + 1u), C(CLD_A + 2u), C(CLD_A + 3u));
+		const vec4 a1 = vec4(C(CLD_A + 4u), C(CLD_A + 5u), C(CLD_A + 6u), C(CLD_A + 7u));
+		const vec4 a2 = vec4(C(CLD_A + 8u), C(CLD_A + 9u), C(CLD_A + 10u), C(CLD_A + 11u));
+		const float iu = C(CLD_IU);
+		const uint oKin = tu[CLH_O_KIN], oX0 = tu[CLH_O_X0], oSS = tu[CLH_O_SKS], oSB = tu[CLH_O_SKB], oSW = tu[CLH_O_SKW];
+		for (uint i = gid; i < N; i += gsz) {
+			if (nb != 0u && tu[oKin + i] != 0u) {
+				// a pinned particle skinned with this frame's matrices (the CPU draw's Cloth_BuildDraw), not
+				// blended from the step states, so a render vertex wrapped on it sits on the body it is pinned to
+				const vec3 x = vec3(tf[oX0 + i * 3u], tf[oX0 + i * 3u + 1u], tf[oX0 + i * 3u + 2u]);
+				vec3 s = vec3(0.0);
+				for (uint k = tu[oSS + i]; k < tu[oSS + i + 1u]; k++) {
+					const uint m = pc.rec + CLD_MATS + tu[oSB + k] * 16u;
+					const float ww = tf[oSW + k];
+					s.x += ww * (x.x * uintBitsToFloat(cu[m]) + x.y * uintBitsToFloat(cu[m + 4u]) + x.z * uintBitsToFloat(cu[m + 8u]) + uintBitsToFloat(cu[m + 12u]));
+					s.y += ww * (x.x * uintBitsToFloat(cu[m + 1u]) + x.y * uintBitsToFloat(cu[m + 5u]) + x.z * uintBitsToFloat(cu[m + 9u]) + uintBitsToFloat(cu[m + 13u]));
+					s.z += ww * (x.x * uintBitsToFloat(cu[m + 2u]) + x.y * uintBitsToFloat(cu[m + 6u]) + x.z * uintBitsToFloat(cu[m + 10u]) + uintBitsToFloat(cu[m + 14u]));
+				}
+				const vec4 r = vec4(s * iu, 1.0);
+				st(oD, i, vec3(dot(a0, r), dot(a1, r), dot(a2, r)));
+				continue;
+			}
+			const vec3 a = ld(oA, i), b = ld(oB, i);
+			// lead 2: as the CPU draw, continuous at every step and still leading
+			const vec3 p = lead2 ? (1.0 - s) * (a + (1.0 + s) * (a - ld(oZ, i))) + s * (b + s * (b - a)) : a + t * (b - a);
+			const vec4 r = vec4(p, 1.0);
+			st(oD, i, vec3(dot(k0, r), dot(k1, r), dot(k2, r)));
+		}
+	} else if (pc.stage == DR_NRM) {
+		const uint oT = tu[CLH_O_TRI], oS = tu[CLH_O_PTS], oL = tu[CLH_O_PTL];
+		for (uint i = gid; i < N; i += gsz) {
+			vec3 n = vec3(0.0);
+			const uint q0 = tu[oS + i], q1 = tu[oS + i + 1u];
+			for (uint q = q0; q < q1; q++) {
+				const uint tri = tu[oL + q];
+				const vec3 p0 = ld(oD, tu[oT + tri * 3u]), p1 = ld(oD, tu[oT + tri * 3u + 1u]), p2 = ld(oD, tu[oT + tri * 3u + 2u]);
+				n += cross(p1 - p0, p2 - p0);
+			}
+			const float l = length(n);
+			st(oN, i, l > 0.0 ? n / l : vec3(0.0, 0.0, 1.0));
+		}
+	} else {
+		const uint RD = tu[CLH_RD], oRS = tu[CLH_O_RSIM], oRD = tu[CLH_O_RDYN], oTan = tu[CLH_O_RTAN];
+		for (uint j = gid; j < RD; j += gsz) {
+			const uint v = tu[oRD + j];
+			const uint w = oRS + v * CL_RW_WORDS;
+			vec3 p = vec3(0.0), nb = vec3(0.0);
+			for (uint k = 0u; k < 3u; k++) {
+				const uint s = tu[w + k];
+				const float wk = tf[w + 3u + k];
+				p += wk * ld(oD, s);
+				nb += wk * ld(oN, s);
+			}
+			const float nl = length(nb);
+			nb = nl > 0.0 ? nb / nl : vec3(0.0, 0.0, 1.0);
+			p += tf[w + 6u] * nb;
+			// r_clothDebug 1/2: collapse one shell (its triangles go degenerate) to see which one a pixel comes from
+			const uint dbg = cu[pc.rec + CLD_DEBUG];
+			if ((dbg == 1u && tf[w + 7u] < 0.0) || (dbg == 2u && tf[w + 7u] > 0.0)) p = vec3(0.0);
+			const vec3 n = tf[w + 7u] * nb;
+			const vec4 bt = vec4(tf[oTan + v * 4u], tf[oTan + v * 4u + 1u], tf[oTan + v * 4u + 2u], tf[oTan + v * 4u + 3u]);
+			vec3 tg = bt.xyz - dot(bt.xyz, n) * n;
+			const float tl = length(tg);
+			tg = tl > 0.0 ? tg / tl : bt.xyz;
+			const uint o = v * CL_RV_WORDS;
+			rv[o] = floatBitsToUint(p.x); rv[o + 1u] = floatBitsToUint(p.y); rv[o + 2u] = floatBitsToUint(p.z);
+			rv[o + 3u] = packSnorm2x16(n.xy); rv[o + 4u] = packSnorm2x16(vec2(n.z, 0.0));
+			rv[o + 9u] = packSnorm2x16(tg.xy); rv[o + 10u] = packSnorm2x16(vec2(tg.z, bt.w));
+		}
+	}
+}

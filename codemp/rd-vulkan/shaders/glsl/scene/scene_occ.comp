@@ -1,0 +1,115 @@
+#version 450
+// Render scenes (vk_scene.cpp), occlusion culling (r_sceneOcclusion): levels of the eye view's far-depth pyramid. Level
+// 0 is half the screen, each texel the farthest linear view depth of the 2x2 pixels it covers, from the main depth
+// attachment after the eye's depth prepass (every MSAA sample with DEPTH_MS: the farthest; the sky is infinitely far);
+// each further level halves the last the same way, sizes rounded up so a texel always covers whole texels below it.
+// This frame's second culling phase tests against it (it must hide nothing visible), the next frame's first phase too
+// (its misses that phase catches). One dispatch makes up to five levels: a workgroup takes 32 x 32 texels of its source
+// (the depth attachment or the level below), writes its 16 x 16 of the first, then halves them in shared memory.
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+#if defined( DEPTH_MS )
+layout(set = 0, binding = 0) uniform sampler2DMS depthTex;
+#else
+layout(set = 0, binding = 0) uniform sampler2D depthTex;
+#endif
+layout(std430, set = 0, binding = 1) buffer Pyramid { float pyr[]; };
+layout(std430, set = 0, binding = 1) buffer PyramidBits { uint pyrBits[]; };	// (the same buffer: the water's bed)
+
+layout(push_constant) uniform Push {
+	uvec4 a;		// the source's width, height; levels to make (1..5); DEPTH_MS: samples
+	uvec4 b;		// x: the source level's offset in pyr; y: 1 when the source is the depth attachment; z, w: the first
+					// two levels' offsets
+	uvec4 c;		// x, y, z: the next three levels' offsets; w: r_sceneWaterBed, the water's full-size bed's offset (0 none)
+	vec4 proj;		// the projection's [10] and [14] (device depth to view z)
+} pc;
+
+shared float t[16][16];
+
+float far( const ivec2 p )
+{
+	float d = 0.0;
+#if defined( DEPTH_MS )
+	for ( int s = 0; s < int( pc.a.w ); s++ )
+		d = max( d, texelFetch( depthTex, p, s ).r );
+#else
+	d = texelFetch( depthTex, p, 0 ).r;
+#endif
+	if ( d >= 1.0 )
+		return 1e30;
+	const float denom = -d - pc.proj.x;
+	return abs( denom ) < 1e-6 ? 1e30 : -pc.proj.y / denom;	// depth_extract.tmpl's -viewZFromDepth
+}
+
+// r_sceneWaterBed (dots in the water over a bed fading out): a pixel's bed for the water, full size,
+// two words: its samples' nearest and farthest linear view depth (32-bit floats; the half floats banded
+// past about 100 m) and how many lie nearer the nearest (the farthest's lowest 3 mantissa bits): the
+// water mixes its look over the two by that share
+uvec2 bedOf( const ivec2 p )
+{
+	float lo = 1e30, hi = 0.0;
+	float z[8];
+#if defined( DEPTH_MS )
+	const int n = clamp( int( pc.a.w ), 1, 8 );
+#else
+	const int n = 1;
+#endif
+	for ( int s = 0; s < n; s++ ) {
+#if defined( DEPTH_MS )
+		const float d = texelFetch( depthTex, p, s ).r;
+#else
+		const float d = texelFetch( depthTex, p, 0 ).r;
+#endif
+		const float denom = -d - pc.proj.x;
+		z[s] = d >= 1.0 || abs( denom ) < 1e-6 ? 1e30 : -pc.proj.y / denom;
+		lo = min( lo, z[s] );
+		hi = max( hi, z[s] );
+	}
+	uint near = 0u;
+	for ( int s = 0; s < n; s++ )
+		near += z[s] - lo <= hi - z[s] ? 1u : 0u;
+	return uvec2( floatBitsToUint( lo ), ( floatBitsToUint( hi ) & ~7u ) | min( near, 7u ) );
+}
+
+uint levelOfs( const uint k )
+{
+	return k == 0u ? pc.b.z : k == 1u ? pc.b.w : k == 2u ? pc.c.x : k == 3u ? pc.c.y : pc.c.z;
+}
+
+void main()
+{
+	const uvec2 g = gl_WorkGroupID.xy, l = gl_LocalInvocationID.xy;
+	const uvec2 src = pc.a.xy;
+	uvec2 size = ( src + 1u ) / 2u;	// the first level's
+	const uvec2 p = g * 16u + l;
+	float d = 0.0;	// outside a level: 0, which no farthest-of takes
+	if ( p.x < size.x && p.y < size.y ) {
+		for ( uint i = 0u; i < 4u; i++ ) {
+			const uvec2 s = min( p * 2u + uvec2( i & 1u, i >> 1u ), src - 1u );
+			d = max( d, pc.b.y != 0u ? far( ivec2( s ) ) : pyr[pc.b.x + s.y * src.x + s.x] );
+			if ( pc.b.y != 0u && pc.c.w != 0u ) {
+				const uvec2 b = bedOf( ivec2( s ) );
+				pyrBits[pc.c.w + 2u * ( s.y * src.x + s.x )] = b.x;
+				pyrBits[pc.c.w + 2u * ( s.y * src.x + s.x ) + 1u] = b.y;
+			}
+		}
+		pyr[levelOfs( 0u ) + p.y * size.x + p.x] = d;
+	}
+	t[l.y][l.x] = d;
+	for ( uint k = 1u; k < pc.a.z; k++ ) {
+		barrier();
+		const uint n = 16u >> k;
+		float v = 0.0;
+		if ( l.x < n && l.y < n )
+			v = max( max( t[2u * l.y][2u * l.x], t[2u * l.y][2u * l.x + 1u] ), max( t[2u * l.y + 1u][2u * l.x], t[2u * l.y + 1u][2u * l.x + 1u] ) );
+		barrier();
+		size = ( size + 1u ) / 2u;
+		if ( l.x < n && l.y < n ) {
+			t[l.y][l.x] = v;
+			const uvec2 q = g * n + l;
+			if ( q.x < size.x && q.y < size.y )
+				pyr[levelOfs( k ) + q.y * size.x + q.x] = v;
+		}
+	}
+}

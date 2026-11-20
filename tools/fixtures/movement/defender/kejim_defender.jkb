@@ -1,0 +1,9 @@
+// Declared fixture defender (codemp/game/bot2_defender.c): push 3 and pull 3,
+// levitation 3, no other powers. Bots take their powers from forceinfo here.
+GeneralBotInfo
+{
+forceinfo 7-1-030330000000000110
+saberspecialist 1
+chatability 0
+camper 0
+}

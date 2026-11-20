@@ -1,0 +1,62 @@
+#version 450
+// Render scenes (vk_scene.cpp): each light's fade with the eye's distance, once a frame before the culls (scene version
+// 4: CP2077's autoHideDistance, shadowFade and shadowRange in its light box record's last four floats; zero where none is
+// given). Past its hide distance (times r_sceneLightHide) a light is off; over the last share before it, it fades out.
+// Its shadow keeps full strength to shadowFade and fades out over shadowRange past it. Writes per light (fade, shadow
+// strength), read by scene.frag and scene_fog.comp, and the light's kind with the light off masked out, read by
+// scene_cluster.comp's tile test (a light off is in no cluster). With r_sceneLightHide 0, or no hides in the data, every
+// light writes (1, 1) and its kind: the same image as without this pass.
+
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer LightBounds { vec4 lightBounds[]; };	// centre, radius
+layout(std430, set = 0, binding = 1) readonly buffer LightBoxes { uvec4 boxes[]; };		// five a light: three rows, then hide,
+						// shadowFade, shadowRange (floats), flags (a uint: read as words, so no float load can flush its bits)
+layout(std430, set = 0, binding = 2) readonly buffer LightKinds { uint lightKinds[]; };
+layout(std430, set = 0, binding = 3) writeonly buffer LightFade { vec4 lightFade[]; };	// fade, shadow strength, stand-in
+layout(std430, set = 0, binding = 4) writeonly buffer LiveKinds { uint liveKinds[]; };
+
+layout(push_constant) uniform Push {
+	vec4 eye;		// xyz the eye; w: r_sceneLightHide (0: no light hidden)
+	vec4 params;	// x: lights; y: 1 when the scene has light boxes; z: the fade's share of the hide distance; w: a hide for a
+					// light with none, per unit of its radius (0: none)
+	vec4 cap;		// x: that default's most (units); y: 1 when a light flagged allowDistantLight shows as a stand-in past its
+					// hide (r_sceneLightDistant: a plain point, scene_distant.comp and scene.frag); z: 1 when such a light
+					// keeps shining past its hide instead (r_sceneLightHideDistant)
+} pc;
+
+void main()
+{
+	const uint i = gl_GlobalInvocationID.x;
+	if ( i >= uint( pc.params.x ) )
+		return;
+	const vec4 S = lightBounds[i];
+	float hide = 0.0, shadowFade = 0.0, shadowRange = 0.0;
+	bool distant = false, keep = false;
+	if ( pc.params.y > 0.5 ) {
+		const uvec4 e = boxes[i * 5u + 3u];	// (five a light: the rows, the hides, a tube's shape)
+		hide = uintBitsToFloat( e.x );
+		shadowFade = uintBitsToFloat( e.y );
+		shadowRange = uintBitsToFloat( e.z );
+		distant = pc.cap.y > 0.5 && ( e.w & 1u ) != 0u;	// CP2077 draws it far off as a distant light
+		keep = pc.cap.z > 0.5 && ( e.w & 1u ) != 0u;
+		if ( keep )
+			hide = 0.0;	// r_sceneLightHideDistant: here it stays on (its shadow still fades; no stand-in)
+	}
+	if ( hide <= 0.0 && pc.params.w > 0.0 && !keep )
+		hide = min( pc.params.w * S.w, pc.cap.x );
+	float fade = 1.0, strength = 1.0;
+	if ( pc.eye.w > 0.0 ) {	// (a light's shadow fades by its own distances, hide or none: 2,345 of Watson's have none)
+		const float d = distance( S.xyz, pc.eye.xyz );
+		if ( hide > 0.0 ) {
+			const float H = hide * pc.eye.w;
+			fade = clamp( ( H - d ) / max( pc.params.z * H, 1e-3 ), 0.0, 1.0 );
+		}
+		if ( shadowFade > 0.0 || shadowRange > 0.0 )
+			strength = 1.0 - clamp( ( d - shadowFade * pc.eye.w ) / max( shadowRange * pc.eye.w, 1e-3 ), 0.0, 1.0 );
+	}
+	// the stand-in takes over as the full light fades out (no pop), and only past where the full light starts fading;
+	// only a light that lights surfaces has one (a haze-only one would take one of the cell's few places for nothing)
+	lightFade[i] = vec4( fade, strength, distant && hide > 0.0 && ( lightKinds[i] & 1u ) != 0u ? 1.0 - fade : 0.0, 0.0 );
+	liveKinds[i] = fade > 0.0 ? lightKinds[i] : 0u;
+}

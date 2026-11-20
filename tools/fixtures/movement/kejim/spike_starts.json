@@ -1,0 +1,558 @@
+{
+ "format": "MOVEBENCH1",
+ "map": "mp/ctf_kejim",
+ "bsp_sha256": "76537a48e7d7273e2be6c033f281f8e0dfa49fcc8d550c334e4a8b0a42682e37",
+ "declared": "2026-09-15",
+ "cases": [
+  {
+   "name": "spike_x2900_rest",
+   "team": "red",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "spike_lane_spike_x2900_rest",
+    "origin": [
+     2900.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     -0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "spike_x2900_run",
+   "team": "red",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "spike_lane_spike_x2900_run",
+    "origin": [
+     2900.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     -250.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "spike_x2500_rest_yaw200",
+   "team": "red",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "spike_lane_spike_x2500_rest_yaw200",
+    "origin": [
+     2500.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 200.0,
+    "velocity": [
+     -0.0,
+     -0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "spike_x2500_run_yaw160",
+   "team": "red",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "spike_lane_spike_x2500_run_yaw160",
+    "origin": [
+     2500.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 160.0,
+    "velocity": [
+     -234.923,
+     85.505,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "spike_x2100_rest",
+   "team": "red",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "spike_lane_spike_x2100_rest",
+    "origin": [
+     2100.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     -0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "spike_x2100_run",
+   "team": "red",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "spike_lane_spike_x2100_run",
+    "origin": [
+     2100.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     -250.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "spike_x2700_fast400",
+   "team": "red",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "spike_lane_spike_x2700_fast400",
+    "origin": [
+     2700.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     -400.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "spike_x2700_side120",
+   "team": "red",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "spike_lane_spike_x2700_side120",
+    "origin": [
+     2700.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     -125.0,
+     216.506,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "spike_x2300_back240",
+   "team": "red",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "spike_lane_spike_x2300_back240",
+    "origin": [
+     2300.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     -125.0,
+     -216.506,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "spike_x2300_rest_yaw90",
+   "team": "red",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "spike_lane_spike_x2300_rest_yaw90",
+    "origin": [
+     2300.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 90.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "spike_L2_x2800_speed6000",
+   "team": "red",
+   "leg": "return",
+   "level": 2,
+   "start": {
+    "name": "spike_lane_spike_L2_x2800_speed6000",
+    "origin": [
+     2800.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 6000
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "spike_L2_x2800_speed1500",
+   "team": "red",
+   "leg": "return",
+   "level": 2,
+   "start": {
+    "name": "spike_lane_spike_L2_x2800_speed1500",
+    "origin": [
+     2800.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 1500
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "spike_L2_x2400_speed800_run",
+   "team": "red",
+   "leg": "return",
+   "level": 2,
+   "start": {
+    "name": "spike_lane_spike_L2_x2400_speed800_run",
+    "origin": [
+     2400.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     -425.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 800
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "spike_L2_x2400_speed1200_run",
+   "team": "red",
+   "leg": "return",
+   "level": 2,
+   "start": {
+    "name": "spike_lane_spike_L2_x2400_speed1200_run",
+    "origin": [
+     2400.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     -250.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 1200
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "composition",
+    "bound_ms": 20000,
+    "no_death": true
+   }
+  }
+ ]
+}

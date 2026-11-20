@@ -1,0 +1,2535 @@
+//------------------------------------------------------------------------------------------------
+// xen_player: the player screen (codemp/ui/ui_player.c, ui_player_look.c; docs/wishlist/player-screen.md)
+//
+// Written by tools/ui/make_xen_player_menu.py: edit that, not this. Opens in place of the stock player screens
+// (ingame_player, playerMenu, ingame_saber, saberMenu, ingame_playerforce, ingame_join) while ui_playerScreen is 1.
+// Shown: the backdrop, the stage and the look; every other item is a stock control the look drives (hidden).
+//------------------------------------------------------------------------------------------------
+{
+	menuDef
+	{
+		name						"xen_player"
+		visible						0
+		fullscreen					0
+		rect						0 0 640 480
+		style						WINDOW_STYLE_EMPTY
+		backcolor					0 0 0 0
+		focusColor					1 1 1 1
+		onOpen
+		{
+			uiScript				update "ui_GetName"
+			uiScript				updateForceStatus
+			uiScript				getsabercvars
+			uiScript				getsaberhiltinfo
+			uiScript				saber_hilt
+			uiScript				saber_color
+			uiScript				saber2_hilt
+			uiScript				saber2_color
+			uiScript				pickerOpen
+			uiScript				xpOpen
+		}
+		onClose
+		{
+			uiScript				pickerClose
+		}
+		onESC
+		{
+			play					"sound/interface/esc.wav"
+			uiScript				xpBack
+		}
+
+		itemDef
+		{
+			name                	xp_sections
+			ownerdraw           	416
+			rect                	0 0 0 0
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	xp_look_bg
+			ownerdraw           	417
+			rect                	0 0 640 480
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	stage
+			ownerdraw           	401
+			rect                	0 0 330 480
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	1 .682 0 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	xp_look
+			ownerdraw           	418
+			rect                	0 0 640 480
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	xp_tab0
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.1 .1 .15 .9
+			text                	"CHARACTER"
+			rect                	10 30 150 18
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	75
+			textaligny          	2
+			font                	2
+			textscale           	.65
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_tab0 forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_tab0 forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpSection 0
+			}
+		}
+		itemDef
+		{
+			name                	xp_tab1
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.1 .1 .15 .9
+			text                	"SABER"
+			rect                	165 30 150 18
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	75
+			textaligny          	2
+			font                	2
+			textscale           	.65
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_tab1 forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_tab1 forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpSection 1
+			}
+		}
+		itemDef
+		{
+			name                	xp_tab2
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.1 .1 .15 .9
+			text                	"FORCE"
+			rect                	320 30 150 18
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	75
+			textaligny          	2
+			font                	2
+			textscale           	.65
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_tab2 forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_tab2 forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpSection 2
+			}
+		}
+		itemDef
+		{
+			name                	xp_tab3
+			group               	xp_ingame
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.1 .1 .15 .9
+			text                	"TEAM"
+			rect                	475 30 150 18
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	75
+			textaligny          	2
+			font                	2
+			textscale           	.65
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_tab3 forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_tab3 forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpSection 3
+			}
+		}
+		itemDef
+		{
+			name                	xp_back
+			group               	xp_back
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Back"
+			rect                	10 434 80 20
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	40
+			textaligny          	2
+			font                	2
+			textscale           	.6
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_back forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_back forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpBack
+			}
+		}
+		itemDef
+		{
+			name                	xp_apply
+			group               	xp_apply
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.2 .35 .6 .9
+			text                	"Apply"
+			rect                	90 434 80 20
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	40
+			textaligny          	2
+			font                	2
+			textscale           	.6
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_apply forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_apply forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit apply
+			}
+		}
+		itemDef
+		{
+			name                	xp_join
+			group               	xp_join
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.2 .35 .6 .9
+			text                	"Join Game"
+			rect                	175 434 80 20
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	40
+			textaligny          	2
+			font                	2
+			textscale           	.6
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_join forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_join forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit free
+			}
+		}
+		itemDef
+		{
+			name                	xp_auto
+			group               	xp_auto
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.2 .35 .6 .9
+			text                	"Auto"
+			rect                	175 434 80 20
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	40
+			textaligny          	2
+			font                	2
+			textscale           	.6
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_auto forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_auto forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit auto
+			}
+		}
+		itemDef
+		{
+			name                	xp_red
+			group               	xp_red
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Join Red"
+			rect                	260 434 80 20
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	40
+			textaligny          	2
+			font                	2
+			textscale           	.6
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_red forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_red forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit red
+			}
+		}
+		itemDef
+		{
+			name                	xp_blue
+			group               	xp_blue
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Join Blue"
+			rect                	345 434 80 20
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	40
+			textaligny          	2
+			font                	2
+			textscale           	.6
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_blue forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_blue forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit blue
+			}
+		}
+		itemDef
+		{
+			name                	xp_single
+			group               	xp_duel
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Join Single"
+			rect                	260 434 80 20
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	40
+			textaligny          	2
+			font                	2
+			textscale           	.6
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_single forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_single forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit single
+			}
+		}
+		itemDef
+		{
+			name                	xp_double
+			group               	xp_duel
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Join Double"
+			rect                	345 434 80 20
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	40
+			textaligny          	2
+			font                	2
+			textscale           	.6
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_double forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_double forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit double
+			}
+		}
+		itemDef
+		{
+			name                	xp_class
+			group               	xp_class
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Choose Class"
+			rect                	260 434 80 20
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	40
+			textaligny          	2
+			font                	2
+			textscale           	.6
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_class forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_class forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit class
+			}
+		}
+		itemDef
+		{
+			name                	xp_spec
+			group               	xp_spec
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Spectate"
+			rect                	430 434 80 20
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	40
+			textaligny          	2
+			font                	2
+			textscale           	.6
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_spec forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_spec forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit s
+			}
+		}
+		itemDef
+		{
+			name                	xp_section_character
+			rect                	0 0 0 0
+			visible             	0
+			decoration
+		}
+		itemDef
+		{
+			name                	face
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Face view (F)"
+			rect                	420 334 210 20
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	105
+			textaligny          	2
+			font                	2
+			textscale           	.6
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor face forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor face forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript pickerFace
+			}
+		}
+		itemDef
+		{
+			name                	classic
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Classic screen"
+			rect                	420 362 210 20
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	105
+			textaligny          	2
+			font                	2
+			textscale           	.6
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor classic forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor classic forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpClassic
+			}
+		}
+		itemDef
+		{
+			name                	xp_section_saber
+			rect                	0 0 0 0
+			visible             	0
+			decoration
+		}
+		itemDef
+		{
+			name                	typebut
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_SABER_TYPE
+			rect                	10 84 210 16
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.6
+			forecolor           	.549 .854 1 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	typebut_single
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	@MENUS_SINGLESABER
+			rect                	10 102 68 18
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	34
+			textaligny          	2
+			font                	2
+			textscale           	.55
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor typebut_single forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor typebut_single forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				play "sound/interface/choose_saber.wav"
+				setcvar ui_saber_type "single"
+				uiScript "saber_type"
+				setcvar ui_saber "single_1"
+				setcvar ui_saber2 "none"
+				uiScript "saber_hilt"
+				uiScript "saber_color"
+				uiScript "saber2_hilt"
+				uiScript "saber2_color"
+			}
+		}
+		itemDef
+		{
+			name                	typebut_dual
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	@MENUS_DUALSABERS
+			rect                	80 102 68 18
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	34
+			textaligny          	2
+			font                	2
+			textscale           	.55
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor typebut_dual forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor typebut_dual forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				play "sound/interface/choose_saber.wav"
+				setcvar ui_saber_type "dual"
+				uiScript "saber_type"
+				setcvar ui_saber "single_1"
+				setcvar ui_saber2 "single_1"
+				uiScript "saber_hilt"
+				uiScript "saber_color"
+				uiScript "saber2_hilt"
+				uiScript "saber2_color"
+			}
+		}
+		itemDef
+		{
+			name                	typebut_staff
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	@MENUS_SABERSTAFF
+			rect                	150 102 68 18
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	34
+			textaligny          	2
+			font                	2
+			textscale           	.55
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor typebut_staff forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor typebut_staff forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				play "sound/interface/choose_saber.wav"
+				setcvar ui_saber_type "staff"
+				uiScript "saber_type"
+				setcvar ui_saber "dual_1"
+				setcvar ui_saber2 "none"
+				uiScript "saber_hilt"
+				uiScript "saber_color"
+				uiScript "saber2_hilt"
+				uiScript "saber2_color"
+			}
+		}
+		itemDef
+		{
+			name                	hiltbut_label
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_HILT1
+			rect                	10 126 210 14
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.549 .854 1 1
+			visible             	1
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "staff" ; "dual" }
+			decoration
+		}
+		itemDef
+		{
+			name                	hiltbut
+			rect                	10 142 210 266
+			type                	ITEM_TYPE_LISTBOX
+			style               	WINDOW_STYLE_FILLED
+			elementwidth        	190
+			elementheight       	16
+			font                	2
+			textscale           	.6
+			textaligny          	14
+			border              	1
+			bordersize          	1
+			bordercolor         	.3 .3 .5 1
+			forecolor           	.8 .8 1 1
+			backcolor           	0 0 .2 .4
+			outlinecolor        	.25 .45 .75 .7
+			elementtype         	LISTBOX_TEXT
+			feeder              	FEEDER_SABER_SINGLE_INFO
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "staff" ; "dual" }
+			visible             	1
+			action
+			{
+				play "sound/interface/choose_hilt.wav"
+				uiScript "setscreensaberhilt"
+				uiScript "saber_hilt"
+			}
+		}
+		itemDef
+		{
+			name                	hiltbut_staves
+			rect                	10 142 210 266
+			type                	ITEM_TYPE_LISTBOX
+			style               	WINDOW_STYLE_FILLED
+			elementwidth        	190
+			elementheight       	16
+			font                	2
+			textscale           	.6
+			textaligny          	14
+			border              	1
+			bordersize          	1
+			bordercolor         	.3 .3 .5 1
+			forecolor           	.8 .8 1 1
+			backcolor           	0 0 .2 .4
+			outlinecolor        	.25 .45 .75 .7
+			elementtype         	LISTBOX_TEXT
+			feeder              	FEEDER_SABER_STAFF_INFO
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "single" ; "dual" }
+			visible             	1
+			action
+			{
+				play "sound/interface/choose_hilt.wav"
+				uiScript "setscreensaberstaff"
+				uiScript "saber_hilt"
+			}
+		}
+		itemDef
+		{
+			name                	hiltbut1_label
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_HILT1
+			rect                	10 126 210 14
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.549 .854 1 1
+			visible             	1
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "single" ; "staff" }
+			decoration
+		}
+		itemDef
+		{
+			name                	hiltbut1
+			rect                	10 142 210 120
+			type                	ITEM_TYPE_LISTBOX
+			style               	WINDOW_STYLE_FILLED
+			elementwidth        	190
+			elementheight       	16
+			font                	2
+			textscale           	.6
+			textaligny          	14
+			border              	1
+			bordersize          	1
+			bordercolor         	.3 .3 .5 1
+			forecolor           	.8 .8 1 1
+			backcolor           	0 0 .2 .4
+			outlinecolor        	.25 .45 .75 .7
+			elementtype         	LISTBOX_TEXT
+			feeder              	FEEDER_SABER_SINGLE_INFO
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "single" ; "staff" }
+			visible             	1
+			action
+			{
+				play "sound/interface/choose_hilt.wav"
+				uiScript "setscreensaberhilt1"
+				uiScript "saber_hilt"
+			}
+		}
+		itemDef
+		{
+			name                	hiltbut2_label
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_HILT2
+			rect                	10 272 210 14
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.549 .854 1 1
+			visible             	1
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "single" ; "staff" }
+			decoration
+		}
+		itemDef
+		{
+			name                	hiltbut2
+			rect                	10 288 210 120
+			type                	ITEM_TYPE_LISTBOX
+			style               	WINDOW_STYLE_FILLED
+			elementwidth        	190
+			elementheight       	16
+			font                	2
+			textscale           	.6
+			textaligny          	14
+			border              	1
+			bordersize          	1
+			bordercolor         	.3 .3 .5 1
+			forecolor           	.8 .8 1 1
+			backcolor           	0 0 .2 .4
+			outlinecolor        	.25 .45 .75 .7
+			elementtype         	LISTBOX_TEXT
+			feeder              	FEEDER_SABER_SINGLE_INFO
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "single" ; "staff" }
+			visible             	1
+			action
+			{
+				play "sound/interface/choose_hilt.wav"
+				uiScript "setscreensaberhilt2"
+				uiScript "saber2_hilt"
+			}
+		}
+		itemDef
+		{
+			name                	bladecolortitle1
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_BLADE_COLOR
+			rect                	420 84 210 14
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.549 .854 1 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	blueicon
+			group               	sabericons
+			style               	WINDOW_STYLE_SHADER
+			type                	ITEM_TYPE_BUTTON
+			rect                	420 100 24 24
+			background          	"gfx/menus/saber_icon_blue"
+			forecolor           	.75 .75 .75 1
+			border              	1
+			bordersize          	1
+			bordercolor         	.33 .33 .5 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor blueicon bordercolor .66 .66 1 1
+			}
+			mouseExit
+			{
+				setitemcolor blueicon bordercolor .33 .33 .5 1
+			}
+			action
+			{
+				play "sound/interface/choose_blade.wav"
+				setcvar ui_saber_color "blue"
+			}
+		}
+		itemDef
+		{
+			name                	greenicon
+			group               	sabericons
+			style               	WINDOW_STYLE_SHADER
+			type                	ITEM_TYPE_BUTTON
+			rect                	450 100 24 24
+			background          	"gfx/menus/saber_icon_green"
+			forecolor           	.75 .75 .75 1
+			border              	1
+			bordersize          	1
+			bordercolor         	.33 .33 .5 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor greenicon bordercolor .66 .66 1 1
+			}
+			mouseExit
+			{
+				setitemcolor greenicon bordercolor .33 .33 .5 1
+			}
+			action
+			{
+				play "sound/interface/choose_blade.wav"
+				setcvar ui_saber_color "green"
+			}
+		}
+		itemDef
+		{
+			name                	orangeicon
+			group               	sabericons
+			style               	WINDOW_STYLE_SHADER
+			type                	ITEM_TYPE_BUTTON
+			rect                	480 100 24 24
+			background          	"gfx/menus/saber_icon_orange"
+			forecolor           	.75 .75 .75 1
+			border              	1
+			bordersize          	1
+			bordercolor         	.33 .33 .5 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor orangeicon bordercolor .66 .66 1 1
+			}
+			mouseExit
+			{
+				setitemcolor orangeicon bordercolor .33 .33 .5 1
+			}
+			action
+			{
+				play "sound/interface/choose_blade.wav"
+				setcvar ui_saber_color "orange"
+			}
+		}
+		itemDef
+		{
+			name                	purpleicon
+			group               	sabericons
+			style               	WINDOW_STYLE_SHADER
+			type                	ITEM_TYPE_BUTTON
+			rect                	510 100 24 24
+			background          	"gfx/menus/saber_icon_purple"
+			forecolor           	.75 .75 .75 1
+			border              	1
+			bordersize          	1
+			bordercolor         	.33 .33 .5 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor purpleicon bordercolor .66 .66 1 1
+			}
+			mouseExit
+			{
+				setitemcolor purpleicon bordercolor .33 .33 .5 1
+			}
+			action
+			{
+				play "sound/interface/choose_blade.wav"
+				setcvar ui_saber_color "purple"
+			}
+		}
+		itemDef
+		{
+			name                	yellowicon
+			group               	sabericons
+			style               	WINDOW_STYLE_SHADER
+			type                	ITEM_TYPE_BUTTON
+			rect                	540 100 24 24
+			background          	"gfx/menus/saber_icon_yellow"
+			forecolor           	.75 .75 .75 1
+			border              	1
+			bordersize          	1
+			bordercolor         	.33 .33 .5 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor yellowicon bordercolor .66 .66 1 1
+			}
+			mouseExit
+			{
+				setitemcolor yellowicon bordercolor .33 .33 .5 1
+			}
+			action
+			{
+				play "sound/interface/choose_blade.wav"
+				setcvar ui_saber_color "yellow"
+			}
+		}
+		itemDef
+		{
+			name                	redicon
+			group               	sabericons
+			style               	WINDOW_STYLE_SHADER
+			type                	ITEM_TYPE_BUTTON
+			rect                	570 100 24 24
+			background          	"gfx/menus/saber_icon_red"
+			forecolor           	.75 .75 .75 1
+			border              	1
+			bordersize          	1
+			bordercolor         	.33 .33 .5 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor redicon bordercolor .66 .66 1 1
+			}
+			mouseExit
+			{
+				setitemcolor redicon bordercolor .33 .33 .5 1
+			}
+			action
+			{
+				play "sound/interface/choose_blade.wav"
+				setcvar ui_saber_color "red"
+			}
+		}
+		itemDef
+		{
+			name                	bladecolortitle2
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_COLOR2
+			rect                	420 134 210 14
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.549 .854 1 1
+			visible             	1
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "single" ; "staff" }
+			decoration
+		}
+		itemDef
+		{
+			name                	blueicon2
+			group               	sabericons2
+			style               	WINDOW_STYLE_SHADER
+			type                	ITEM_TYPE_BUTTON
+			rect                	420 150 24 24
+			background          	"gfx/menus/saber_icon_blue"
+			forecolor           	.75 .75 .75 1
+			border              	1
+			bordersize          	1
+			bordercolor         	.33 .33 .5 1
+			visible             	1
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "single" ; "staff" }
+			mouseEnter
+			{
+				setitemcolor blueicon2 bordercolor .66 .66 1 1
+			}
+			mouseExit
+			{
+				setitemcolor blueicon2 bordercolor .33 .33 .5 1
+			}
+			action
+			{
+				play "sound/interface/choose_blade.wav"
+				setcvar ui_saber2_color "blue"
+			}
+		}
+		itemDef
+		{
+			name                	greenicon2
+			group               	sabericons2
+			style               	WINDOW_STYLE_SHADER
+			type                	ITEM_TYPE_BUTTON
+			rect                	450 150 24 24
+			background          	"gfx/menus/saber_icon_green"
+			forecolor           	.75 .75 .75 1
+			border              	1
+			bordersize          	1
+			bordercolor         	.33 .33 .5 1
+			visible             	1
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "single" ; "staff" }
+			mouseEnter
+			{
+				setitemcolor greenicon2 bordercolor .66 .66 1 1
+			}
+			mouseExit
+			{
+				setitemcolor greenicon2 bordercolor .33 .33 .5 1
+			}
+			action
+			{
+				play "sound/interface/choose_blade.wav"
+				setcvar ui_saber2_color "green"
+			}
+		}
+		itemDef
+		{
+			name                	orangeicon2
+			group               	sabericons2
+			style               	WINDOW_STYLE_SHADER
+			type                	ITEM_TYPE_BUTTON
+			rect                	480 150 24 24
+			background          	"gfx/menus/saber_icon_orange"
+			forecolor           	.75 .75 .75 1
+			border              	1
+			bordersize          	1
+			bordercolor         	.33 .33 .5 1
+			visible             	1
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "single" ; "staff" }
+			mouseEnter
+			{
+				setitemcolor orangeicon2 bordercolor .66 .66 1 1
+			}
+			mouseExit
+			{
+				setitemcolor orangeicon2 bordercolor .33 .33 .5 1
+			}
+			action
+			{
+				play "sound/interface/choose_blade.wav"
+				setcvar ui_saber2_color "orange"
+			}
+		}
+		itemDef
+		{
+			name                	purpleicon2
+			group               	sabericons2
+			style               	WINDOW_STYLE_SHADER
+			type                	ITEM_TYPE_BUTTON
+			rect                	510 150 24 24
+			background          	"gfx/menus/saber_icon_purple"
+			forecolor           	.75 .75 .75 1
+			border              	1
+			bordersize          	1
+			bordercolor         	.33 .33 .5 1
+			visible             	1
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "single" ; "staff" }
+			mouseEnter
+			{
+				setitemcolor purpleicon2 bordercolor .66 .66 1 1
+			}
+			mouseExit
+			{
+				setitemcolor purpleicon2 bordercolor .33 .33 .5 1
+			}
+			action
+			{
+				play "sound/interface/choose_blade.wav"
+				setcvar ui_saber2_color "purple"
+			}
+		}
+		itemDef
+		{
+			name                	yellowicon2
+			group               	sabericons2
+			style               	WINDOW_STYLE_SHADER
+			type                	ITEM_TYPE_BUTTON
+			rect                	540 150 24 24
+			background          	"gfx/menus/saber_icon_yellow"
+			forecolor           	.75 .75 .75 1
+			border              	1
+			bordersize          	1
+			bordercolor         	.33 .33 .5 1
+			visible             	1
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "single" ; "staff" }
+			mouseEnter
+			{
+				setitemcolor yellowicon2 bordercolor .66 .66 1 1
+			}
+			mouseExit
+			{
+				setitemcolor yellowicon2 bordercolor .33 .33 .5 1
+			}
+			action
+			{
+				play "sound/interface/choose_blade.wav"
+				setcvar ui_saber2_color "yellow"
+			}
+		}
+		itemDef
+		{
+			name                	redicon2
+			group               	sabericons2
+			style               	WINDOW_STYLE_SHADER
+			type                	ITEM_TYPE_BUTTON
+			rect                	570 150 24 24
+			background          	"gfx/menus/saber_icon_red"
+			forecolor           	.75 .75 .75 1
+			border              	1
+			bordersize          	1
+			bordercolor         	.33 .33 .5 1
+			visible             	1
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "single" ; "staff" }
+			mouseEnter
+			{
+				setitemcolor redicon2 bordercolor .66 .66 1 1
+			}
+			mouseExit
+			{
+				setitemcolor redicon2 bordercolor .33 .33 .5 1
+			}
+			action
+			{
+				play "sound/interface/choose_blade.wav"
+				setcvar ui_saber2_color "red"
+			}
+		}
+		itemDef
+		{
+			name                	saber
+			group               	models
+			type                	ITEM_TYPE_MODEL
+			rect                	420 190 210 100
+			asset_model         	"models/weapons2/saber_reborn/saber_w.glm"
+			model_angle         	180
+			model_rotation      	20
+			model_g2mins        	0 0 0
+			model_g2maxs        	20 20 20
+			model_fovx          	75
+			model_fovy          	75
+			visible             	1
+			isSaber             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	saber2
+			group               	models
+			type                	ITEM_TYPE_MODEL
+			rect                	420 290 210 100
+			asset_model         	"models/weapons2/saber_reborn/saber_w.glm"
+			model_angle         	180
+			model_rotation      	20
+			model_g2mins        	0 0 0
+			model_g2maxs        	20 20 20
+			model_fovx          	75
+			model_fovy          	75
+			visible             	1
+			isSaber2            	1
+			cvarTest            	ui_saber_type
+			hideCvar            	{ "single" ; "staff" }
+			decoration
+		}
+		itemDef
+		{
+			name                	xp_section_force
+			rect                	0 0 0 0
+			visible             	0
+			decoration
+		}
+		itemDef
+		{
+			name                	xp_force_neutral
+			group               	yesforce
+			style               	WINDOW_STYLE_EMPTY
+			text                	"Neutral"
+			rect                	10 86 210 12
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.5
+			forecolor           	.549 .854 1 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_jump
+			group               	yesforce
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_JUMP
+			rect                	10 100 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_jump
+			group               	yesforce
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_LEVITATION
+			rect                	10 100 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_jump forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_jump forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_push
+			group               	yesforce
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_PUSH
+			rect                	10 116 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_push
+			group               	yesforce
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_PUSH
+			rect                	10 116 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_push forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_push forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_pull
+			group               	yesforce
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_PULL
+			rect                	10 132 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_pull
+			group               	yesforce
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_PULL
+			rect                	10 132 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_pull forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_pull forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_speed
+			group               	yesforce
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_SPEED
+			rect                	10 148 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_speed
+			group               	yesforce
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_SPEED
+			rect                	10 148 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_speed forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_speed forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_see
+			group               	yesforce
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_SIGHT
+			rect                	10 164 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_see
+			group               	yesforce
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_SEE
+			rect                	10 164 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_see forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_see forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	xp_force_light
+			group               	lightpowers
+			style               	WINDOW_STYLE_EMPTY
+			text                	"Light side"
+			rect                	10 184 210 12
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.5
+			forecolor           	.549 .854 1 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_absorb
+			group               	lightpowers
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_ABSORB
+			rect                	10 198 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_absorb
+			group               	lightpowers
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_ABSORB
+			rect                	10 198 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_absorb forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_absorb forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_healself
+			group               	lightpowers
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_HEAL
+			rect                	10 214 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_healself
+			group               	lightpowers
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_HEAL
+			rect                	10 214 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_healself forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_healself forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_protect
+			group               	lightpowers
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_PROTECT
+			rect                	10 230 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_protect
+			group               	lightpowers
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_PROTECT
+			rect                	10 230 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_protect forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_protect forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_mindtrick
+			group               	lightpowers
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_MINDTRICK
+			rect                	10 246 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_mindtrick
+			group               	lightpowers
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_TELEPATHY
+			rect                	10 246 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_mindtrick forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_mindtrick forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_teamheal
+			group               	lightpowers_team
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_TEAM_HEAL
+			rect                	10 262 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			cvarTest            	"ui_about_gametype"
+			hideCvar            	{ "0" ; "1" ; "2" ; "3" ; "4" ; "5" }
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_teamheal
+			group               	lightpowers_team
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_TEAM_HEAL
+			rect                	10 262 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			cvarTest            	"ui_about_gametype"
+			hideCvar            	{ "0" ; "1" ; "2" ; "3" ; "4" ; "5" }
+			mouseEnter
+			{
+				setitemcolor setfp_teamheal forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_teamheal forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	xp_force_dark
+			group               	darkpowers
+			style               	WINDOW_STYLE_EMPTY
+			text                	"Dark side"
+			rect                	10 184 210 12
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.5
+			forecolor           	.549 .854 1 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_grip
+			group               	darkpowers
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_GRIP
+			rect                	10 198 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_grip
+			group               	darkpowers
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_GRIP
+			rect                	10 198 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_grip forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_grip forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_drain
+			group               	darkpowers
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_DRAIN
+			rect                	10 214 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_drain
+			group               	darkpowers
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_DRAIN
+			rect                	10 214 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_drain forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_drain forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_lightning
+			group               	darkpowers
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_LIGHTNING
+			rect                	10 230 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_lightning
+			group               	darkpowers
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_LIGHTNING
+			rect                	10 230 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_lightning forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_lightning forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_rage
+			group               	darkpowers
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_DARK_RAGE
+			rect                	10 246 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_rage
+			group               	darkpowers
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_RAGE
+			rect                	10 246 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_rage forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_rage forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_powerother
+			group               	darkpowers_team
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_TEAM_REPLENISH
+			rect                	10 262 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			cvarTest            	"ui_about_gametype"
+			hideCvar            	{ "0" ; "1" ; "2" ; "3" ; "4" ; "5" }
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_powerother
+			group               	darkpowers_team
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_TEAM_FORCE
+			rect                	10 262 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			cvarTest            	"ui_about_gametype"
+			hideCvar            	{ "0" ; "1" ; "2" ; "3" ; "4" ; "5" }
+			mouseEnter
+			{
+				setitemcolor setfp_powerother forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_powerother forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	xp_force_saber
+			group               	yesforce
+			style               	WINDOW_STYLE_EMPTY
+			text                	"Saber"
+			rect                	10 282 210 12
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.5
+			forecolor           	.549 .854 1 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_saberattack
+			group               	yesforce
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_SABER_ATTACK
+			rect                	10 296 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_saberattack
+			group               	yesforce
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_SABERATTACK
+			rect                	10 296 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_saberattack forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_saberattack forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_saberdefend
+			group               	yesforce
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_SABER_DEFEND
+			rect                	10 312 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_saberdefend
+			group               	yesforce
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_SABERDEFEND
+			rect                	10 312 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_saberdefend forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_saberdefend forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setfp_saberthrow
+			group               	yesforce
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_SABER_THROW
+			rect                	10 328 110 15
+			textalign           	ITEM_ALIGN_RIGHT
+			textalignx          	105
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	setfp_saberthrow
+			group               	yesforce
+			style               	0
+			ownerdraw           	UI_FORCE_RANK_SABERTHROW
+			rect                	10 328 175 15
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	115
+			textaligny          	-6
+			textscale           	.25
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor setfp_saberthrow forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor setfp_saberthrow forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	siderank
+			group               	yesforce
+			ownerdraw           	UI_FORCE_RANK
+			rect                	420 84 210 16
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.6
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			text                	@MENUS_FORCE_MASTERY
+			decoration
+		}
+		itemDef
+		{
+			name                	setside
+			group               	yesforce
+			ownerdraw           	UI_FORCE_SIDE
+			rect                	420 104 210 16
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.6
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			text                	@MENUS_FORCE_SIDE
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	setpoints
+			group               	yesforce
+			ownerdraw           	UI_FORCE_POINTS
+			rect                	420 124 210 16
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.6
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			text                	@MENUS_POINTS_REMAINING
+			decoration
+		}
+		itemDef
+		{
+			name                	jedinonjedi
+			group               	jedinonjedi
+			ownerdraw           	UI_JEDI_NONJEDI
+			rect                	420 144 210 16
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.6
+			forecolor           	.85 .85 .85 1
+			visible             	1
+			text                	@MENUS_JEDI_NONJEDI
+			action
+			{
+				uiScript updateForceStatus
+			}
+		}
+		itemDef
+		{
+			name                	fcflist
+			group               	yesforce
+			style               	WINDOW_STYLE_EMPTY
+			text                	@MENUS_FORCE_TEMPLATES
+			rect                	420 166 210 14
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	0
+			textaligny          	0
+			font                	2
+			textscale           	.55
+			forecolor           	.549 .854 1 1
+			visible             	1
+			decoration
+		}
+		itemDef
+		{
+			name                	fcflist
+			group               	yesforce
+			rect                	420 182 210 120
+			type                	ITEM_TYPE_LISTBOX
+			style               	WINDOW_STYLE_FILLED
+			elementwidth        	190
+			elementheight       	16
+			font                	2
+			textscale           	.6
+			elementtype         	LISTBOX_TEXT
+			feeder              	FEEDER_FORCECFG
+			textaligny          	14
+			border              	1
+			bordersize          	1
+			bordercolor         	.3 .3 .5 1
+			forecolor           	.8 .8 1 1
+			backcolor           	0 0 .2 .4
+			outlinecolor        	.25 .45 .75 .7
+			visible             	1
+			action
+			{
+				play "sound/interface/button1.wav"
+			}
+		}
+		itemDef
+		{
+			name                	savefield
+			group               	yesforce
+			type                	ITEM_TYPE_EDITFIELD
+			style               	WINDOW_STYLE_FILLED
+			text                	""
+			cvar                	"ui_SaveFCF"
+			maxChars            	12
+			maxPaintChars       	12
+			rect                	420 312 130 18
+			textalign           	ITEM_ALIGN_LEFT
+			textalignx          	4
+			textaligny          	0
+			font                	2
+			textscale           	.6
+			forecolor           	1 1 1 1
+			backcolor           	.1 .1 .15 .9
+			visible             	1
+		}
+		itemDef
+		{
+			name                	templatesave
+			group               	yesforce
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	@MENUS_SAVE_FILE
+			rect                	555 312 75 18
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	37
+			textaligny          	2
+			font                	2
+			textscale           	.6
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor templatesave forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor templatesave forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript saveTemplate
+			}
+		}
+		itemDef
+		{
+			name                	xp_section_team
+			rect                	0 0 0 0
+			visible             	0
+			decoration
+		}
+		itemDef
+		{
+			name                	xp_card_auto
+			group               	xp_auto
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Auto: the server picks"
+			rect                	10 86 210 24
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	105
+			textaligny          	2
+			font                	2
+			textscale           	.65
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_card_auto forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_card_auto forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit auto
+			}
+		}
+		itemDef
+		{
+			name                	xp_card_join
+			group               	xp_join
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Join Game"
+			rect                	10 116 210 24
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	105
+			textaligny          	2
+			font                	2
+			textscale           	.65
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_card_join forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_card_join forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit free
+			}
+		}
+		itemDef
+		{
+			name                	xp_card_red
+			group               	xp_red
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Red team"
+			rect                	10 146 210 24
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	105
+			textaligny          	2
+			font                	2
+			textscale           	.65
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_card_red forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_card_red forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit red
+			}
+		}
+		itemDef
+		{
+			name                	xp_card_blue
+			group               	xp_blue
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Blue team"
+			rect                	10 176 210 24
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	105
+			textaligny          	2
+			font                	2
+			textscale           	.65
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_card_blue forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_card_blue forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit blue
+			}
+		}
+		itemDef
+		{
+			name                	xp_card_single
+			group               	xp_duel
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Single (Power Duel)"
+			rect                	10 206 210 24
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	105
+			textaligny          	2
+			font                	2
+			textscale           	.65
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_card_single forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_card_single forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit single
+			}
+		}
+		itemDef
+		{
+			name                	xp_card_double
+			group               	xp_duel
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Double (Power Duel)"
+			rect                	10 236 210 24
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	105
+			textaligny          	2
+			font                	2
+			textscale           	.65
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_card_double forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_card_double forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit double
+			}
+		}
+		itemDef
+		{
+			name                	xp_card_class
+			group               	xp_class
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Choose a Siege class"
+			rect                	10 266 210 24
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	105
+			textaligny          	2
+			font                	2
+			textscale           	.65
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_card_class forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_card_class forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit class
+			}
+		}
+		itemDef
+		{
+			name                	xp_card_spec
+			group               	xp_spec
+			type                	ITEM_TYPE_BUTTON
+			style               	WINDOW_STYLE_FILLED
+			backcolor           	.15 .15 .15 .8
+			text                	"Spectate"
+			rect                	10 296 210 24
+			textalign           	ITEM_ALIGN_CENTER
+			textalignx          	105
+			textaligny          	2
+			font                	2
+			textscale           	.65
+			forecolor           	.8 .8 .8 1
+			visible             	1
+			mouseEnter
+			{
+				setitemcolor xp_card_spec forecolor 1 1 1 1
+			}
+			mouseExit
+			{
+				setitemcolor xp_card_spec forecolor .8 .8 .8 1
+			}
+			action
+			{
+				play "sound/interface/button1.wav"
+				uiScript xpCommit s
+			}
+		}
+		itemDef
+		{
+			name                	xp_section_common
+			rect                	0 0 0 0
+			visible             	0
+			decoration
+		}
+	}
+}

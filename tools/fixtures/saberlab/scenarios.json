@@ -1,0 +1,32 @@
+{
+  "_doc": "Saber lab scenarios (docs/gameplay/SABER_LAB.md). 'lab' keys go to `saberlab start`; 'cvars' are set on the world before the map loads. Fighter a stands at the anchor facing b; b stands `dist` away facing a.",
+  "dummy_medium": {
+    "about": "Medium-stance single click (150 ms attack) standing still, against a holstered target: damage per swing.",
+    "lab": {"dist": 56, "act": 1200, "a.style": "medium", "a.act": "swing", "a.hold": 150, "b.act": "holster"}
+  },
+  "dummy_strong": {
+    "about": "Strong-stance single click against a holstered target.",
+    "lab": {"dist": 56, "act": 1600, "a.style": "strong", "a.act": "swing", "a.hold": 150, "b.act": "holster"}
+  },
+  "dummy_fast": {
+    "about": "Fast-stance attack held 600 ms (a chain) against a holstered target.",
+    "lab": {"dist": 52, "act": 1400, "a.style": "fast", "a.act": "swing", "a.hold": 600, "b.act": "holster"}
+  },
+  "block_medium": {
+    "about": "Medium click into an idle defender (defense 3). With SP-style damage (d_saberSPStyleDamage 1, the default) an idle saber blocks only by physical contact; there is no automatic block roll, so this measures how often the idle blade is in the way (2026-10-21: never, at this geometry).",
+    "lab": {"dist": 56, "act": 1200, "a.style": "medium", "a.act": "swing", "a.hold": 150, "b.act": "idle", "b.style": "medium"}
+  },
+  "clash_medium": {
+    "about": "Both medium, both click at the same moment: saber-vs-saber outcomes.",
+    "lab": {"dist": 60, "act": 1500, "a.style": "medium", "a.act": "swing", "a.hold": 150, "b.style": "medium", "b.act": "swing", "b.hold": 150}
+  },
+  "clash_strong_fast": {
+    "about": "Strong into fast, both clicking, fast 60 ms later.",
+    "lab": {"dist": 60, "act": 1600, "a.style": "strong", "a.act": "swing", "a.hold": 150, "b.style": "fast", "b.act": "swing", "b.start": 60, "b.hold": 150}
+  },
+  "lock_mash": {
+    "about": "Forced saber lock (g_debugSaberLocks 1) after a medium clash; a mashes 12 Hz, b 6 Hz. Lock length and who takes the hit.",
+    "cvars": {"g_debugSaberLocks": 1},
+    "lab": {"dist": 60, "act": 4000, "a.style": "medium", "a.act": "mash", "a.hz": 12, "a.hold": 3800, "b.style": "medium", "b.act": "mash", "b.hz": 6, "b.hold": 3800}
+  }
+}

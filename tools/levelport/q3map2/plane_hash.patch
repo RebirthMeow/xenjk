@@ -1,0 +1,76 @@
+--- a/tools/quake3/q3map2/map.cpp
++++ b/tools/quake3/q3map2/map.cpp
+@@ -39,8 +39,26 @@
+ #define USE_HASHING
+ #define PLANE_HASHES    8192
+ 
++/* xenjk watson-m 2026-10-30: hash planes on (int)|dist| AND the normal, unbounded buckets (was 8192 dist-only bins:
++   every plane at one integer distance shared a chain). Lookups still search the dist bins -1..+1 like the original,
++   and every normal cell a component within normalEpsilon could fall into, so the same planes compare equal. */
++#define PLANE_HASH_NORMAL_CELLS 128
++#include <unordered_map>
++
+ namespace{
+ int planehash[ PLANE_HASHES ];
++std::unordered_map<std::uint64_t, int> planehash2;
++
++inline int PlaneHashDistBin( float dist ){
++	return (int) std::fabs( dist );
++}
++inline int PlaneHashNormalCell( double c ){
++	return (int) std::floor( c * PLANE_HASH_NORMAL_CELLS );
++}
++inline std::uint64_t PlaneHashKey( int distBin, int qx, int qy, int qz ){
++	return ( (std::uint64_t)(std::uint32_t) distBin << 30 ) | ( (std::uint64_t)( qx + 512 ) << 20 )
++	     | ( (std::uint64_t)( qy + 512 ) << 10 ) | (std::uint64_t)( qz + 512 );
++}
+ 
+ int c_boxbevels;
+ int c_edgebevels;
+@@ -85,10 +103,10 @@
+  */
+ 
+ inline void AddPlaneToHash( plane_t& p ){
+-	const int hash = ( PLANE_HASHES - 1 ) & (int) std::fabs( p.dist() );
+-
+-	p.hash_chain = planehash[hash];
+-	planehash[hash] = &p - mapplanes.data() + 1;
++	int& head = planehash2[ PlaneHashKey( PlaneHashDistBin( p.dist() ), PlaneHashNormalCell( p.normal()[0] ),
++	                                      PlaneHashNormalCell( p.normal()[1] ), PlaneHashNormalCell( p.normal()[2] ) ) ];
++	p.hash_chain = head;
++	head = &p - mapplanes.data() + 1;
+ }
+ 
+ /*
+@@ -349,13 +367,28 @@
+ 	SnapPlane( plane );
+ #endif
+ 	/* hash the plane */
+-	const int hash = ( PLANE_HASHES - 1 ) & (int) std::fabs( plane.dist() );
++	const int hash = PlaneHashDistBin( plane.dist() );
++	const double m = normalEpsilon + 1e-6;
++	int lo[3], hi[3];
++	for ( int c = 0; c < 3; ++c ){
++		lo[c] = PlaneHashNormalCell( plane.normal()[c] - m );
++		hi[c] = PlaneHashNormalCell( plane.normal()[c] + m );
++	}
+ 
+ 	/* search the border bins as well */
+ 	for ( int i = -1; i <= 1; ++i )
++	for ( int qx = lo[0]; qx <= hi[0]; ++qx )
++	for ( int qy = lo[1]; qy <= hi[1]; ++qy )
++	for ( int qz = lo[2]; qz <= hi[2]; ++qz )
+ 	{
+-		const int h = ( hash + i ) & ( PLANE_HASHES - 1 );
+-		for ( int pidx = planehash[ h ] - 1; pidx != -1; pidx = mapplanes[pidx].hash_chain - 1 )
++		if ( hash + i < 0 ) {
++			continue;
++		}
++		const auto it = planehash2.find( PlaneHashKey( hash + i, qx, qy, qz ) );
++		if ( it == planehash2.end() ) {
++			continue;
++		}
++		for ( int pidx = it->second - 1; pidx != -1; pidx = mapplanes[pidx].hash_chain - 1 )
+ 		{
+ 			const plane_t& p = mapplanes[pidx];
+ 

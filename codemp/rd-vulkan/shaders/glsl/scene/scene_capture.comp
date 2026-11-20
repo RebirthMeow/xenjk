@@ -1,0 +1,41 @@
+#version 450
+// Render scenes (vk_scene.cpp): the frame's history for screen-space reflections. After the main view's MSAA resolve
+// (the world without the HUD), one half-size texel per 2x2: rgb the shown colour (their mean, display space), a the
+// nearest of their linear view depths from the depth extract (game units, 0 where only sky; negative where that
+// nearest is a character, so the reflected rays pass through characters: they hit their last-frame silhouette, which
+// the settle then dragged behind a turning view as a dark afterimage). The next frame's wet
+// surfaces march their reflected rays through it with this frame's camera (scene.frag).
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D colorTex;	// the resolved frame
+layout(set = 0, binding = 1) uniform sampler2D depthTex;	// r: linear view depth, 0 empty, negative on characters
+layout(set = 0, binding = 2, rgba16f) uniform writeonly image2D historyImg;
+#ifndef NO_DEPTH_COPY
+layout(set = 0, binding = 3, r16f) uniform writeonly image2D historyDepthImg;	// the same depth alone (the rays' steps read it)
+#endif
+
+void main()
+{
+	const ivec2 id = ivec2( gl_GlobalInvocationID.xy );
+	const ivec2 size = imageSize( historyImg );
+	if ( any( greaterThanEqual( id, size ) ) )
+		return;
+	const vec2 uv = ( vec2( id ) + 0.5 ) / vec2( size );
+	const vec3 c = textureLod( colorTex, uv, 0.0 ).rgb;	// linear filtering: the 2x2's mean
+	const ivec2 ds = textureSize( depthTex, 0 );
+	const ivec2 src = ivec2( floor( uv * vec2( ds ) - 0.5 ) );
+	float d = 1e9, s = 1.0;
+	for ( int i = 0; i < 4; i++ ) {
+		const float z = texelFetch( depthTex, clamp( src + ivec2( i & 1, i >> 1 ), ivec2( 0 ), ds - 1 ), 0 ).r;
+		if ( z != 0.0 && abs( z ) < d ) {
+			d = abs( z );
+			s = sign( z );
+		}
+	}
+	const float depth = d >= 1e9 ? 0.0 : s * min( d, 65000.0 );
+	imageStore( historyImg, id, vec4( c, depth ) );
+#ifndef NO_DEPTH_COPY
+	imageStore( historyDepthImg, id, vec4( depth ) );
+#endif
+}

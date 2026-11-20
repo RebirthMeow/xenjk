@@ -1,0 +1,168 @@
+{
+  "format": "MOVEBENCH1",
+  "map": "mp/ctf_kejim",
+  "bsp_sha256": "76537a48e7d7273e2be6c033f281f8e0dfa49fcc8d550c334e4a8b0a42682e37",
+  "declared": "Round trips at level 1 from the four respawn starts of the floor: the native objective only (enemy flag, then home), passing on the capture. For the follow-through comparison (bot_moveFollowThrough). Variant: the same cases starting with a full Force pool (100) at level 1 spend (no Speed, no held jump), so any Force drain fails the case as forbidden_hold.",
+  "cases": [
+    {
+      "name": "red_round_L1_respawn5_f100",
+      "team": "red",
+      "leg": "chain",
+      "level": 1,
+      "start": {
+        "name": "red_respawn_5",
+        "origin": [
+          -320.0,
+          2624.0,
+          1368.125
+        ],
+        "yaw": 0.0,
+        "velocity": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "carrying": 0
+      },
+      "resources": {
+        "force": 100,
+        "speed_ms": 0
+      },
+      "spend": {
+        "templates": [
+          "walk",
+          "corner",
+          "hop",
+          "tap"
+        ]
+      },
+      "goal": "chain",
+      "pass_condition": {
+        "condition": "capture",
+        "bound_ms": 240000,
+        "no_death": true
+      },
+      "chain": []
+    },
+    {
+      "name": "red_round_L1_respawn4_f100",
+      "team": "red",
+      "leg": "chain",
+      "level": 1,
+      "start": {
+        "name": "red_respawn_4",
+        "origin": [
+          -640.0,
+          1696.0,
+          1808.125
+        ],
+        "yaw": 0.0,
+        "velocity": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "carrying": 0
+      },
+      "resources": {
+        "force": 100,
+        "speed_ms": 0
+      },
+      "spend": {
+        "templates": [
+          "walk",
+          "corner",
+          "hop",
+          "tap"
+        ]
+      },
+      "goal": "chain",
+      "pass_condition": {
+        "condition": "capture",
+        "bound_ms": 240000,
+        "no_death": true
+      },
+      "chain": []
+    },
+    {
+      "name": "blue_round_L1_respawn5_f100",
+      "team": "blue",
+      "leg": "chain",
+      "level": 1,
+      "start": {
+        "name": "blue_respawn_5",
+        "origin": [
+          2944.0,
+          1536.0,
+          1368.125
+        ],
+        "yaw": 180.0,
+        "velocity": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "carrying": 0
+      },
+      "resources": {
+        "force": 100,
+        "speed_ms": 0
+      },
+      "spend": {
+        "templates": [
+          "walk",
+          "corner",
+          "hop",
+          "tap"
+        ]
+      },
+      "goal": "chain",
+      "pass_condition": {
+        "condition": "capture",
+        "bound_ms": 240000,
+        "no_death": true
+      },
+      "chain": []
+    },
+    {
+      "name": "blue_round_L1_respawn4_f100",
+      "team": "blue",
+      "leg": "chain",
+      "level": 1,
+      "start": {
+        "name": "blue_respawn_4",
+        "origin": [
+          3264.0,
+          2464.0,
+          1808.125
+        ],
+        "yaw": 180.0,
+        "velocity": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "carrying": 0
+      },
+      "resources": {
+        "force": 100,
+        "speed_ms": 0
+      },
+      "spend": {
+        "templates": [
+          "walk",
+          "corner",
+          "hop",
+          "tap"
+        ]
+      },
+      "goal": "chain",
+      "pass_condition": {
+        "condition": "capture",
+        "bound_ms": 240000,
+        "no_death": true
+      },
+      "chain": []
+    }
+  ]
+}

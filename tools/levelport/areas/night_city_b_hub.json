@@ -1,0 +1,121 @@
+{
+ "//": [
+  "The playtest hub of night_city_b (Watson and the next area in Watson's frame): cp77_collision.py reads it.",
+  "Hand-made data, not CP2077 content. q3 units in Watson's frame; angle is JKA yaw (degrees).",
+  "spawns: kit col-12's 18 in its order (the owner's Misty's and Afterlife spawns among them; docs/levelport-watson.md), then El Coyote Cojo's (tag 10).",
+  "pocket: El Coyote Cojo's block south of the ring (CP2077 x -1536..-1024, y -1152..-768), walled in.",
+  "grid_points: where the hub check reads the light grid (the bar's interior centre, CP2077 -1250 -995 16).",
+  "gltf2map: the hub compile's arguments (tag 5's hub; --exact-planes is added)."
+ ],
+ "pocket": [
+  -9600,
+  -127200,
+  9600,
+  -112800
+ ],
+ "grid_points": {
+  "bar": [
+   1125,
+   -121312.5,
+   150
+  ]
+ },
+ "gltf2map": [
+  "--sky",
+  "cp_kabuki_haze",
+  "--sky-haze",
+  "66 43 40 61 37 36",
+  "--sun",
+  "0.55 0.65 1 80 200 40",
+  "--skylight",
+  "150",
+  "--worldspawn",
+  "_ambient=20",
+  "--worldspawn",
+  "distanceCull=56250",
+  "--light",
+  "fast",
+  "--vis",
+  "none"
+ ],
+ "spawns": [
+  {
+   "origin": "87.5 193.75 -78.75",
+   "angle": "0"
+  },
+  {
+   "origin": "1206.25 -2297.5 -46.25",
+   "angle": "90"
+  },
+  {
+   "origin": "2543.75 75 -78.75",
+   "angle": "180"
+  },
+  {
+   "origin": "1406.25 2206.25 -158.75",
+   "angle": "270"
+  },
+  {
+   "origin": "92.5 -1382.5 31.25",
+   "angle": "0"
+  },
+  {
+   "origin": "1456.25 -818.75 -78.75",
+   "angle": "90"
+  },
+  {
+   "origin": "1257.5 396.25 -78.75",
+   "angle": "180"
+  },
+  {
+   "origin": "2425 -987.5 -78.75",
+   "angle": "270"
+  },
+  {
+   "origin": "956.25 1325 -153.75",
+   "angle": "0"
+  },
+  {
+   "origin": "1781.25 -137.5 -78.75",
+   "angle": "90"
+  },
+  {
+   "origin": "803.75 -1692.5 -6.25",
+   "angle": "180"
+  },
+  {
+   "origin": "625 606.25 -78.75",
+   "angle": "270"
+  },
+  {
+   "origin": "1756.25 1668.75 -153.75",
+   "angle": "0"
+  },
+  {
+   "origin": "1156.25 -231.25 -78.75",
+   "angle": "90"
+  },
+  {
+   "origin": "2256.25 -437.5 -78.75",
+   "angle": "180"
+  },
+  {
+   "origin": "297.5 -926.25 46.25",
+   "angle": "270"
+  },
+  {
+   "origin": "-10105.875 -39468.375 190.125",
+   "angle": "72"
+  },
+  {
+   "origin": "-7275 -44812.125 420",
+   "angle": "90"
+  },
+  {
+   "origin": "1714 -121715 41",
+   "angle": "157",
+   "name": "el_coyote_cojo",
+   "note": "the street outside El Coyote Cojo (2026-11-04), picked from tag 10's collision: the pavement (floor 15) east of the bar's street door (single_door_1, CP2077 -1237.24 -1004.46 12.02 = q3 1603.5 -121,667 0.75), facing it from 120 u, open to the sky, no collision triangle's bounds within 16 u of the standing box"
+  }
+ ]
+}

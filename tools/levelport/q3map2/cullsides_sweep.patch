@@ -1,0 +1,53 @@
+--- a/tools/quake3/q3map2/surface.cpp
++++ b/tools/quake3/q3map2/surface.cpp
+@@ -1204,17 +1204,48 @@
+ 	g_numHiddenFaces = 0;
+ 	g_numCoinFaces = 0;
+ 
++	/* xenjk watson-m 2026-10-30: the pairs whose bounds overlap (minmax.test), found by a sweep along x, then
++	   visited in the original (b1, b2-after-b1) list order; every other pair fails the bbox check below anyway.
++	   Was every pair of the entity's brushes: 2.9e10 for 241 k brushes. */
++	std::vector<brush_t*> blist;
++	for ( brush_t& b : e.brushes )
++		blist.push_back( &b );
++	std::vector<std::pair<int, int>> pairs;
++	{
++		std::vector<int> order( blist.size() );
++		for ( size_t i = 0; i < order.size(); ++i )
++			order[i] = i;
++		std::sort( order.begin(), order.end(), [&]( int a, int b ){ return blist[a]->minmax.mins.x() < blist[b]->minmax.mins.x(); } );
++		std::vector<int> active;
++		for ( const int cur : order )
++		{
++			const float x = blist[cur]->minmax.mins.x();
++			size_t w = 0;
++			for ( const int a : active )
++				if ( !( blist[a]->minmax.maxs.x() < x ) )
++					active[w++] = a;
++			active.resize( w );
++			for ( const int a : active )
++				if ( blist[a]->minmax.test( blist[cur]->minmax ) )
++					pairs.emplace_back( std::min( a, cur ), std::max( a, cur ) );
++			active.push_back( cur );
++		}
++		std::sort( pairs.begin(), pairs.end() );
++	}
++	Sys_FPrintf( SYS_VRB, "%9zu brush pairs with overlapping bounds\n", pairs.size() );
++
+ 	/* brush interator 1 */
+-	for ( brushlist_t::iterator b1 = e.brushes.begin(); b1 != e.brushes.end(); ++b1 )
++	for ( const auto& [i1, i2] : pairs )
+ 	{
++		brush_t *b1 = blist[i1];
+ 		/* sides check */
+ 		if ( b1->sides.empty() ) {
+ 			continue;
+ 		}
+ 
+ 		/* brush iterator 2 */
+-		for ( brushlist_t::iterator b2 = std::next( b1 ); b2 != e.brushes.end(); ++b2 )
+ 		{
++			brush_t *b2 = blist[i2];
+ 			/* sides check */
+ 			if ( b2->sides.empty() ) {
+ 				continue;

@@ -1,0 +1,37 @@
+#version 450
+// Render scenes (vk_scene.cpp): CP2077's distant lights (scene version 4, allowDistantLight). After scene_lightfade.comp,
+// once a frame: per light grid cell, its lights that show as a stand-in now (past or near their hide distance, flagged
+// allowDistantLight: lightFade's z), at most DIST_MAX, in the cell's order. scene.frag lights a surface by its cell's
+// stand-ins as plain points (no shadow, no haze, no box), outside the light clusters, which keep only the full lights.
+
+layout(local_size_x = 64) in;
+
+const uint DIST_STRIDE = 16u;		// SCENE_DIST_STRIDE: a count, then up to DIST_MAX lights
+const uint DIST_MAX = DIST_STRIDE - 1u;
+
+layout(std430, set = 0, binding = 0) readonly buffer Cells { uvec2 cells[]; };		// first, count (top bit: capped)
+layout(std430, set = 0, binding = 1) readonly buffer CellLights { uint cellLights[]; };
+layout(std430, set = 0, binding = 2) readonly buffer LightFade { vec4 lightFade[]; };	// z: the stand-in's share
+layout(std430, set = 0, binding = 3) writeonly buffer DistantCells { uint distantCells[]; };
+
+layout(push_constant) uniform Push {
+	uvec4 counts;	// x: cells
+} pc;
+
+void main()
+{
+	const uint c = gl_GlobalInvocationID.x;
+	if ( c >= pc.counts.x )
+		return;
+	const uvec2 cell = cells[c];
+	const uint n = cell.y & 0x7fffffffu;
+	uint k = 0u;
+	for ( uint i = 0u; i < n && k < DIST_MAX; i++ ) {
+		const uint li = cellLights[cell.x + i];
+		if ( lightFade[li].z > 0.0 ) {
+			distantCells[c * DIST_STRIDE + 1u + k] = li;
+			k++;
+		}
+	}
+	distantCells[c * DIST_STRIDE] = k;
+}

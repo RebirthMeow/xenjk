@@ -1,0 +1,1540 @@
+{
+ "schema": 1,
+ "upstream": {
+  "name": "base_enhanced",
+  "repo": "https://github.com/avygeil/base_enhanced",
+  "license": "GPL-2.0",
+  "snapshot": "774700caf31655b819cf0b1b3e68285de372eee7",
+  "snapshot_short": "774700c",
+  "snapshot_date": "2026-01-24",
+  "local_checkout": "../base_enhanced",
+  "reviewed": {
+   "commit": "f141eac922b1a503a8b0ddf14339033a6778c614",
+   "date": "2026-10-08",
+   "note": "6 commits past the snapshot checked: G_RunFrame (the declined g_fixForceRegenTime, match info), the feature list (fxdm, esi tokens) - nothing that changes a port"
+  }
+ },
+ "ported": "2026-10-08",
+ "ours": {
+  "files": [
+   "codemp/game/be_force.c",
+   "codemp/game/be_force.h",
+   "codemp/cgame/cg_be.c",
+   "codemp/cgame/cg_be.h",
+   "codemp/game/be_combat.c",
+   "codemp/game/be_combat.h",
+   "codemp/game/be_pmove.c",
+   "codemp/game/be_pmove.h",
+   "codemp/game/be_stats.c",
+   "codemp/game/be_stats.h",
+   "codemp/game/be_table.c",
+   "codemp/game/be_table.h",
+   "codemp/game/be_collections.c",
+   "codemp/game/be_collections.h"
+  ],
+  "hook_marker": "// base_enhanced:",
+  "profile": "tools/fixtures/competitive/base_enhanced_profile.cfg",
+  "cvar_table": "codemp/game/g_xcvar.h",
+  "default_rule": "owner 2026-10-08: defaults are the competitive profile; tools/fixtures/competitive/stock_force_profile.cfg restores stock OpenJK",
+  "client_hook_marker": "// base_enhanced protocol:",
+  "client_cvars": {
+   "cg_drawForceTimers": "1",
+   "cg_beDrainVisual": "1"
+  },
+  "stock_profile": "tools/fixtures/competitive/stock_force_profile.cfg",
+  "shared_bg_rule": "bg switches live in be_pmoveFeatures; the game sets them from cvars and announces them in configstring 25 (be_force.c BE_UpdateFeatureList); the cgame reads them (cgame/cg_be.c CG_BE_ParseFeatures); Bot2 forecasts through the real Pmove, so it follows",
+  "mirror_rule": "BE_ForceGrip and BE_DoGripAction (be_force.c) are whole copies of stock ForceGrip and DoGripAction (w_force.c) with the changes inline, run while BE_GripReplacesStock(); a change to either stock function must be mirrored in its copy",
+  "requires": [
+   "codemp/game/g_tick.c",
+   "codemp/game/g_tick.h"
+  ]
+ },
+ "features": [
+  {
+   "name": "grip_cooldowns",
+   "summary": "re-grip lockout 500 ms after a grip ends (stock 3000) and after a push/pull breaks it (stock 1000)",
+   "cvars": [
+    {
+     "name": "g_beGripCooldowns",
+     "default": "1",
+     "profile": "1",
+     "upstream_cvar": false,
+     "stock": "0"
+    }
+   ],
+   "upstream_commits": [
+    "b936159f626cda6470278aefe7d74ef7e146c758"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/w_force.c",
+     "function": "WP_ForcePowerStop"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceThrow"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_GripUseCooldown"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "grip_distance",
+   "summary": "hold distance: level 3 unlimited, levels 1/2 break past 2*MAX_GRIP_DISTANCE (stock MAX_GRIP_DISTANCE for all); grip start refused when origins are over MAX_GRIP_DISTANCE apart (stock spent the Force then broke at once)",
+   "cvars": [
+    {
+     "name": "g_beGripDistance",
+     "default": "1",
+     "profile": "1",
+     "upstream_cvar": false,
+     "stock": "0"
+    }
+   ],
+   "upstream_commits": [
+    "74466e2cfe2abf77e8bd5a733e469e80032776fe",
+    "4e8e8c38ee75dc209038613a0dfff2976e037ecb",
+    "8d9a18adadb17b2a2428eb4a3c9f6a9305713e38"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/w_force.c",
+     "function": "DoGripAction"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceGrip"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_DoGripAction"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_ForceGrip"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "grip_refresh_rate",
+   "summary": "victim velocity refresh interval while gripped (levels 2/3), clamped to one server frame .. 500 ms; level-3 speed bands scale with it",
+   "cvars": [
+    {
+     "name": "g_gripRefreshRate",
+     "default": "300",
+     "profile": "300",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_commits": [
+    "913e8ffecd4ec8f42bfa97d0afa76c3f406466cb",
+    "6f1bd6fa4169662adea6ac403282563da01b2d9f"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/w_force.c",
+     "function": "DoGripAction"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_DoGripAction"
+    }
+   ],
+   "notes": "upstream reads its own g_svfps; ours reads sv_fps. 300 equals stock at any sv_fps >= 4.",
+   "status": "ported"
+  },
+  {
+   "name": "grip_rework",
+   "summary": "mode 1: costs 30/30/32; mode 2: costs 20/25/30, first gripper wins, gripped player cannot drain or lightning, level 1/2 start caps the victim's horizontal speed at 50, 0-Force continuation during the first second; both modes: a crippled (just released) player can be gripped again and grip 1 floats the victim",
+   "cvars": [
+    {
+     "name": "g_gripRework",
+     "default": "2",
+     "profile": "2",
+     "upstream_cvar": true,
+     "flags": "latch",
+     "stock": "0"
+    }
+   ],
+   "upstream_commits": [
+    "b936159f626cda6470278aefe7d74ef7e146c758",
+    "1ce1d0e63fb95b6c7ce24b1f1b4d7cebb8aad171",
+    "4e8e8c38ee75dc209038613a0dfff2976e037ecb"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/g_main.c",
+     "function": "G_RunFrame"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceGrip"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "DoGripAction"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "WP_ForcePowerRun"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "WP_DoSpecificPower"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceDrain"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceLightning"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_RunFrame"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_ForceGrip"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_DoGripAction"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_GripRun"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_GripStarted"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_GrippedCannotAttack"
+    }
+   ],
+   "status": "ported",
+   "deferred_parts": [
+    {
+     "name": "grip_rework_victim_slow",
+     "summary": "mode 2 slows a crippled victim to x0.2",
+     "upstream_functions": [
+      {
+       "file": "game/bg_pmove.c",
+       "function": "BG_AdjustClientSpeed"
+      }
+     ],
+     "reason": "shared bg code predicted by the client; needs a flag the cgame reads before porting (TODO in be_force.c)",
+     "status": "deferred"
+    }
+   ],
+   "notes": "victim x0.2 slow ported 2026-10-08 (BE_PM_GRIP_SLOW, follows g_gripRework 2)"
+  },
+  {
+   "name": "grip_absorb_fix",
+   "summary": "gripping an absorber costs the gripper 30 Force (absorbed) at most every 3 s instead of being free; grip broken by absorb mid-grip starts that debounce",
+   "cvars": [
+    {
+     "name": "g_gripAbsorbFix",
+     "default": "0",
+     "profile": "0",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_commits": [
+    "249f3fb5e3e8072c2b45ce86b0f4009859cafda1"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/w_force.c",
+     "function": "ForcePowerUsableOn"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceGrip"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "DoGripAction"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_GripAbsorbFix"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_ForceGrip"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_DoGripAction"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "drain_rework",
+   "summary": "one-shot drain: 200 ms hand extend, eye-height 512-unit line with 3-unit bounds, 1 s cooldown, removes 11/22/33 Force; mode 1 costs 8/17/25 Force and heals the drainer up to 125; mode 2 costs 10/20/30 health scaled by the Force drained (full on miss/absorb) and returns 60% of the drained Force; target debuff 1333 ms per level (no regen, cannot receive TE, cannot drain in mode 2); EV_FORCE_DRAINED carries the debuff in s.time; ps/s.userInt1 hit, userInt2 absorbed; 'rwd'/'rwd2' in configstring 25",
+   "cvars": [
+    {
+     "name": "g_drainRework",
+     "default": "2",
+     "profile": "2",
+     "upstream_cvar": true,
+     "flags": "latch",
+     "stock": "0"
+    }
+   ],
+   "upstream_commits": [
+    "63e3d5baa8d573585fdea7f718ed3dcf6322a260",
+    "5d6b3571b2f98e502b2f5b91679e047190ca03e0",
+    "5b503df9a646099a0a8324eab08418548618fe3b",
+    "119544569c6f02f01eca2b6d32a4b0ddb4ba13e2",
+    "941a19d1049c5e8c72c581f1ddcd1a3b0b833af2",
+    "b2835fdbb8b97cf61b44c6da5ecf5d60698b11e3",
+    "41f0dba6ccd9a5f4d5328481b264536cfd5fdb3f",
+    "38edb20e734af245f7c60f86acf0b8f316f348c8",
+    "b936159f626cda6470278aefe7d74ef7e146c758",
+    "80a1d6faa7f70d112fbe5cab66eccafd12343c52",
+    "3a4d788a0c4e514ba246a988902c0b6a3a5f649c"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/w_force.c",
+     "function": "ForceDrain"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceDrainDamage"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceShootDrain"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "WP_ForcePowerAvailable"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "WP_ForcePowerUsable"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "WP_ForcePowerRun"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "WP_ForcePowerStop"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceTeamForceReplenish"
+    },
+    {
+     "file": "game/g_client.c",
+     "function": "G_BroadcastServerFeatureList"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_ForceDrain"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_ForceDrainDamage"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_ForceShootDrain"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_DrainAvailable"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_DrainDebuffBlocks"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_DrainRun"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_DrainStop"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_TeamPowerTargetOk"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_InitGame"
+    }
+   ],
+   "notes": "feature list carries only the rwd/rwd2 token (CS_BOTINFO 25 is unused by xenjk); upstream's spawn-time userInt reset (g_client.c ClientSpawn, 41f0dba) is not ported: ClientSpawn's memset clears ps.userInt*, s.userInt* keep their last drain value until the next drain",
+   "status": "ported",
+   "client": {
+    "summary": "cgame draws the rework from the server data: CS 25 rwd/rwd2, one drain line at every level (no level-3 arc), held 200 ms because the server shows the shot for one frame; the victim shell for EV_FORCE_DRAINED s.time (alpha held at stock 125, which wrapped past 2 s); a red drain icon with the debuff time for the viewed player",
+    "our_functions": [
+     {
+      "file": "codemp/cgame/cg_be.c",
+      "function": "CG_BE_ParseFeatures"
+     },
+     {
+      "file": "codemp/cgame/cg_be.c",
+      "function": "CG_BE_DrainShown"
+     },
+     {
+      "file": "codemp/cgame/cg_be.c",
+      "function": "CG_BE_DrainLineOnly"
+     },
+     {
+      "file": "codemp/cgame/cg_be.c",
+      "function": "CG_BE_DrainedShellTime"
+     },
+     {
+      "file": "codemp/cgame/cg_be.c",
+      "function": "CG_BE_ShellAlpha"
+     },
+     {
+      "file": "codemp/cgame/cg_be.c",
+      "function": "CG_BE_DrawDrainDebuff"
+     }
+    ],
+    "note": "newmod (closed) not used or inspected; its own drawing is unknown, so this is xenjk's rendering of the protocol"
+   }
+  },
+  {
+   "name": "team_power_targets",
+   "summary": "team energize only reaches living teammates and skips drain-debuffed ones (with g_drainRework); optional line of sight in place of PVS for TH/TE",
+   "cvars": [
+    {
+     "name": "g_beTeamEnergizeLiving",
+     "default": "1",
+     "profile": "1",
+     "upstream_cvar": false,
+     "stock": "0"
+    },
+    {
+     "name": "g_thTeRequiresLOS",
+     "default": "0",
+     "profile": "0",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_commits": [
+    "a268e227f86e37aa153dbfe0a14d43f099b6bad2",
+    "63e3d5baa8d573585fdea7f718ed3dcf6322a260",
+    "6e1d7b550b745634ce1242c43585852c4dde266d",
+    "68b90bec8fd9ea9c5c9e63dde2e9b2ff4918d4d3"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/w_force.c",
+     "function": "ForceTeamHeal"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceTeamForceReplenish"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "HaveLOSToTarget"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_TeamPowerTargetOk"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_HaveLOSToTarget"
+    }
+   ],
+   "notes": "upstream does not skip debuffed players for team heal (commented out), so neither do we; abseil special case, unlagged shift and boost paths not ported; LOS recursion bounded at depth 8 (upstream unbounded)",
+   "status": "ported"
+  },
+  {
+   "name": "redirect_wrong_th_te_binds",
+   "summary": "a team heal bind fires team energize for a player who knows only that, and back",
+   "cvars": [
+    {
+     "name": "g_redirectWrongThTeBinds",
+     "default": "1",
+     "profile": "1",
+     "upstream_cvar": true,
+     "upstream_default": "1",
+     "stock": "0"
+    }
+   ],
+   "upstream_commits": [
+    "cabaa993b9cc26b4e33b0acf0cfcca2b56016deb"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/w_force.c",
+     "function": "WP_DoSpecificPower"
+    },
+    {
+     "file": "game/g_active.c",
+     "function": "ClientThink_real"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_RedirectThTePower"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_RedirectThTeCmd"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "push_knocked_down",
+   "summary": "knocked-down players can be pushed and pulled (upstream removed the stock refusal)",
+   "cvars": [
+    {
+     "name": "g_bePushKnockedDown",
+     "default": "1",
+     "profile": "1",
+     "upstream_cvar": false,
+     "stock": "0"
+    }
+   ],
+   "upstream_commits": [
+    "67fd08dcc4b31b05bf044d02a47d01810f25d130"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/w_force.c",
+     "function": "ForcePowerUsableOn"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_PushKnockedDown"
+    }
+   ],
+   "notes": "the change is labelled CHANGE 333 upstream; 67fd08d is the commit that left it as commented code",
+   "status": "ported"
+  },
+  {
+   "name": "protect3_damage_reduction",
+   "summary": "share of damage level-3 protect takes off health",
+   "cvars": [
+    {
+     "name": "g_protect3DamageReduction",
+     "default": "0.70",
+     "profile": "0.70",
+     "upstream_cvar": true,
+     "stock": "0.80"
+    }
+   ],
+   "upstream_commits": [
+    "db71f9c8dec3eea35b34716ba65d2af6463869d8"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/g_combat.c",
+     "function": "G_Damage"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_Protect3DamageReduction"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "fix_force_timers",
+   "cvars": [
+    {
+     "name": "g_fixForceTimers",
+     "default": "1",
+     "profile": "1",
+     "upstream_cvar": true,
+     "stock": "0"
+    }
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/w_force.c",
+     "function": "WP_ForcePowersUpdate"
+    }
+   ],
+   "status": "ported (owner, 2026-10-08), with the rage-recovery <= in bg_pmove.c/bg_saber.c (BE_PM_RAGE_END)",
+   "reason": "duration rounding and <= end change timing Bot2's forecast models (bot2_forecast.c ForecastForceUpdate)",
+   "our_functions": [
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_FixDuration"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_FixPowerDuration"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_ForceTimerEnded"
+    },
+    {
+     "file": "codemp/game/bot2_forecast.c",
+     "function": "ForecastForceUpdate"
+    },
+    {
+     "file": "codemp/game/bot2_forecast.c",
+     "function": "ForecastGenericCommand"
+    }
+   ],
+   "notes": "2026-10-08 correction: 223c07e8 rounded every power at the shared assignment in WP_ForcePowerStart; upstream rounds only speed, mind trick, rage, protect, absorb and see. With the profile on, drain rework's 1 ms one-shot ended before it fired. BE_FixPowerDuration limits it to the six timed powers."
+  },
+  {
+   "name": "send_force_timers",
+   "summary": "kls -1 -1 fpt <client> {<power> <full ms> <end ms since level start>}... (sfpt when none) to the user and the spectators following them; rage recovery as FP_SABER_OFFENSE. xenjk sends on change from the frame (no hooks in the power code); bots are not sent to. The cgame draws seconds and a bar under the active-power icons; rage recovery comes from the playerState on any server",
+   "cvars": [
+    {
+     "name": "g_sendForceTimers",
+     "default": "1",
+     "profile": "1",
+     "upstream_cvar": true,
+     "upstream_default": "1",
+     "stock": "0"
+    }
+   ],
+   "upstream_commits": [
+    "044dec17809b860976c87ef3157c0dff7da36529",
+    "d687d546a8f5f9df6f07592226d4843b611504a9"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/w_force.c",
+     "function": "SendForceTimers"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "StartForceTimer"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_ForceTimersFrame"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_SendForceTimers"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_TimerFullDuration"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_TimerEnd"
+    },
+    {
+     "file": "codemp/game/be_force.c",
+     "function": "BE_FollowedClient"
+    },
+    {
+     "file": "codemp/cgame/cg_be.c",
+     "function": "CG_BE_ServerCommand"
+    },
+    {
+     "file": "codemp/cgame/cg_be.c",
+     "function": "CG_BE_DrawPowerTimer"
+    }
+   ],
+   "notes": "upstream clears its copy on death and skips speed in racemode; xenjk shows the playerState ends",
+   "status": "ported"
+  },
+  {
+   "name": "generic_command_debounce",
+   "upstream_functions": [
+    {
+     "file": "game/g_active.c",
+     "function": "ClientThink_real"
+    }
+   ],
+   "status": "deferred",
+   "reason": "per-power generic-command debounce rewrite changes ForecastGenericCommand's mirror (bot2_forecast.c)"
+  },
+  {
+   "name": "lightning_rework",
+   "cvars": [
+    {
+     "name": "g_lightningRework",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/w_force.c",
+     "function": "ForceLightning"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceLightningDamage"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceShootLightning"
+    }
+   ],
+   "status": "deferred",
+   "reason": "owner decision 2026-10-08: off, not ported"
+  },
+  {
+   "name": "lightning_dps_accumulator",
+   "upstream_commits": [
+    "b936159f626cda6470278aefe7d74ef7e146c758"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/w_force.c",
+     "function": "ForceLightningDamage"
+    }
+   ],
+   "status": "deferred",
+   "reason": "always-on 45 DPS tickrate-independent accumulator; out of this port's scope"
+  },
+  {
+   "name": "unlagged",
+   "status": "deferred",
+   "reason": "xenjk has no unlagged system; upstream's time shifts in grip/drain/TH/TE traces are omitted"
+  },
+  {
+   "name": "force_regen_time_fix",
+   "summary": "g_fixForceRegenTime: rounds each regen interval to the 20-fps server's frames (g_forceRegenTime 200 -> 250 ms a point) at any tick rate",
+   "cvars": [
+    {
+     "name": "g_fixForceRegenTime",
+     "default": "0",
+     "profile": null,
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_commits": [
+    "f141eac"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/w_force.c",
+     "function": "WP_ForcePowerRegenerate"
+    }
+   ],
+   "our_functions": [],
+   "status": "declined (owner, 2026-10-08: keep xenjk's regen; upstream f141eac is after the snapshot)"
+  },
+  {
+   "name": "location_damage_mode2",
+   "summary": "hit-location multipliers: legs and feet 0.7, torso/arms/hands 1.0, head 1.3 (stock feet 0.5, arms 0.85, hands 0.6); saber and all weapons, splash included as stock",
+   "cvars": [
+    {
+     "name": "g_locationBasedDamage",
+     "default": "2",
+     "stock": "1",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_commits": [
+    "ecca622"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/g_combat.c",
+     "function": "G_LocationBasedDamageModifier"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_combat.c",
+     "function": "BE_LocationDamage"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "dropped_flag_spawn_protection",
+   "summary": "no respawn within 1024 u (and PVS) of a flag dropped in the last 10 s; the last spawn is kept. Upstream's allied-FC and just-killed spawn filters default off there and are not ported",
+   "cvars": [
+    {
+     "name": "g_droppedFlagSpawnProtectionRadius",
+     "default": "1024",
+     "stock": "0",
+     "upstream_cvar": true
+    },
+    {
+     "name": "g_droppedFlagSpawnProtectionDuration",
+     "default": "10000",
+     "stock": "10000",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_commits": [
+    "d4d5bb5"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/g_team.c",
+     "function": "TooCloseToDroppedFlag"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_combat.c",
+     "function": "BE_FilterSpawnsNearDroppedFlag"
+    }
+   ],
+   "status": "ported",
+   "notes": "upstream filters inside its own spawn-selection rewrite; here applied to stock SelectRandomTeamSpawnPoint after the telefrag filter"
+  },
+  {
+   "name": "weapon_charge_time",
+   "summary": "charge measured on the command clock (ps.weaponChargeTime is set from cmd.serverTime): bryar alt, disruptor alt, bowcaster, demp2 alt, thermal",
+   "cvars": [
+    {
+     "name": "g_fixWeaponChargeTime",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/g_weapon.c",
+     "function": "WP_FireBryarPistol"
+    },
+    {
+     "file": "game/g_weapon.c",
+     "function": "WP_DisruptorAltFire"
+    },
+    {
+     "file": "game/g_weapon.c",
+     "function": "WP_BowcasterMainFire"
+    },
+    {
+     "file": "game/g_weapon.c",
+     "function": "WP_DEMP2_AltFire"
+    },
+    {
+     "file": "game/g_weapon.c",
+     "function": "WP_FireThermalDetonator"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_combat.c",
+     "function": "BE_ChargeTime"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "improved_homing",
+   "summary": "an alt rocket fired within 500 ms of a full lock still homes on that target",
+   "cvars": [
+    {
+     "name": "g_improvedHoming",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": true
+    },
+    {
+     "name": "g_improvedHomingThreshold",
+     "default": "500",
+     "stock": "500",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/g_main.c",
+     "function": "RunImprovedHoming"
+    },
+    {
+     "file": "game/g_weapon.c",
+     "function": "WP_FireRocket"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_combat.c",
+     "function": "BE_HomingFrame"
+    },
+    {
+     "file": "codemp/game/be_combat.c",
+     "function": "BE_HomingForcedLock"
+    }
+   ],
+   "status": "ported",
+   "notes": "upstream also limits homing to alt fire and puts the lock stage in holocronBits for newmod's HUD; not ported"
+  },
+  {
+   "name": "corpse_sniping",
+   "summary": "disruptor alt continues through a corpse",
+   "cvars": [
+    {
+     "name": "g_fixCorpseSniping",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/g_weapon.c",
+     "function": "WP_DisruptorAltFire"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_combat.c",
+     "function": "BE_SnipeThroughCorpse"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "fresh_weapon_ammo",
+   "summary": "a respawning weapon pickup gives its full quantity (stock indexes ammo by weapon tag, a bug)",
+   "cvars": [
+    {
+     "name": "g_fixFreshWeaponAmmo",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/g_items.c",
+     "function": "Pickup_Weapon"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_combat.c",
+     "function": "BE_FreshWeaponFullAmmo"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "disarm_firing",
+   "summary": "after a weapon is pulled away, held fire is cancelled until released (up to 5 s), except charge-only holds",
+   "cvars": [
+    {
+     "name": "g_fixDisarmFiring",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/g_active.c",
+     "function": "ClientThink_real"
+    },
+    {
+     "file": "game/g_combat.c",
+     "function": "TossClientWeapon"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_combat.c",
+     "function": "BE_Disarmed"
+    },
+    {
+     "file": "codemp/game/be_combat.c",
+     "function": "BE_DisarmFiring"
+    }
+   ],
+   "status": "ported",
+   "notes": "timed on level.time, not upstream's trap_Milliseconds, so accelerated bot worlds replay"
+  },
+  {
+   "name": "thermal_direct_damage",
+   "summary": "thermal direct hit 90 (stock 70), equal to its max splash; always on upstream",
+   "cvars": [
+    {
+     "name": "g_beThermalDirectDamage",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": false
+    }
+   ],
+   "upstream_commits": [
+    "22e025f"
+   ],
+   "upstream_functions": [],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_combat.c",
+     "function": "BE_ThermalDirectDamage"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "saber_oneshots_explosives",
+   "summary": "a player's saber always destroys mines and detpacks in one hit; always on upstream",
+   "cvars": [
+    {
+     "name": "g_beSaberOneshotsExplosives",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": false
+    }
+   ],
+   "upstream_commits": [
+    "79b1ab8"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/g_combat.c",
+     "function": "G_Damage"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_combat.c",
+     "function": "BE_SaberOneshotsExplosive"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "nearest_player_flag_pickup",
+   "summary": "g_fixFlagPickup: a contested flag goes to the nearest player",
+   "status": "declined (owner 2026-10-08: the community found it broken; upstream defaulted it to 0 in 8448071 without a reason; positions compared are from different commands, the toucher keeps the pickup event, the winner skips pickup checks, ties leave the flag)",
+   "upstream_commits": [
+    "c48035a",
+    "8448071"
+   ],
+   "upstream_functions": [
+    {
+     "file": "game/g_team.c",
+     "function": "WhoGetsToPickUpTheFlag"
+    }
+   ],
+   "our_functions": []
+  },
+  {
+   "name": "beHeadFriction",
+   "summary": "normal friction on players' heads (stock: none, heads are ice)",
+   "cvars": [
+    {
+     "name": "g_beHeadFriction",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": false
+    }
+   ],
+   "upstream_notes": "always on upstream (a268e22)",
+   "upstream_functions": [
+    {
+     "file": "game/bg_pmove.c",
+     "function": "PM_Friction"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_pmove.c",
+     "function": "BE_PM"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "beRoll100",
+   "summary": "crouch roll from 100 u/s (stock 200)",
+   "cvars": [
+    {
+     "name": "g_beRoll100",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": false
+    }
+   ],
+   "upstream_notes": "always on upstream (a268e22)",
+   "upstream_functions": [
+    {
+     "file": "game/bg_pmove.c",
+     "function": "PM_Footsteps"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_pmove.c",
+     "function": "BE_PM"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "fixRoll",
+   "summary": "a roll that ends under a low ceiling becomes a crouch (stock: stuck rolling, crouch box, standing view)",
+   "cvars": [
+    {
+     "name": "g_fixRoll",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_notes": "301812b",
+   "upstream_functions": [
+    {
+     "file": "game/bg_pmove.c",
+     "function": "PM_CheckDuck"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_pmove.c",
+     "function": "BE_PM"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "fixWallgrab",
+   "summary": "forceJumpZStart 0 counts as unset: wall grabs after a ledge drop work at any height, later force-jump height measured from the right place",
+   "cvars": [
+    {
+     "name": "g_fixWallgrab",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_notes": "dc12844, 3fe9e3a; token fwg",
+   "upstream_functions": [
+    {
+     "file": "game/bg_pmove.c",
+     "function": "PM_GrabWallForJump"
+    },
+    {
+     "file": "game/bg_pmove.c",
+     "function": "PM_CheckJump"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_pmove.c",
+     "function": "BE_PM"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "fixForceJumpAnimationLock",
+   "summary": "free movement and jumps during a force-land animation (stock: locked for the whole anim); no double jump off a pad from a force land",
+   "cvars": [
+    {
+     "name": "g_fixForceJumpAnimationLock",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_notes": "470bd02, acdc919; token fjal",
+   "upstream_functions": [
+    {
+     "file": "game/bg_pmove.c",
+     "function": "PmoveSingle"
+    },
+    {
+     "file": "game/bg_misc.c",
+     "function": "BG_TouchJumpPad"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_pmove.c",
+     "function": "BE_PM"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "beDfaJumpCheck",
+   "summary": "yellow flip-over and red DFA need jump (stock: also fire running forward up a slope)",
+   "cvars": [
+    {
+     "name": "g_beDfaJumpCheck",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": false
+    }
+   ],
+   "upstream_notes": "dce703e, always on upstream; token fdfa",
+   "upstream_functions": [
+    {
+     "file": "game/bg_saber.c",
+     "function": "PM_SaberAttackForMovement"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_pmove.c",
+     "function": "BE_PM"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "fixDempSaberThrow",
+   "summary": "a DEMP freeze keeps counting down while the saber is out",
+   "cvars": [
+    {
+     "name": "g_fixDempSaberThrow",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_notes": "token none upstream",
+   "upstream_functions": [
+    {
+     "file": "game/bg_saber.c",
+     "function": "PM_WeaponLightsaber"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_pmove.c",
+     "function": "BE_PM"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "fixNoAmmoShootAnimation",
+   "summary": "no fire animation on an empty click (melee and det packs unchanged)",
+   "cvars": [
+    {
+     "name": "g_fixNoAmmoShootAnimation",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_notes": "token fnas",
+   "upstream_functions": [
+    {
+     "file": "game/bg_pmove.c",
+     "function": "PM_Weapon"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_pmove.c",
+     "function": "BE_PM"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "fix5AmmoSniping",
+   "summary": "disruptor alt fires at exactly 5 ammo, taking 5",
+   "cvars": [
+    {
+     "name": "g_fix5AmmoSniping",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_notes": "token f5as",
+   "upstream_functions": [
+    {
+     "file": "game/bg_pmove.c",
+     "function": "PM_Weapon"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_pmove.c",
+     "function": "BE_PM"
+    }
+   ],
+   "status": "ported"
+  },
+  {
+   "name": "not_ported_movement",
+   "status": "declined",
+   "notes": "pmove_float + g_gravity 760 (owner keeps sv_fps 40, gravity 800); g_bouncePadDoubleJump (stock by default upstream); g_allowMoveDisable (newmod client feature); racemode, pause and NPC fall fixes; account overrides"
+  },
+  {
+   "name": "ctfStats",
+   "summary": "CTF statistics: general, force, damage, weapon given/taken and accuracy tables; /stats /ctfstats /stat with subcommands and help (also in intermission), rcon/console stats, tables at intermission, CTF region time, base/chase/offense detection over five-minute blocks in 4v4. Passive: reads game state, writes its own memory only. Players keyed by ja_guid (name without one; bots by slot and name) instead of the session database.",
+   "cvars": [
+    {
+     "name": "g_beStats",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": false
+    },
+    {
+     "name": "g_autoStats",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": true
+    },
+    {
+     "name": "g_statsCaptureTimes",
+     "default": "1",
+     "stock": "0",
+     "upstream_cvar": true
+    }
+   ],
+   "upstream_notes": "dropped: sqlite/accounts, pug stats (G_DBWritePugStats), ratings/team balance, teamgen reminded positions, racemode, aim practice, meme/boost accounts, d_logTEData, d_debugCtfPosCalculation, webhook, SendMachineFriendlyStats, rocket-surf air shots; live-pug test without map_restart/AFK conditions",
+   "upstream_functions": [
+    {
+     "file": "game/g_stats.c",
+     "function": "DetermineCTFPosition"
+    },
+    {
+     "file": "game/g_stats.c",
+     "function": "PrintTeamStats"
+    },
+    {
+     "file": "game/g_stats.c",
+     "function": "Stats_Print"
+    },
+    {
+     "file": "game/g_stats.c",
+     "function": "CheckBestStats"
+    },
+    {
+     "file": "game/g_stats.c",
+     "function": "AddStatsToTotal"
+    },
+    {
+     "file": "game/g_stats.c",
+     "function": "InitClientStats"
+    },
+    {
+     "file": "game/g_stats.c",
+     "function": "ChangeStatsTeam"
+    },
+    {
+     "file": "game/g_stats.c",
+     "function": "ArchiveAndResetStatsBlock"
+    },
+    {
+     "file": "game/g_stats.c",
+     "function": "ChangeToNextStatsBlockIfNeeded"
+    },
+    {
+     "file": "game/g_stats.c",
+     "function": "GetCTFRegion"
+    },
+    {
+     "file": "game/g_stats.c",
+     "function": "GetStatsFromString"
+    },
+    {
+     "file": "game/g_stats.c",
+     "function": "AccuracyCategoryForProjectile"
+    },
+    {
+     "file": "game/g_table.c",
+     "function": "Table_WriteToBuffer"
+    },
+    {
+     "file": "game/g_table.c",
+     "function": "Table_DefineColumn"
+    },
+    {
+     "file": "game/collections.c",
+     "function": "ListAdd"
+    },
+    {
+     "file": "game/g_cmds.c",
+     "function": "Cmd_PrintStats_f"
+    },
+    {
+     "file": "game/g_cmds.c",
+     "function": "GetCTFLocationValue"
+    },
+    {
+     "file": "game/g_svcmds.c",
+     "function": "Svcmd_CtfStats_f"
+    },
+    {
+     "file": "game/g_main.c",
+     "function": "AddPlayerTick"
+    },
+    {
+     "file": "game/g_main.c",
+     "function": "IsLivePug"
+    },
+    {
+     "file": "game/g_main.c",
+     "function": "BeginIntermission"
+    },
+    {
+     "file": "game/g_main.c",
+     "function": "G_RunFrame"
+    },
+    {
+     "file": "game/g_main.c",
+     "function": "LogExit"
+    },
+    {
+     "file": "game/g_combat.c",
+     "function": "player_die"
+    },
+    {
+     "file": "game/g_combat.c",
+     "function": "G_Damage"
+    },
+    {
+     "file": "game/g_combat.c",
+     "function": "CheckAlmostCapture"
+    },
+    {
+     "file": "game/g_team.c",
+     "function": "Team_FragBonuses"
+    },
+    {
+     "file": "game/g_team.c",
+     "function": "Team_TouchOurFlag"
+    },
+    {
+     "file": "game/g_team.c",
+     "function": "Team_TouchEnemyFlag"
+    },
+    {
+     "file": "game/g_team.c",
+     "function": "Team_ResetFlag"
+    },
+    {
+     "file": "game/g_team.c",
+     "function": "CheckGetFlagSave"
+    },
+    {
+     "file": "game/g_items.c",
+     "function": "Pickup_Powerup"
+    },
+    {
+     "file": "game/g_items.c",
+     "function": "Pickup_Health"
+    },
+    {
+     "file": "game/g_items.c",
+     "function": "Pickup_Armor"
+    },
+    {
+     "file": "game/g_weapon.c",
+     "function": "FireWeapon"
+    },
+    {
+     "file": "game/g_missile.c",
+     "function": "CheckAccuracyAndAirshot"
+    },
+    {
+     "file": "game/g_missile.c",
+     "function": "G_MissileImpact"
+    },
+    {
+     "file": "game/g_missile.c",
+     "function": "G_ExplodeMissile"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceThrow"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceTeamHeal"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceTeamForceReplenish"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "WP_AbsorbConversion"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceGrip"
+    },
+    {
+     "file": "game/w_force.c",
+     "function": "ForceDrainDamage"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/game/be_stats.c",
+     "function": "BE_StatsFrame"
+    },
+    {
+     "file": "codemp/game/be_stats.c",
+     "function": "DetermineCTFPosition"
+    },
+    {
+     "file": "codemp/game/be_stats.c",
+     "function": "PrintTeamStats"
+    },
+    {
+     "file": "codemp/game/be_stats.c",
+     "function": "Stats_Print"
+    },
+    {
+     "file": "codemp/game/be_stats.c",
+     "function": "BE_Cmd_Stats_f"
+    },
+    {
+     "file": "codemp/game/be_stats.c",
+     "function": "BE_Svcmd_Stats_f"
+    },
+    {
+     "file": "codemp/game/be_stats.c",
+     "function": "BE_StatsIntermission"
+    },
+    {
+     "file": "codemp/game/be_table.c",
+     "function": "BE_TableWrite"
+    }
+   ],
+   "status": "ported"
+  }
+ ],
+ "never_port": [
+  "account boost assists (AutoTHTE, aim, spawn, auto self-kill, fake force alignment)",
+  "accounts and pug stats, racemode, aim practice packs",
+  "code paths keyed on account names in grip, push, drain, lightning and damage"
+ ]
+}

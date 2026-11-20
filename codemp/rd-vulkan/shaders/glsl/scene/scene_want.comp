@@ -1,0 +1,98 @@
+#version 450
+// Render scenes (vk_scene.cpp): geometry streaming's want pass (r_sceneStream). One thread per instance, every view
+// direction at once: the LOD scene_cull.comp would give it from the eye, the distance taken a margin nearer (the ring
+// loaded ahead of the camera), with the cull's size cut and the instance's hide and near distances; that LOD and its
+// mesh's coarsest are wanted. Each wanted LOD keeps the least such distance (the float's bits: non-negative floats order
+// as their bits), which the host reads back two frames later to order the reads; ~0u is not wanted.
+
+layout(local_size_x = 64) in;
+
+struct Instance { vec4 r0, r1, r2; uvec4 info; };	// 3x4 mesh-to-world rows; info.x mesh, y near distance, w hide distance
+struct Mesh { vec4 sphere; uvec4 lods; };			// sphere: mesh-local centre, radius; lods.x first, .y count
+struct Lod { uint firstPart, numParts; float screen; uint resident; };
+
+layout(std430, set = 0, binding = 0) readonly buffer Instances { Instance inst[]; };
+layout(std430, set = 0, binding = 1) readonly buffer Meshes { Mesh meshes[]; };
+layout(std430, set = 0, binding = 2) readonly buffer Lods { Lod lods[]; };
+layout(std430, set = 0, binding = 3) buffer Want { uint want[]; };
+// interiors (scene_cull.comp's binding 14): the groups whose streaming box, grown by r_sceneInteriorPreload, holds the eye
+layout(std430, set = 0, binding = 4) readonly buffer Interiors { uint interiorIn[]; };
+
+layout(push_constant) uniform Push {
+	vec4 eye;		// xyz: the eye; w: the margin (units)
+	vec4 lod;		// x: r_sceneLodBias / tan(fovY / 2); y: smallest drawn radius / distance (r_sceneCullPixels);
+					// z: r_sceneHideScale (0: none hidden); w: r_sceneProxyDebug
+	uvec4 counts;	// x: instances; y: r_sceneLodFade's band (float bits; 0 none), as scene_cull.comp's rc.look.y
+} pc;
+
+// bit 27 of info.z (w3scene.py): a proxy's member. Bits 0-23 hold the proxy's centre as a signed byte an axis (x, y, z),
+// in 16-unit steps from this instance's centre: its hide distance is measured from there, as its proxy's near distance is
+// from its own centre, so the two fade against one point. Measured each from its own centre (up to 41 m apart in
+// Beauclair) the dithers did not complement: both half drawn from one side, both or neither from the other
+vec3 HideCentre( const uint z, const vec3 centre )
+{
+	if ( ( z & 0x8000000u ) == 0u )
+		return centre;
+	return centre + 16.0 * vec3( float( int( z << 24u ) >> 24 ), float( int( z << 16u ) >> 24 ), float( int( z << 8u ) >> 24 ) );
+}
+
+void main()
+{
+	const uint id = gl_GlobalInvocationID.x;
+	if ( id >= pc.counts.x )
+		return;
+	const Instance I = inst[id];
+	if ( ( I.info.z & 0x1000000u ) != 0u ) {	// an interior the eye is not near
+		const uint g = I.info.z & 0xffffffu;
+		if ( ( interiorIn[g >> 5u] & ( 1u << ( g & 31u ) ) ) == 0u )
+			return;
+	}
+	const Mesh M = meshes[I.info.x];
+	const vec4 c = vec4( M.sphere.xyz, 1.0 );
+	const vec3 centre = vec3( dot( I.r0, c ), dot( I.r1, c ), dot( I.r2, c ) );
+	const float scale = sqrt( max( max( dot( vec3( I.r0.x, I.r1.x, I.r2.x ), vec3( I.r0.x, I.r1.x, I.r2.x ) ),
+		dot( vec3( I.r0.y, I.r1.y, I.r2.y ), vec3( I.r0.y, I.r1.y, I.r2.y ) ) ),
+		dot( vec3( I.r0.z, I.r1.z, I.r2.z ), vec3( I.r0.z, I.r1.z, I.r2.z ) ) ) );
+	const float radius = M.sphere.w * scale;
+	const float d = length( centre - pc.eye.xyz );
+	const float dh = length( HideCentre( I.info.z, centre ) - pc.eye.xyz );	// (hide and near distances)
+	const float dn = max( d - pc.eye.w, 0.0 );		// the nearest the camera comes within the margin
+	const float df = d + pc.eye.w;					// and the farthest
+
+	// a far proxy (near distance) is drawn only past it; anything past its hide distance not at all (scene_cull.comp)
+	if ( I.info.y != 0u && pc.lod.w == 1.0 )
+		return;
+	if ( pc.lod.z > 0.0 && pc.lod.w != 2.0 ) {
+		if ( I.info.w != 0u && max( dh - pc.eye.w, 0.0 ) > uintBitsToFloat( I.info.w ) * pc.lod.z )
+			return;
+		if ( I.info.y != 0u && dh + pc.eye.w < uintBitsToFloat( I.info.y ) * pc.lod.z )
+			return;
+	}
+	uint lod = M.lods.x + M.lods.y - 1u;
+	if ( dn > radius ) {
+		if ( radius / dn < pc.lod.y )
+			return;
+		const float size = radius / dn * pc.lod.x;
+		for ( uint k = 0u; k < M.lods.y; k++ ) {
+			if ( size >= lods[M.lods.x + k].screen ) {
+				lod = M.lods.x + k;
+				break;
+			}
+		}
+	} else {
+		lod = M.lods.x;
+	}
+	const uint bits = floatBitsToUint( d );
+	atomicMin( want[lod], bits );
+	// r_sceneLodFade: inside the band above this LOD's threshold the cull draws the next LOD fading in, only while it is
+	// resident; the margin's far end inside the band wants it too, a little later (a mesh
+	// of three or more LODs moving away had its middle one unloaded there, so no fade, the old pop)
+	const float band = uintBitsToFloat( pc.counts.y );
+	if ( band > 0.0 && lod + 1u < M.lods.x + M.lods.y && lods[lod].screen > 0.0
+			&& radius / max( df, radius ) * pc.lod.x < lods[lod].screen * ( 1.0 + band ) )
+		atomicMin( want[lod + 1u], floatBitsToUint( d + pc.eye.w ) );
+	// the mesh's coarsest LOD too, a little later: what the cull falls back to while a finer one arrives
+	const uint last = M.lods.x + M.lods.y - 1u;
+	if ( last != lod )
+		atomicMin( want[last], floatBitsToUint( d + 2.0 * pc.eye.w ) );
+}

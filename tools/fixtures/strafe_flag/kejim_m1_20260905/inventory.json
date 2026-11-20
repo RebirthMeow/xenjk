@@ -1,0 +1,360 @@
+{
+  "map": "mp/ctf_kejim",
+  "pk3": "game_directory\\Jedi Academy\\GameData\\base\\ctf_kejim.pk3",
+  "entry": "maps/mp/ctf_kejim.bsp",
+  "bsp_sha256": "76537a48e7d7273e2be6c033f281f8e0dfa49fcc8d550c334e4a8b0a42682e37",
+  "native_checksum_required": -1301924053,
+  "spawns": [
+    {
+      "name": "red_respawn_2",
+      "team": "red",
+      "kind": "respawn",
+      "index": 2,
+      "classname": "team_CTF_redspawn",
+      "bsp_entity": 63,
+      "origin": [
+        -64.0,
+        640.0,
+        1832.0
+      ],
+      "yaw": 90.0
+    },
+    {
+      "name": "red_respawn_3",
+      "team": "red",
+      "kind": "respawn",
+      "index": 3,
+      "classname": "team_CTF_redspawn",
+      "bsp_entity": 64,
+      "origin": [
+        384.0,
+        640.0,
+        1832.0
+      ],
+      "yaw": 90.0
+    },
+    {
+      "name": "blue_respawn_2",
+      "team": "blue",
+      "kind": "respawn",
+      "index": 2,
+      "classname": "team_CTF_bluespawn",
+      "bsp_entity": 65,
+      "origin": [
+        2240.0,
+        3520.0,
+        1832.0
+      ],
+      "yaw": 270.0
+    },
+    {
+      "name": "blue_initial_0",
+      "team": "blue",
+      "kind": "initial",
+      "index": 0,
+      "classname": "team_CTF_blueplayer",
+      "bsp_entity": 53,
+      "origin": [
+        2624.0,
+        4992.0,
+        1928.0
+      ],
+      "yaw": 270.0
+    },
+    {
+      "name": "blue_initial_1",
+      "team": "blue",
+      "kind": "initial",
+      "index": 1,
+      "classname": "team_CTF_blueplayer",
+      "bsp_entity": 54,
+      "origin": [
+        2688.0,
+        4992.0,
+        1928.0
+      ],
+      "yaw": 270.0
+    },
+    {
+      "name": "blue_initial_2",
+      "team": "blue",
+      "kind": "initial",
+      "index": 2,
+      "classname": "team_CTF_blueplayer",
+      "bsp_entity": 55,
+      "origin": [
+        2240.0,
+        4992.0,
+        1928.0
+      ],
+      "yaw": 270.0
+    },
+    {
+      "name": "blue_initial_3",
+      "team": "blue",
+      "kind": "initial",
+      "index": 3,
+      "classname": "team_CTF_blueplayer",
+      "bsp_entity": 56,
+      "origin": [
+        2304.0,
+        4992.0,
+        1928.0
+      ],
+      "yaw": 270.0
+    },
+    {
+      "name": "blue_initial_4",
+      "team": "blue",
+      "kind": "initial",
+      "index": 4,
+      "classname": "team_CTF_blueplayer",
+      "bsp_entity": 57,
+      "origin": [
+        2368.0,
+        4992.0,
+        1928.0
+      ],
+      "yaw": 270.0
+    },
+    {
+      "name": "blue_initial_5",
+      "team": "blue",
+      "kind": "initial",
+      "index": 5,
+      "classname": "team_CTF_blueplayer",
+      "bsp_entity": 58,
+      "origin": [
+        2560.0,
+        4992.0,
+        1928.0
+      ],
+      "yaw": 270.0
+    },
+    {
+      "name": "blue_respawn_0",
+      "team": "blue",
+      "kind": "respawn",
+      "index": 0,
+      "classname": "team_CTF_bluespawn",
+      "bsp_entity": 61,
+      "origin": [
+        1728.0,
+        4864.0,
+        1560.0
+      ],
+      "yaw": 270.0
+    },
+    {
+      "name": "blue_respawn_1",
+      "team": "blue",
+      "kind": "respawn",
+      "index": 1,
+      "classname": "team_CTF_bluespawn",
+      "bsp_entity": 62,
+      "origin": [
+        3200.0,
+        4864.0,
+        1560.0
+      ],
+      "yaw": 270.0
+    },
+    {
+      "name": "blue_respawn_3",
+      "team": "blue",
+      "kind": "respawn",
+      "index": 3,
+      "classname": "team_CTF_bluespawn",
+      "bsp_entity": 66,
+      "origin": [
+        2688.0,
+        3520.0,
+        1832.0
+      ],
+      "yaw": 270.0
+    },
+    {
+      "name": "blue_respawn_4",
+      "team": "blue",
+      "kind": "respawn",
+      "index": 4,
+      "classname": "team_CTF_bluespawn",
+      "bsp_entity": 67,
+      "origin": [
+        3264.0,
+        2464.0,
+        1832.0
+      ],
+      "yaw": 180.0
+    },
+    {
+      "name": "blue_respawn_5",
+      "team": "blue",
+      "kind": "respawn",
+      "index": 5,
+      "classname": "team_CTF_bluespawn",
+      "bsp_entity": 70,
+      "origin": [
+        2944.0,
+        1536.0,
+        1392.0
+      ],
+      "yaw": 180.0
+    },
+    {
+      "name": "red_initial_0",
+      "team": "red",
+      "kind": "initial",
+      "index": 0,
+      "classname": "team_CTF_redplayer",
+      "bsp_entity": 47,
+      "origin": [
+        384.0,
+        -832.0,
+        1928.0
+      ],
+      "yaw": 90.0
+    },
+    {
+      "name": "red_initial_1",
+      "team": "red",
+      "kind": "initial",
+      "index": 1,
+      "classname": "team_CTF_redplayer",
+      "bsp_entity": 48,
+      "origin": [
+        320.0,
+        -832.0,
+        1928.0
+      ],
+      "yaw": 90.0
+    },
+    {
+      "name": "red_initial_2",
+      "team": "red",
+      "kind": "initial",
+      "index": 2,
+      "classname": "team_CTF_redplayer",
+      "bsp_entity": 49,
+      "origin": [
+        256.0,
+        -832.0,
+        1928.0
+      ],
+      "yaw": 90.0
+    },
+    {
+      "name": "red_initial_3",
+      "team": "red",
+      "kind": "initial",
+      "index": 3,
+      "classname": "team_CTF_redplayer",
+      "bsp_entity": 50,
+      "origin": [
+        -64.0,
+        -832.0,
+        1928.0
+      ],
+      "yaw": 90.0
+    },
+    {
+      "name": "red_initial_4",
+      "team": "red",
+      "kind": "initial",
+      "index": 4,
+      "classname": "team_CTF_redplayer",
+      "bsp_entity": 51,
+      "origin": [
+        0.0,
+        -832.0,
+        1928.0
+      ],
+      "yaw": 90.0
+    },
+    {
+      "name": "red_initial_5",
+      "team": "red",
+      "kind": "initial",
+      "index": 5,
+      "classname": "team_CTF_redplayer",
+      "bsp_entity": 52,
+      "origin": [
+        64.0,
+        -832.0,
+        1928.0
+      ],
+      "yaw": 90.0
+    },
+    {
+      "name": "red_respawn_0",
+      "team": "red",
+      "kind": "respawn",
+      "index": 0,
+      "classname": "team_CTF_redspawn",
+      "bsp_entity": 59,
+      "origin": [
+        896.0,
+        -704.0,
+        1560.0
+      ],
+      "yaw": 90.0
+    },
+    {
+      "name": "red_respawn_1",
+      "team": "red",
+      "kind": "respawn",
+      "index": 1,
+      "classname": "team_CTF_redspawn",
+      "bsp_entity": 60,
+      "origin": [
+        -576.0,
+        -704.0,
+        1560.0
+      ],
+      "yaw": 90.0
+    },
+    {
+      "name": "red_respawn_4",
+      "team": "red",
+      "kind": "respawn",
+      "index": 4,
+      "classname": "team_CTF_redspawn",
+      "bsp_entity": 68,
+      "origin": [
+        -640.0,
+        1696.0,
+        1832.0
+      ],
+      "yaw": 0.0
+    },
+    {
+      "name": "red_respawn_5",
+      "team": "red",
+      "kind": "respawn",
+      "index": 5,
+      "classname": "team_CTF_redspawn",
+      "bsp_entity": 69,
+      "origin": [
+        -320.0,
+        2624.0,
+        1392.0
+      ],
+      "yaw": 0.0
+    }
+  ],
+  "flagstands": [
+    {
+      "name": "red_flagstand",
+      "team": "red",
+      "kind": "flagstand",
+      "classname": "team_CTF_redflag"
+    },
+    {
+      "name": "blue_flagstand",
+      "team": "blue",
+      "kind": "flagstand",
+      "classname": "team_CTF_blueflag"
+    }
+  ],
+  "pose_count": 24
+}

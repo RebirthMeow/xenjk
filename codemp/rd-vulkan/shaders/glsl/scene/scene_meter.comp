@@ -1,0 +1,42 @@
+#version 450
+// Render scenes (vk_scene.cpp, r_sceneAutoExposure): the frame metered for eye adaptation. After the main view's resolve
+// (the world without the HUD), a grid of the shown colour taken back through the tone curve (scene.frag's toDisplay:
+// the curve and gamma up to TONE_TOP, past it an e-fold per TONE_LOG) to linear light after exposure, its luminance
+// counted into a log2 histogram: 128 bins of a quarter EV from -24. vk_scene.cpp reads it when the slot comes round.
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0) uniform sampler2D colorTex;	// the resolved frame
+layout(std430, set = 0, binding = 1) buffer Histogram { uint bins[]; };
+layout(push_constant) uniform Push { vec4 p; } pc;	// x: the tone curve (0 exponential, 1 filmic), y, z: the grid
+
+const float TONE_TOP = 0.999, TONE_LOG = 0.1;
+shared uint local[128];
+
+float toneInverse( float y )
+{
+	y = pow( clamp( y, 0.0, TONE_TOP ), 2.2 );
+	if ( pc.p.x > 0.5 ) {
+		const float a = 2.51 - 2.43 * y, b = 0.03 - 0.59 * y, c = -0.14 * y;
+		return ( -b + sqrt( b * b - 4.0 * a * c ) ) / ( 2.0 * a );
+	}
+	return -log( 1.0 - y );
+}
+float linear( const float y ) { return y > TONE_TOP ? toneInverse( TONE_TOP ) * exp( ( y - TONE_TOP ) / TONE_LOG ) : toneInverse( y ); }
+
+void main()
+{
+	const uint li = gl_LocalInvocationIndex;
+	if ( li < 128u )
+		local[li] = 0u;
+	barrier();
+	const ivec2 id = ivec2( gl_GlobalInvocationID.xy );
+	if ( id.x < int( pc.p.y ) && id.y < int( pc.p.z ) ) {
+		const vec3 y = textureLod( colorTex, ( vec2( id ) + 0.5 ) / pc.p.yz, 0.0 ).rgb;
+		const float L = dot( vec3( linear( y.r ), linear( y.g ), linear( y.b ) ), vec3( 0.2126, 0.7152, 0.0722 ) );
+		atomicAdd( local[clamp( int( floor( ( log2( max( L, 1e-9 ) ) + 24.0 ) * 4.0 ) ), 0, 127 )], 1u );
+	}
+	barrier();
+	if ( li < 128u && local[li] != 0u )
+		atomicAdd( bins[li], local[li] );
+}

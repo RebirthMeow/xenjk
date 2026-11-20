@@ -1,0 +1,231 @@
+#version 450
+// Render scenes (vk_scene.cpp), GPU-driven draws (r_sceneGpuDriven): one view's culled commands (scene_cull.comp's
+// instance counts) packed into its draw lists, keeping their order (by material): a command with instances goes to
+// each list its material's kind belongs to (cmdInfo's bits), with its material beside it for scene.vert. Each list is
+// then one vkCmdDrawIndexedIndirectCount. One workgroup per view (the views' buffers in arrays, one dispatch): each
+// thread takes a run of commands, the runs' counts are summed into offsets in shared memory (in thread order, so the
+// lists keep the commands' order on any device), then each thread writes its run. The depth lists (the prepass and
+// the sun cascades: their result does not depend on the order) walk the commands biggest mesh first instead
+// (depthOrder), so the large occluders' depth is down before the small things behind them are tested.
+
+layout(local_size_x = 1024) in;	// vk_scene.cpp checks the device's workgroup limits
+
+const uint LISTS = 6;	// SCENE_LIST_COUNT: lit, depth, depth cutout, glow, blend, water
+
+struct Cmd { uint indexCount, instanceCount, firstIndex; int vertexOffset; uint firstInstance; };
+
+const uint VIEWS = 8;	// SCENE_MAX_VIEWS
+layout(std430, set = 0, binding = 0) readonly buffer Cmds { Cmd cmds[]; } viewCmds[VIEWS];
+layout(std430, set = 0, binding = 1) readonly buffer CmdInfo { uint cmdInfo[]; };	// bits 0..5 its lists, 8.. its material
+layout(std430, set = 0, binding = 2) buffer Lists { uint counts[16]; Cmd listCmds[]; } viewLists[VIEWS];
+layout(std430, set = 0, binding = 3) writeonly buffer ListMaterial { uint listMaterial[]; } viewMaterial[VIEWS];
+layout(std430, set = 0, binding = 4) readonly buffer DepthOrder { uint depthOrder[]; };
+// occlusion's phase 2 (counts.z 1, one workgroup): the commands its cull was first to touch, in command order
+// (scene_sort.comp sorted them), appended to the slot's lists (counts.y) in that order, each list's slots by a scan
+// over them: the same lists whatever the threads' timing (those lists are drawn after the view's own)
+layout(std430, set = 0, binding = 5) readonly buffer Touched { uint count; uint pad[3]; uint ids[]; } touched;
+// the block-parallel packing (r_sceneCompactBlocks; counts.z 2, 3, 4): each block of 1024 commands' list counts, then
+// their offsets in each list, a view's blocks from view * base1.y, six a block
+layout(std430, set = 0, binding = 6) buffer BlockSums { uint blockSums[]; };
+
+const uint DEPTH_LISTS = ( 1u << 1u ) | ( 1u << 2u );	// SCENE_LIST_DEPTH, SCENE_LIST_DEPTH_CUTOUT
+
+
+layout(push_constant) uniform Push {
+	uvec4 counts;		// x: commands; y: the first view (one workgroup a view from it); z: 1 the append mode, 2..4 the
+						// block-parallel packing's count, scan and write passes (0: the one-workgroup-a-view packing)
+	uvec4 base0;		// each list's first slot in listCmds (lists 0..3)
+	uvec4 base1;		// x: list 4's; y: the blocks of 1024 commands (the block-parallel packing); z: list 5's; w: the
+						// views the cull left out (r_sceneKeptCull), a bit a view: their lists left empty
+} pc;
+
+shared uint sums[LISTS][1024];
+shared uint appendAt[LISTS];	// the append mode's next slot in each list
+
+uint listBase( const uint k ) { return k < 4u ? pc.base0[k] : k == 4u ? pc.base1.x : pc.base1.z; }
+
+// inclusive sums over the workgroup's threads (Hillis-Steele), each list's
+void ScanSums( const uint t )
+{
+	for ( uint off = 1u; off < 1024u; off <<= 1u ) {
+		uint add[LISTS];
+		for ( uint k = 0u; k < LISTS; k++ )
+			add[k] = t >= off ? sums[k][t - off] : 0u;
+		barrier();
+		for ( uint k = 0u; k < LISTS; k++ )
+			sums[k][t] += add[k];
+		barrier();
+	}
+}
+
+/*
+The block-parallel packing (r_sceneCompactBlocks), the same lists as the one-workgroup-a-view packing below: a block of
+1024 commands a workgroup, a thread a command (neighbours read neighbours), every view's blocks in one grid (x the
+block, y the view). Count: each block's commands in each list. Scan: one workgroup a view turns its blocks' counts into
+their offsets in each list (and writes the lists' counts). Write: each command's slot is its block's offset plus its
+rank among the block's commands in that list, so a list holds its commands in command order (depthOrder's for the depth
+lists) as before.
+*/
+uint BlockLists( const uint v, const uint i, out uint d )
+{
+	d = 0u;
+	if ( i >= pc.counts.x )
+		return 0u;
+	d = depthOrder[i];
+	const uint lists0 = viewCmds[v].cmds[i].instanceCount != 0u ? cmdInfo[i] & ~DEPTH_LISTS : 0u;
+	const uint lists1 = viewCmds[v].cmds[d].instanceCount != 0u ? cmdInfo[d] & DEPTH_LISTS : 0u;
+	return lists0 | lists1;
+}
+
+void BlockPacking( const uint mode )
+{
+	const uint t = gl_LocalInvocationID.x;
+	if ( mode == 3u ) {	// scan: a workgroup a view, a thread a block
+		const uint v = gl_WorkGroupID.x + pc.counts.y, blocks = pc.base1.y;
+		if ( ( ( pc.base1.w >> v ) & 1u ) != 0u ) {	// a view left out: nothing listed (nothing draws it)
+			if ( t < LISTS )
+				viewLists[v].counts[t] = 0u;
+			return;
+		}
+		for ( uint k = 0u; k < LISTS; k++ )
+			sums[k][t] = t < blocks ? blockSums[( v * blocks + t ) * LISTS + k] : 0u;
+		barrier();
+		uint own[LISTS];
+		for ( uint k = 0u; k < LISTS; k++ )
+			own[k] = sums[k][t];
+		ScanSums( t );
+		if ( t < blocks )
+			for ( uint k = 0u; k < LISTS; k++ )
+				blockSums[( v * blocks + t ) * LISTS + k] = sums[k][t] - own[k];
+		if ( t == 1023u )
+			for ( uint k = 0u; k < LISTS; k++ )
+				viewLists[v].counts[k] = sums[k][1023];
+		return;
+	}
+	const uint b = gl_WorkGroupID.x, v = gl_WorkGroupID.y + pc.counts.y, i = b * 1024u + t;
+	if ( ( ( pc.base1.w >> v ) & 1u ) != 0u )
+		return;
+	uint d;
+	const uint lists = BlockLists( v, i, d );
+	for ( uint k = 0u; k < LISTS; k++ )
+		sums[k][t] = ( lists >> k ) & 1u;
+	barrier();
+	ScanSums( t );
+	if ( mode == 2u ) {	// count
+		if ( t == 1023u )
+			for ( uint k = 0u; k < LISTS; k++ )
+				blockSums[( v * pc.base1.y + b ) * LISTS + k] = sums[k][1023];
+		return;
+	}
+	for ( uint k = 0u; k < LISTS; k++ ) {	// write
+		if ( ( ( lists >> k ) & 1u ) == 0u )
+			continue;
+		const uint ci = ( ( DEPTH_LISTS >> k ) & 1u ) != 0u ? d : i;
+		const uint at = listBase( k ) + blockSums[( v * pc.base1.y + b ) * LISTS + k] + sums[k][t] - 1u;
+		viewLists[v].listCmds[at] = viewCmds[v].cmds[ci];
+		viewMaterial[v].listMaterial[at] = cmdInfo[ci] >> 8u;
+	}
+}
+
+void main()
+{
+	if ( pc.counts.z >= 2u ) {
+		BlockPacking( pc.counts.z );
+		return;
+	}
+	if ( pc.counts.z == 1u ) {
+		const uint t = gl_LocalInvocationID.x, vs = pc.counts.y, n = touched.count;
+		if ( t < LISTS )
+			appendAt[t] = viewLists[vs].counts[t];
+		barrier();
+		for ( uint b = 0u; b < n; b += 1024u ) {
+			const uint ci = b + t < n ? touched.ids[b + t] : 0u;
+			const uint info = b + t < n ? cmdInfo[ci] : 0u;
+			for ( uint k = 0u; k < LISTS; k++ )
+				sums[k][t] = ( info >> k ) & 1u;
+			barrier();
+			for ( uint off = 1u; off < 1024u; off <<= 1u ) {	// inclusive sums over the threads (Hillis-Steele)
+				uint add[LISTS];
+				for ( uint k = 0u; k < LISTS; k++ )
+					add[k] = t >= off ? sums[k][t - off] : 0u;
+				barrier();
+				for ( uint k = 0u; k < LISTS; k++ )
+					sums[k][t] += add[k];
+				barrier();
+			}
+			if ( b + t < n ) {
+				const Cmd c = viewCmds[vs].cmds[ci];
+				for ( uint k = 0u; k < LISTS; k++ ) {
+					if ( ( ( info >> k ) & 1u ) == 0u )
+						continue;
+					const uint at = listBase( k ) + appendAt[k] + sums[k][t] - 1u;
+					viewLists[vs].listCmds[at] = c;
+					viewMaterial[vs].listMaterial[at] = info >> 8u;
+				}
+			}
+			barrier();
+			if ( t < LISTS )
+				appendAt[t] += sums[t][1023];
+			barrier();
+		}
+		if ( t < LISTS )
+			viewLists[vs].counts[t] = appendAt[t];
+		return;
+	}
+	const uint t = gl_LocalInvocationID.x;
+	const uint v = gl_WorkGroupID.x + pc.counts.y;
+	const uint n = pc.counts.x;
+	const uint per = ( n + 1023u ) / 1024u;
+	const uint first = min( t * per, n ), last = min( first + per, n );
+
+	uint own[LISTS];
+	for ( uint k = 0u; k < LISTS; k++ )
+		own[k] = 0u;
+	// position i holds command i in material order (the lit, glow and blend lists) and depthOrder[i] in the depth
+	// lists' order: each read once
+	for ( uint i = first; i < last; i++ ) {
+		const uint d = depthOrder[i];
+		const uint lists0 = viewCmds[v].cmds[i].instanceCount != 0u ? cmdInfo[i] & ~DEPTH_LISTS : 0u;
+		const uint lists1 = viewCmds[v].cmds[d].instanceCount != 0u ? cmdInfo[d] & DEPTH_LISTS : 0u;
+		for ( uint k = 0u; k < LISTS; k++ )
+			own[k] += ( ( lists0 | lists1 ) >> k ) & 1u;
+	}
+	for ( uint k = 0u; k < LISTS; k++ )
+		sums[k][t] = own[k];
+	barrier();
+
+	// inclusive sums over the threads (Hillis-Steele)
+	for ( uint off = 1u; off < 1024u; off <<= 1u ) {
+		uint add[LISTS];
+		for ( uint k = 0u; k < LISTS; k++ )
+			add[k] = t >= off ? sums[k][t - off] : 0u;
+		barrier();
+		for ( uint k = 0u; k < LISTS; k++ )
+			sums[k][t] += add[k];
+		barrier();
+	}
+
+	uint at[LISTS];
+	for ( uint k = 0u; k < LISTS; k++ )
+		at[k] = listBase( k ) + sums[k][t] - own[k];
+	for ( uint i = first; i < last; i++ ) {
+		for ( uint pass = 0u; pass < 2u; pass++ ) {
+			const uint ci = pass == 0u ? i : depthOrder[i];
+			const Cmd c = viewCmds[v].cmds[ci];
+			if ( c.instanceCount == 0u )
+				continue;
+			const uint info = cmdInfo[ci];
+			const uint lists = info & ( pass == 0u ? ~DEPTH_LISTS : DEPTH_LISTS );
+			for ( uint k = 0u; k < LISTS; k++ ) {
+				if ( ( ( lists >> k ) & 1u ) == 0u )
+					continue;
+				viewLists[v].listCmds[at[k]] = c;
+				viewMaterial[v].listMaterial[at[k]] = info >> 8u;
+				at[k]++;
+			}
+		}
+	}
+	if ( t == 1023u )
+		for ( uint k = 0u; k < LISTS; k++ )
+			viewLists[v].counts[k] = sums[k][1023];
+}

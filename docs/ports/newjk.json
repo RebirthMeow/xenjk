@@ -1,0 +1,68 @@
+{
+ "schema": 1,
+ "upstream": {
+  "name": "NewJK",
+  "repo": "https://github.com/jkanewmod/NewJK",
+  "license": "GPL-2.0",
+  "snapshot": "0b17c8efdbb8ad36b6ae7143fc4c6cb4a7cfaff2",
+  "snapshot_short": "0b17c8ef",
+  "snapshot_date": "2026-01-24",
+  "local_checkout": "../NewJK",
+  "base": "OpenJK 948b55b5 (2017-05-14), never merged since"
+ },
+ "ours": {
+  "files": [
+   "codemp/client/nj_input.cpp",
+   "codemp/client/nj_input.h"
+  ],
+  "hook_marker": "// NewJK:",
+  "profile": "tools/fixtures/competitive/newjk_client_profile.cfg",
+  "default_rule": "every cvar default keeps stock OpenJK behaviour; the profile is a cvar set"
+ },
+ "features": [
+  {
+   "name": "simultaneous_generic_commands",
+   "summary": "generic commands (Force powers, items) pressed in the same frame are queued and sent in the following packets, one each, ordered by Force side (from the forcepowers userinfo; upstream reads ui_forceAlignment); protect+absorb together keeps protect",
+   "cvars": [
+    {
+     "name": "cl_fixSimultaneousInputs",
+     "default": "1",
+     "profile": "1",
+     "upstream_cvar": true,
+     "upstream_default": "1",
+     "default_note": "owner 2026-10-08: on by default, an exception to the stock-default rule"
+    }
+   ],
+   "upstream_commits": [
+    "b46ed79572df2dbd4c317b67842596bcb85eac77"
+   ],
+   "upstream_functions": [
+    {
+     "file": "codemp/client/cl_input.cpp",
+     "function": "CL_FinishMove"
+    }
+   ],
+   "our_functions": [
+    {
+     "file": "codemp/client/nj_input.cpp",
+     "function": "NJ_FinishMoveGenCmd"
+    },
+    {
+     "file": "codemp/client/nj_input.cpp",
+     "function": "NJ_GenCmdPressed"
+    },
+    {
+     "file": "codemp/client/nj_input.cpp",
+     "function": "NJ_Order"
+    }
+   ],
+   "status": "ported"
+  }
+ ],
+ "not_ported": {
+  "in_raw": "xenjk already has raw mouse input (in_mouse 1 sets SDL_MOUSE_RELATIVE_MODE_WARP 0, the same hint)",
+  "netcode": "owner 2026-10-08: skipped (CMD_BACKUP 512, packet backup, time nudge, reconnect on overflow); localhost play",
+  "console_chat": "owner 2026-10-08: not today (ctrl word editing, fonts, chat layout, mute, enter completion, toggleconsole2, demo-name fix, language fix)",
+  "renderer": "upstream imported rend2/Vulkan from TaystJK after the snapshot: reference for the renderer work"
+ }
+}

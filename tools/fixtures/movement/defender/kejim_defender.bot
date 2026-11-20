@@ -1,0 +1,42 @@
+{
+name Defender_v2
+model kyle
+personality botfiles/kejim_base.jkb
+forcepowers 7-2-030330300000330110
+saber1 single_1
+}
+{
+name Chaser_v2
+model kyle
+personality botfiles/kejim_defender.jkb
+forcepowers 7-1-030330000000000110
+saber1 single_1
+}
+{
+name Camper_v2
+model jan
+personality botfiles/kejim_runner.jkb
+forcepowers 7-1-033330000330000110
+saber1 single_1
+}
+{
+name Defender2_v2
+model kyle
+personality botfiles/kejim_base.jkb
+forcepowers 7-2-030330300000330110
+saber1 single_1
+}
+{
+name Chaser2_v2
+model kyle
+personality botfiles/kejim_defender.jkb
+forcepowers 7-1-030330000000000110
+saber1 single_1
+}
+{
+name Camper2_v2
+model jan
+personality botfiles/kejim_runner.jkb
+forcepowers 7-1-033330000330000110
+saber1 single_1
+}

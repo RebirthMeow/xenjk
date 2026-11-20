@@ -1,0 +1,79 @@
+--- a/tools/quake3/common/vfs.cpp
++++ b/tools/quake3/common/vfs.cpp
+@@ -268,12 +268,24 @@
+ 
+ 		FILE *f = fopen( filename, "rb" );
+ 		if ( f != nullptr ) {
+-			fseek( f, 0, SEEK_END );
+-			buffer = MemBuffer( ftell( f ) );
++			// xenjk: a 64-bit seek and length (fseek and ftell take a 32-bit long on Windows: on a .map past 2 GB
++			// fseek fails, the length reads 0, and the map parses as empty)
++#ifdef _WIN32
++			_fseeki64( f, 0, SEEK_END );
++			buffer = MemBuffer( _ftelli64( f ) );
++#else
++			fseeko( f, 0, SEEK_END );
++			buffer = MemBuffer( ftello( f ) );
++#endif
+ 			rewind( f );
+ 
+-			if ( fread( buffer.data(), 1, buffer.size(), f ) != buffer.size() ) {
+-				 buffer = MemBuffer();
++			// xenjk: in 1 GB reads (the Windows C runtime's stdio is not relied on for one read of several GB)
++			for ( size_t done = 0, chunk; done < buffer.size(); done += chunk ) {
++				chunk = std::min( buffer.size() - done, size_t( 1 ) << 30 );
++				if ( fread( static_cast<byte*>( buffer.data() ) + done, 1, chunk, f ) != chunk ) {
++					buffer = MemBuffer();
++					break;
++				}
+ 			}
+ 			fclose( f );
+ 		}
+--- a/tools/quake3/q3map2/writebsp.cpp
++++ b/tools/quake3/q3map2/writebsp.cpp
+@@ -112,6 +112,37 @@
+ 
+ 
+ /*
++   CompactPlanes() (xenjk)
++   keeps only the planes a brush side or node uses, in their original order: q3map2 stores every plane with its
++   flipped twin, and collision-only maps reference about half of them (Kabuki map-23: 1.25 M of 2.30 M); the engine
++   never reads planeNum ^ 1 from the file. Keeps a district-sized BSP under the format's 2 GB.
++ */
++
++static void CompactPlanes(){
++	std::vector<int> remap( bspPlanes.size(), -1 );
++	for ( const bspBrushSide_t& side : bspBrushSides )
++		remap[ side.planeNum ] = 0;
++	for ( const bspNode_t& node : bspNodes )
++		remap[ node.planeNum ] = 0;
++	std::vector<bspPlane_t> kept;
++	for ( size_t i = 0; i < bspPlanes.size(); ++i )
++	{
++		if ( remap[ i ] == 0 ) {
++			remap[ i ] = kept.size();
++			kept.push_back( bspPlanes[ i ] );
++		}
++	}
++	for ( bspBrushSide_t& side : bspBrushSides )
++		side.planeNum = remap[ side.planeNum ];
++	for ( bspNode_t& node : bspNodes )
++		node.planeNum = remap[ node.planeNum ];
++	Sys_FPrintf( SYS_VRB, "%9zu BSP planes used of %zu\n", kept.size(), bspPlanes.size() );
++	bspPlanes.swap( kept );
++}
++
++
++
++/*
+    EmitLeaf()
+    emits a leafnode to the bsp file
+  */
+@@ -331,6 +362,7 @@
+ 	Sys_FPrintf( SYS_VRB, "--- EndBSPFile ---\n" );
+ 
+ 	EmitPlanes();
++	CompactPlanes();
+ 
+ 	numBSPEntities = entities.size();
+ 	UnparseEntities();

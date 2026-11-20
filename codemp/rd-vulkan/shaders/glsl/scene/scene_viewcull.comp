@@ -1,0 +1,76 @@
+#version 450
+// Render scenes (vk_scene.cpp): the haze's local volumes that may reach the eye view's frustum, once a frame before the
+// haze is lit. Each volume's bounding sphere (vk_scene.cpp computes them from the volumes' boxes at load) against the
+// frustum's four sides and the eye's plane, with a margin, so that no volume that holds a froxel centre is left out
+// (every froxel centre lies inside the frustum). The kept indices are written in ascending order, so scene_fog.comp sees
+// the same volumes in the same order as walking the whole array, and its sums are unchanged; and its per-group mask
+// (1,024 entries) bounds the volumes in view, not the map's. Two dispatches over workgroups of 256: the first counts
+// each workgroup's kept volumes, the second writes each kept index at its workgroup's offset (the counts of the
+// workgroups before it) plus its rank within the workgroup. Ranks come from a scan over the local invocation index in
+// shared memory, so the order does not depend on how a device lays out or sizes its subgroups.
+
+layout(local_size_x = 256) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer VolumeSpheres { vec4 volumeSpheres[]; };	// scene space: centre, radius
+layout(std430, set = 0, binding = 1) writeonly buffer VolumeList { uint volumeCount; uint volumePad[3]; uint volumeIds[]; };
+layout(std430, set = 0, binding = 2) buffer Counts { uint groupCount[]; };	// per workgroup: kept (the first pass)
+
+layout(push_constant) uniform Push {
+	vec4 eye;		// xyz the eye
+	vec4 fwd;		// the eye's forward axis; w: volumes
+	vec4 left;		// w: tan(fovX / 2)
+	vec4 up;		// w: tan(fovY / 2)
+	vec4 mode;		// x: 1 keeps every one (r_sceneViewCull 0: the list stays whole); y: the pass (0 count, 1 write)
+} pc;
+
+shared uint rank[256];		// inclusive sums of the kept flags over the local index
+shared uint partial[256];
+
+bool inView( const vec3 P, const float r )
+{
+	const vec3 rel = P - pc.eye.xyz;
+	const vec3 v = vec3( dot( rel, pc.left.xyz ), dot( rel, pc.up.xyz ), dot( rel, pc.fwd.xyz ) );
+	// the margin: a unit and a ten-thousandth of the distance, far past the froxels' own rounding
+	const float m = r + 1.0 + 1e-4 * ( abs( v.x ) + abs( v.y ) + abs( v.z ) );
+	// the frustum's sides (inward normals in view space)
+	const vec3 nx0 = normalize( vec3( 1.0, 0.0, pc.left.w ) ), nx1 = normalize( vec3( -1.0, 0.0, pc.left.w ) );
+	const vec3 ny0 = normalize( vec3( 0.0, 1.0, pc.up.w ) ), ny1 = normalize( vec3( 0.0, -1.0, pc.up.w ) );
+	return v.z + m > 0.0 && dot( nx0, v ) > -m && dot( nx1, v ) > -m && dot( ny0, v ) > -m && dot( ny1, v ) > -m;
+}
+
+void main()
+{
+	const uint wg = gl_WorkGroupID.x, t = gl_LocalInvocationIndex;
+	const uint n = uint( pc.fwd.w );
+	const uint i = wg * 256u + t;
+	const bool keep = i < n && ( pc.mode.x > 0.5 || inView( volumeSpheres[i].xyz, volumeSpheres[i].w ) );
+	rank[t] = keep ? 1u : 0u;
+	barrier();
+	for ( uint off = 1u; off < 256u; off <<= 1u ) {	// inclusive sums (Hillis-Steele)
+		const uint add = t >= off ? rank[t - off] : 0u;
+		barrier();
+		rank[t] += add;
+		barrier();
+	}
+	if ( pc.mode.y < 0.5 ) {	// the first pass: this workgroup's count
+		if ( t == 0u )
+			groupCount[wg] = rank[255];
+		return;
+	}
+	// the second: the workgroups before this one counted (summed across the threads), then each kept index written
+	uint s = 0u;
+	for ( uint j = t; j < wg; j += 256u )
+		s += groupCount[j];
+	partial[t] = s;
+	barrier();
+	for ( uint h = 128u; h > 0u; h >>= 1u ) {
+		if ( t < h )
+			partial[t] += partial[t + h];
+		barrier();
+	}
+	const uint base = partial[0];
+	if ( t == 0u && wg == ( n == 0u ? 0u : ( n - 1u ) / 256u ) )	// the last workgroup: the count
+		volumeCount = base + rank[255];
+	if ( keep )
+		volumeIds[base + rank[t] - 1u] = i;
+}

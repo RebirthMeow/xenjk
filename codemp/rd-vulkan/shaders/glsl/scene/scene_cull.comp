@@ -1,0 +1,318 @@
+#version 450
+// Render scenes (vk_scene.cpp): one view's culling. One thread per instance: its bounding sphere against the view's
+// frustum planes, a size cut in pixels, the LOD by projected size; then one slot in that LOD, which all its parts' draw
+// commands share (an atomic instance count on its first part's command, the others' counts raised to match), recorded as
+// a pair in the slot's pool (binding 15): scene_scatter.comp then gives each LOD its range of the visible list and puts
+// each instance in it (the count-then-scan cull: the lists take what is visible, not a range per LOD for every instance).
+//
+// Occlusion (r_sceneOcclusion, the eye view, counts.z): phase 1 (counts.z 1, at frame start) also tests each instance
+// against the last frame's far-depth pyramid with the camera it was made with; one wholly behind it is not drawn but
+// listed. Phase 2 (counts.z 2, after the depth prepass, into its own view slot; one thread per listed instance, an
+// indirect dispatch phase 1 sized) tests the listed ones against this frame's pyramid of the prepass's depth with this
+// frame's camera: those it does not find hidden are drawn this frame (the prepass's second half and every later pass),
+// so nothing visible waits a frame (no pop).
+
+layout(local_size_x = 64) in;
+
+struct Instance { vec4 r0, r1, r2; uvec4 info; };	// 3x4 mesh-to-world rows; info.x mesh
+struct Mesh { vec4 sphere; uvec4 lods; };			// sphere: mesh-local centre, radius; lods.x first, .y count, .z 1 when the last is a billboard card
+struct Lod { uint firstPart, numParts; float screen; uint resident; };	// resident: its geometry is in (r_sceneStream; always 1 without it)
+struct Cmd { uint indexCount, instanceCount, firstIndex; int vertexOffset; uint firstInstance; };
+
+layout(std430, set = 0, binding = 0) readonly buffer Instances { Instance inst[]; };
+layout(std430, set = 0, binding = 1) readonly buffer Meshes { Mesh meshes[]; };
+layout(std430, set = 0, binding = 2) readonly buffer Lods { Lod lods[]; };
+layout(std430, set = 0, binding = 3) readonly buffer PartCmd { uint partCmd[]; };
+layout(std430, set = 0, binding = 4) buffer Cmds { Cmd cmds[]; };
+layout(std430, set = 0, binding = 5) writeonly buffer Visible { uint visible[]; };
+// a near sun cascade (counts.y 1): the eye view's four sides and the light's direction of travel. A caster outside a
+// side whose shadow travels away from it can darken nothing the eye sees (r_sceneShadowReceivers)
+// hideEye (every view): the eye, from which an instance's hide distance is measured (CP2077's forceAutoHideDistance, scene
+// version 4, instance info.w); w: r_sceneHideScale (0: none hidden). travel.w 1: the eye's views fade (r_sceneHideFade),
+// so in the view it dithers (pc.cull.w) a far proxy is drawn from its near distance less scene.vert's fade band; the
+// cascades pop it at the near distance itself, so a mesh and its proxy never cast together there (it was 0.27 ms of
+// Watson's kabuki_street_b); -1: the static light shadows and the rain view, every full mesh and no far proxy
+// look.x (r_sceneProxyDebug): 1 no far proxy, 2 every one at any distance; look.y the LOD crossfade band; look.z r_sceneShadowLod; look.w r_sceneOnlyMesh (its mesh + 1; 0 all)
+layout(std430, set = 0, binding = 6) readonly buffer Receivers { vec4 eyePlanes[4]; vec4 travel; vec4 hideEye; vec4 look; } rc;
+const float HIDE_FADE = 40.0 * 37.5;	// scene.vert's
+// occlusion: both far-depth pyramids (scene_occ.comp: the last frame's, then this frame's prepass's); the two cameras, the pyramid's levels and the counters (the slot's, read by the host two frames
+// later, r_sceneOcclusionStats); phase 1's hidden instances and phase 2's dispatch size
+layout(std430, set = 0, binding = 7) readonly buffer Pyramid { float pyr[]; };
+layout(std430, set = 0, binding = 8) buffer Occ {
+	mat4 viewProj[2];	// the pyramid's camera (Vulkan clip space): 0 the last frame's, 1 this frame's
+	vec4 eye[2];		// its origin
+	vec4 fwd[2];		// its forward axis
+	uvec4 dims;			// x, y: the screen's size; z: levels
+	uvec4 ofs[8];		// each level's offset in pyr: 0..3 camera 0's pyramid, 4..7 camera 1's
+	uint counts[8];		// phase 1: instances tested, hidden, their indices, hidden; phase 2: instances drawn, indices
+} occ;
+layout(std430, set = 0, binding = 9) buffer OccList { uint count; uint pad[3]; uint ids[]; } occList;
+layout(std430, set = 0, binding = 10) buffer OccArgs { uint groups[8]; } args;	// 0..2 phase 2's cull, 4..6 its lists' append
+layout(std430, set = 0, binding = 11) buffer OccTouched { uint count; uint pad[3]; uint ids[]; } touched;	// phase 2's commands
+// the LODs whose range got a second instance (counts.w bit 1, the views the lit pass draws): scene_sort.comp puts each
+// range in instance order. x: the sort's workgroups (an indirect dispatch's size), then 1, 1, the count; the LODs
+layout(std430, set = 0, binding = 12) buffer SortList { uint groups, one0, one1, count; uint ids[]; } sortList;
+// the view's instance groups that may hold something it draws (counts.w bit 2, r_sceneCullGroups: scene_groupcull.comp
+// listed them): its count, the indirect dispatch's size, then their indices; 8 workgroups a group of 512 instances
+layout(std430, set = 0, binding = 13) readonly buffer Groups { uint count, pad0, pad1, pad2; uint ids[]; } cullGroups;
+// CP2077's interiors (maps/<map>.xint): an instance whose slot has bit 24 is its interior group's (bits 0-23); the groups
+// whose streaming box holds the eye, a bit each (vk_scene.cpp each frame). The static light faces keep every caster.
+layout(std430, set = 0, binding = 14) readonly buffer Interiors { uint interiorIn[]; };
+// the slot's pool (scene_scatter.comp's header): 0 pairs taken, 1 LODs touched, 3 left out, 4 and 8 the passes' workgroups,
+// 12 the capacity, 14 the most pairs taken, 15 left out since made; then the touched LODs (view << 24 | LOD), then the
+// pairs (instance, view << 24 | the LOD's lead command, slot)
+layout(std430, set = 0, binding = 15) buffer Pool { uint hdr[16]; uint data[]; } pool;
+
+layout(push_constant) uniform Push {
+	vec4 planes[5];		// normal, dist: inside when dot(p, normal) - dist >= -radius
+	vec4 lod;			// xyz: the LOD's eye; w: r_sceneLodBias / tan(fovY / 2)
+	vec4 cull;			// x: smallest drawn radius / distance x (1 / tan(fovY / 2)), from r_sceneCullPixels; y: smallest
+						// drawn radius (a sun cascade: a few of its texels); w: 1 for the view the hide fade dithers (the
+						// eye's: hides from rc.hideEye), 0 for the others (hides from lod.xyz: a cascade's is the eye's,
+						// the kept far cascade's its cell's centre)
+	uvec4 counts;		// x: instances; y: 1 to keep only casters whose shadows may fall in the eye's view; z: occlusion
+						// phase (0 none); w: bit 0 to count (r_sceneOcclusionStats), bit 1 to list the LODs to sort;
+						// bits 8-10: the view (its commands' buffer in the slot, for scene_scatter.comp).
+						// z 3: a static light's face (r_sceneLightShadowLists): x its listed instances, y the first
+} pc;
+
+// the sphere wholly behind the farthest depth over its screen rectangle in camera c's pyramid
+bool Occluded( const vec3 centre, const float radius, const uint c )
+{
+	const float zNear = dot( centre - occ.eye[c].xyz, occ.fwd[c].xyz ) - radius;
+	if ( zNear <= 4.0 || occ.dims.z == 0u )
+		return false;
+	vec2 lo = vec2( 1e9 ), hi = vec2( -1e9 );
+	for ( int i = 0; i < 8; i++ ) {
+		const vec3 p = centre + radius * vec3( ( i & 1 ) != 0 ? 1.0 : -1.0, ( i & 2 ) != 0 ? 1.0 : -1.0, ( i & 4 ) != 0 ? 1.0 : -1.0 );
+		const vec4 q = occ.viewProj[c] * vec4( p, 1.0 );
+		if ( q.w <= 1.0 )
+			return false;
+		const vec2 uv = q.xy / q.w * 0.5 + 0.5;
+		lo = min( lo, uv );
+		hi = max( hi, uv );
+	}
+	if ( any( greaterThan( lo, vec2( 1.0 ) ) ) || any( lessThan( hi, vec2( 0.0 ) ) ) )
+		return false;	// off that camera's screen: nothing known (phase 1: a turned view)
+	const vec2 screen = vec2( occ.dims.xy );
+	const ivec2 p0 = ivec2( clamp( lo, vec2( 0.0 ), vec2( 1.0 ) ) * screen );
+	const ivec2 p1 = ivec2( min( clamp( hi, vec2( 0.0 ), vec2( 1.0 ) ) * screen, screen - 1.0 ) );
+	// the smallest level whose texels cover the rectangle in at most 2 x 2 (level L: 2^(L+1) pixels a texel)
+	uint L = 0u;
+	ivec2 a = p0 >> 1, b = p1 >> 1;
+	while ( L + 1u < occ.dims.z && ( b.x - a.x > 1 || b.y - a.y > 1 ) ) {
+		L++;
+		a = p0 >> int( L + 1u );
+		b = p1 >> int( L + 1u );
+	}
+	if ( b.x - a.x > 1 || b.y - a.y > 1 )
+		return false;
+	const uint w = ( occ.dims.x + ( 2u << L ) - 1u ) >> ( L + 1u );
+	float d = 0.0;
+	for ( int y = a.y; y <= b.y; y++ )
+		for ( int x = a.x; x <= b.x; x++ )
+			d = max( d, pyr[occ.ofs[c * 4u + ( L >> 2u )][L & 3u] + uint( y ) * w + uint( x )] );
+	// a margin past the pyramid's own rounding (its depth comes back from a 24-bit value: about z^2 * 2^-24 / near, some
+	// units at 300-600 m), so a thin thing lying on a far surface is not hidden by that surface's rounding
+	return zNear > d * ( 1.0 + 2e-5 ) + 1.0;
+}
+
+// an instance listed for a LOD: a pair in the slot's pool (without room: left out this frame, counted; the host grows
+// the pool), a slot in the LOD's range (its parts share it), the range allocated on its first instance (scene_scatter
+// mode 0), phase 2's touched commands, the eye's LODs to sort. tag: the visible entry's top byte (r_sceneLodFade: bit
+// 31 the incoming LOD, bits 24-30 the incoming LOD's share; 0 a whole draw)
+void Emit( const uint id, const uint lod, const uint tag )
+{
+	const Lod L = lods[lod];
+	if ( L.numParts == 0u )
+		return;
+	const uint cap = pool.hdr[12];
+	const uint pr = atomicAdd( pool.hdr[0], 1u );
+	if ( pr >= cap ) {
+		atomicAdd( pool.hdr[3], 1u );
+		atomicAdd( pool.hdr[15], 1u );
+		return;
+	}
+	atomicMax( pool.hdr[14], pr + 1u );
+	atomicMax( pool.hdr[8], ( pr >> 6u ) + 1u );
+	const uint view = ( pc.counts.w >> 8u ) & 7u;
+	const uint lead = partCmd[L.firstPart];
+	const uint slot = atomicAdd( cmds[lead].instanceCount, 1u );
+	pool.data[cap + pr * 3u] = id | tag;
+	pool.data[cap + pr * 3u + 1u] = ( view << 24u ) | lead;
+	pool.data[cap + pr * 3u + 2u] = slot;
+	for ( uint p = 1u; p < L.numParts; p++ )
+		atomicMax( cmds[partCmd[L.firstPart + p]].instanceCount, slot + 1u );
+	if ( slot == 0u ) {
+		const uint t = atomicAdd( pool.hdr[1], 1u );
+		pool.data[t] = ( view << 24u ) | lod;
+		atomicMax( pool.hdr[4], ( t >> 6u ) + 1u );
+	}
+	if ( pc.counts.z == 2u && slot == 0u ) {
+		const uint t = atomicAdd( touched.count, L.numParts );
+		for ( uint p = 0u; p < L.numParts; p++ )
+			touched.ids[t + p] = partCmd[L.firstPart + p];
+	}
+	if ( ( pc.counts.w & 2u ) != 0u && slot == 1u ) {
+		const uint s = atomicAdd( sortList.count, 1u );
+		sortList.ids[s] = lod;
+		atomicMax( sortList.groups, min( s + 1u, 65535u ) );
+	}
+}
+
+// bit 27 of info.z (w3scene.py): a proxy's member. Bits 0-23 hold the proxy's centre as a signed byte an axis (x, y, z),
+// in 16-unit steps from this instance's centre: its hide distance is measured from there, as its proxy's near distance is
+// from its own centre, so the two fade against one point. Measured each from its own centre (up to 41 m apart in
+// Beauclair) the dithers did not complement: both half drawn from one side, both or neither from the other
+vec3 HideCentre( const uint z, const vec3 centre )
+{
+	if ( ( z & 0x8000000u ) == 0u )
+		return centre;
+	return centre + 16.0 * vec3( float( int( z << 24u ) >> 24 ), float( int( z << 16u ) >> 24 ), float( int( z << 8u ) >> 24 ) );
+}
+
+void main()
+{
+	uint id = gl_GlobalInvocationID.x;
+	const bool face = pc.counts.z == 3u;
+	if ( face ) {	// a static light's face: its own instances, counts.x of them from counts.y (its list bound in occList's place)
+		if ( id >= pc.counts.x )
+			return;
+		id = occList.ids[pc.counts.y + id];
+	} else {
+		if ( pc.counts.z == 2u ) {	// phase 2: the listed instances
+			if ( id >= occList.count )
+				return;
+			id = occList.ids[id];
+		} else if ( ( pc.counts.w & 4u ) != 0u ) {	// the groups in the view alone
+			id = cullGroups.ids[gl_WorkGroupID.x >> 3u] * 512u + ( ( gl_WorkGroupID.x & 7u ) << 6u ) + gl_LocalInvocationID.x;
+		}
+		if ( id >= pc.counts.x )
+			return;
+	}
+	const Instance I = inst[id];
+	if ( ( I.info.z & 0x1000000u ) != 0u && !face && ( pc.counts.w & 8u ) == 0u ) {	// an interior the eye is not in (counts.w bit 3: the rain view takes them all)
+		const uint g = I.info.z & 0xffffffu;
+		if ( ( interiorIn[g >> 5u] & ( 1u << ( g & 31u ) ) ) == 0u )
+			return;
+	}
+	if ( rc.look.w > 0.5 && I.info.x != uint( rc.look.w + 0.5 ) - 1u )	// r_sceneOnlyMesh: a measuring view's one mesh
+		return;
+	const Mesh M = meshes[I.info.x];
+	const vec4 c = vec4( M.sphere.xyz, 1.0 );
+	const vec3 centre = vec3( dot( I.r0, c ), dot( I.r1, c ), dot( I.r2, c ) );
+	const float scale = sqrt( max( max( dot( vec3( I.r0.x, I.r1.x, I.r2.x ), vec3( I.r0.x, I.r1.x, I.r2.x ) ),
+		dot( vec3( I.r0.y, I.r1.y, I.r2.y ), vec3( I.r0.y, I.r1.y, I.r2.y ) ) ),
+		dot( vec3( I.r0.z, I.r1.z, I.r2.z ), vec3( I.r0.z, I.r1.z, I.r2.z ) ) ) );
+	const float radius = M.sphere.w * scale;
+
+	for ( int i = 0; i < 5; i++ )
+		if ( dot( centre, pc.planes[i].xyz ) - pc.planes[i].w < -radius )
+			return;
+	if ( radius < pc.cull.y )
+		return;
+	// past its hide distance from the eye, or within its near distance (a far proxy, scene version 5), in every view (the
+	// cascades too: what the eye does not see casts nothing)
+	if ( I.info.y != 0u && rc.look.x == 1.0 )
+		return;
+	if ( rc.travel.w < 0.0 ) {
+		if ( I.info.y != 0u )
+			return;
+	} else if ( rc.hideEye.w > 0.0 && ( I.info.w | I.info.y ) != 0u ) {
+		const float d = distance( HideCentre( I.info.z, centre ), pc.cull.w > 0.5 ? rc.hideEye.xyz : pc.lod.xyz );
+		const float nd = rc.look.x == 2.0 ? 0.0 : uintBitsToFloat( I.info.y );
+		if ( ( I.info.w != 0u && d > uintBitsToFloat( I.info.w ) * rc.hideEye.w ) || d < ( nd - rc.travel.w * pc.cull.w * min( HIDE_FADE, 0.5 * nd ) ) * rc.hideEye.w )
+			return;
+	}
+	if ( pc.counts.y != 0u && !face )
+		for ( int i = 0; i < 4; i++ )
+			if ( dot( centre, rc.eyePlanes[i].xyz ) - rc.eyePlanes[i].w < -radius - pc.cull.z && dot( rc.eyePlanes[i].xyz, rc.travel.xyz ) <= 0.0 )
+				return;
+
+	const float dist = length( centre - pc.lod.xyz );
+	uint lod = M.lods.x + M.lods.y - 1u;
+	float size = 1e30;
+	if ( dist > radius ) {
+		if ( radius / dist < pc.cull.x )
+			return;
+		size = radius / dist * pc.lod.w;	// projected diameter / view height, with the bias
+		for ( uint k = 0u; k < M.lods.y; k++ ) {
+			if ( size >= lods[M.lods.x + k].screen ) {
+				lod = M.lods.x + k;
+				break;
+			}
+		}
+	} else {
+		lod = M.lods.x;
+	}
+	// a caster whose mesh ends in a billboard card (M.lods.z, vk_scene.cpp's Scene_MarkCardMeshes): its coarsest 3D LOD
+	// while the eye's share of the size (size / rc.look.z, r_sceneShadowLod's) still takes a 3D one: the card turns to the
+	// eye, and its shadow on its own 3D leaves moved with the eye and popped where the casters' LOD reached it
+	if ( pc.cull.w < 0.5 && M.lods.z != 0u && lod == M.lods.x + M.lods.y - 1u && lod > M.lods.x && rc.look.z > 0.0
+			&& size / rc.look.z >= lods[lod - 1u].screen )
+		lod = lod - 1u;
+	// geometry streaming (r_sceneStream, scene_want.comp): a LOD whose geometry is not in gives way to the nearest one
+	// that is, coarser first (every wanted mesh's coarsest is asked for too); none: not drawn this frame
+	if ( lods[lod].resident == 0u ) {
+		uint alt = ~0u;
+		for ( uint k = lod + 1u; k < M.lods.x + M.lods.y && alt == ~0u; k++ )
+			if ( lods[k].resident != 0u )
+				alt = k;
+		for ( uint k = lod; k > M.lods.x && alt == ~0u; k-- )
+			if ( lods[k - 1u].resident != 0u )
+				alt = k - 1u;
+		if ( alt == ~0u )
+			return;
+		lod = alt;
+	}
+
+	const Lod L = lods[lod];
+	if ( pc.counts.z == 1u || pc.counts.z == 2u ) {
+		uint indices = 0u;
+		if ( ( pc.counts.w & 1u ) != 0u )
+			for ( uint p = 0u; p < L.numParts; p++ )
+				indices += cmds[partCmd[L.firstPart + p]].indexCount;
+		if ( pc.counts.z == 1u ) {
+			const bool hidden = Occluded( centre, radius, 0u );
+			if ( ( pc.counts.w & 1u ) != 0u ) {
+				atomicAdd( occ.counts[0], 1u );
+				atomicAdd( occ.counts[2], indices );
+				if ( hidden ) {
+					atomicAdd( occ.counts[1], 1u );
+					atomicAdd( occ.counts[3], indices );
+				}
+			}
+			if ( hidden ) {
+				const uint slot = atomicAdd( occList.count, 1u );
+				occList.ids[slot] = id;
+				atomicMax( args.groups[0], ( slot >> 6u ) + 1u );
+				return;
+			}
+		} else {
+			if ( Occluded( centre, radius, 1u ) )
+				return;
+			if ( ( pc.counts.w & 1u ) != 0u ) {
+				atomicAdd( occ.counts[4], 1u );
+				atomicAdd( occ.counts[5], indices );
+			}
+		}
+	}
+	// r_sceneLodFade (rc.look.y, the band's width as a share of the threshold; the eye's views): within the band above
+	// this LOD's threshold the next LOD fades in over it, each drawn in complementary halves of a dither (scene.vert)
+	uint tag = 0u, next = ~0u;
+	const float band = rc.look.y;
+	if ( band > 0.0 && pc.cull.w > 0.5 && lod + 1u < M.lods.x + M.lods.y && lods[lod + 1u].resident != 0u
+			&& lods[lod + 1u].numParts != 0u ) {
+		const float th = lods[lod].screen, top = th * ( 1.0 + band );
+		if ( th > 0.0 && size < top ) {
+			const uint share = uint( clamp( ( top - size ) / ( top - th ), 0.0, 1.0 ) * 127.0 + 0.5 );
+			if ( share > 0u ) {
+				tag = share << 24u;
+				next = lod + 1u;
+			}
+		}
+	}
+	Emit( id, lod, tag );
+	if ( next != ~0u )
+		Emit( id, next, tag | 0x80000000u );
+}

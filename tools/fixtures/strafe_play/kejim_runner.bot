@@ -1,0 +1,14 @@
+{
+name Runner_v2
+model alora
+personality botfiles/kejim_runner.jkb
+forcepowers 7-1-033330000330000110
+saber1 dual_1
+}
+{
+name Runner2_v2
+model alora
+personality botfiles/kejim_runner.jkb
+forcepowers 7-1-033330000330000110
+saber1 dual_1
+}

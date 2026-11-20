@@ -1,0 +1,542 @@
+#version 450
+// Render scenes (vk_scene.cpp): the source's lights scattered by the haze, in a volume over the eye view's frustum
+// (froxels: 240 x 135 cells across the screen, 64 depth slices spaced exponentially from near to far). kPass 0 lights
+// each froxel's centre from its light-grid cell (as scene.frag lights a surface, with a Henyey-Greenstein phase toward
+// the eye); kPass 1 walks each column front to back, accumulating that light through the haze's transmittance. scene.frag
+// reads the result at a surface's depth (and the sky at the far end) and adds it to the haze. The map's sun (the moon at
+// night) scatters too, through its shadow cascades: vk_scene_haze runs after they are drawn.
+
+layout(constant_id = 0) const int kPass = 0;
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+const ivec3 DIMS = ivec3( 240, 135, 64 );	// SCENE_FOG_W, _H, _D
+const float UNITS_PER_METRE = 37.5;
+const float PI = 3.14159265;
+
+struct Light { vec4 posRadius; vec4 colorPower; vec4 dirCosOuter; vec4 cosInnerType; };	// as scene.frag's
+struct LightBox { vec4 r0, r1, r2, pad, shape; };	// shape: a tube's (scene.frag tubeFalloff)
+layout(std140, set = 0, binding = 0) uniform Frame {
+	vec4 eye;
+	vec4 gridOrigin;
+	ivec4 gridDims;
+	vec4 skyAmbient;
+	vec4 groundAmbient;
+	vec4 params;		// x: light scale
+	vec4 params2;
+	mat4 sunMvp[3];
+	vec4 sunDir;
+	vec4 sunCol;
+	vec4 sunTexel;
+	vec4 fog;			// w: density per metre at the floor
+	vec4 fog2;			// x: height (m) over which it thins by e; z: local volumes; w: their density scale
+	vec4 fogFwd;		// the eye's forward axis; w: the volume's near distance (units)
+	vec4 fogLeft;		// w: tan(fovX / 2)
+	vec4 fogUp;			// w: tan(fovY / 2)
+	vec4 fogVol;		// x: log(far / near), y: light in the haze (0 off), z: phase g
+	vec4 wet;
+	vec4 ssr;
+	mat4 prevViewProj;
+	vec4 prevEye;
+	vec4 prevFwd;
+	vec4 fogAlbedo;		// tints the light the haze scatters; w: the moon's share (r_sceneFogMoon)
+	vec4 rain;			// z: r_sceneFogLightMax (0 off); w: 2 r_sceneFogSegment, else r_sceneFogNearSamples (1 on)
+	vec4 detail;
+	vec4 cluster;		// y: 1 when the haze's light clusters were built this frame (binding 12); 2 also where a cell capped
+	vec4 hazePrevEye;	// last frame's haze volume (r_sceneFogTemporal): its eye; w: 1 when the other scatter image holds it
+	vec4 hazePrevFwd;	// its forward axis; w: its near distance (units)
+	vec4 hazePrevLeft;	// w: tan(fovX / 2)
+	vec4 hazePrevUp;	// w: tan(fovY / 2)
+	vec4 hazeJitter;	// this frame's sample point in its froxel (xyz, froxels, each -0.5..0.5); w: the new frame's share
+	vec4 surface2;		// x: geometric specular anti-aliasing's most (r_sceneSpecAA, 0 off); y: 1 when a window's room is
+						// picked by a 3D room cell on a grid turned to the facade (r_sceneWindowCell)
+} fr;
+layout(std430, set = 0, binding = 1) readonly buffer Lights { Light lights[]; };
+layout(std430, set = 0, binding = 2) readonly buffer Cells { uvec2 cells[]; };
+layout(std430, set = 0, binding = 3) readonly buffer CellLights { uint cellLights[]; };
+layout(std430, set = 0, binding = 4) readonly buffer LightBoxes { LightBox boxes[]; };
+layout(set = 0, binding = 5, rgba16f) uniform image3D scatterImg;		// rgb: light scattered per metre, a: density per metre
+layout(set = 0, binding = 15) uniform sampler3D prevScatterTex;	// last frame's scatterImg (r_sceneFogTemporal; the other slot's)
+layout(set = 0, binding = 6, rgba16f) uniform image3D integratedImg;	// rgb: light scattered toward the eye up to the slice's far side
+// the haze's local volumes (maps/<map>.xfog): scene space -> the volume's [-1, 1] box; p: density per metre, mode
+// (0 a multiple of the haze's, 1 absolute), soft edge share, kind (0 box, 1 steam column)
+struct FogVolume { vec4 r0, r1, r2, p; };
+layout(std430, set = 0, binding = 7) readonly buffer FogVolumes { FogVolume volumes[]; };
+
+// the source's shadow-casting lights (vk_scene.cpp, "light shadows"): per light 0, or its first face + 1 with bit 31 set
+// for six cube faces (+x, -x, +y, -y, +z, -z); each face is a tile of one depth atlas
+struct ShadowFace { mat4 viewProj; vec4 tile; vec4 texel; };	// tile: uv scale, offset x, y, layer; texel: x its width per unit
+																// of distance, y one texel in the face's uv
+layout(std430, set = 0, binding = 8) readonly buffer LightShadows { uint lightShadows[]; };
+layout(std430, set = 0, binding = 9) readonly buffer ShadowFaces { ShadowFace shadowFaces[]; };
+layout(set = 0, binding = 10) uniform sampler2DArrayShadow lightShadowTex;
+layout(set = 0, binding = 11) uniform sampler2DArrayShadow sunShadowTex;	// the sun cascades (layers 0..2)
+// scene_cluster.comp's clusters of the lights the haze scatters (40 x 24 x 32 over the same frustum and depth: a cluster
+// holds 6 x 5.6 x 2 froxels), as scene.frag's
+layout(std430, set = 0, binding = 12) readonly buffer FogClusters { uint fogClusters[]; };
+// scene_lightfade.comp: per light its fade with the eye's distance (CP2077's hide distance) and its shadow's strength
+layout(std430, set = 0, binding = 13) readonly buffer LightFade { vec4 lightFade[]; };
+const int CLUSTER_X = 40, CLUSTER_Y = 24;
+// scene_viewcull.comp's volumes that may reach the frustum, in ascending order (all of them, in order, without it)
+layout(std430, set = 0, binding = 14) readonly buffer VolumeList { uint volumeCount; uint volumePad[3]; uint volumeIds[]; };
+const uint CLUSTER_STRIDE = 127u;	// 1 + SCENE_CLUSTER_MAX (a 32-bit index each)
+
+float phaseHG( const float g, const float cosTheta )
+{
+	return ( 1.0 - g * g ) / ( 4.0 * PI * pow( max( 1.0 + g * g - 2.0 * g * cosTheta, 1e-4 ), 1.5 ) );
+}
+
+// one cascade's comparison at P, a texel toward the light (-1 outside it); s: P in its texture space
+float sunCascade( const int i, const vec3 P, out vec3 s )
+{
+	const vec4 c = fr.sunMvp[i] * vec4( P + fr.sunDir.xyz * fr.sunTexel[i], 1.0 );
+	s = vec3( c.xy / c.w * 0.5 + 0.5, c.z / c.w );
+	if ( any( greaterThan( abs( s.xy - 0.5 ), vec2( 0.5 - 2.0 / fr.sunCol.w ) ) ) || s.z > 1.0 )
+		return -1.0;
+	return texture( sunShadowTex, vec4( s.xy, float( i ), s.z ) );
+}
+
+// the share of the sun (moon) reaching P: scene.frag's sunShadow without the surface's normal, one bilinear comparison a
+// cascade: the first cascade whose box holds it, blended into the next before its edge and faded out before the last
+// one's reach as the surfaces are (a hard switch made the shafts change brightness where the walls blend)
+float sunShadow( const vec3 P )
+{
+	const float far = floor( fr.sunTexel.w );
+	const bool midKept = fract( fr.sunTexel.w ) > 0.25;
+	const float dist = distance( P, fr.eye.xyz );
+	if ( far > 0.0 && dist > 0.97 * far )
+		return 1.0;
+	float lit = 1.0;
+	for ( int i = 0; i < 3; i++ ) {
+		vec3 s;
+		const float v = sunCascade( i, P, s );
+		if ( v < 0.0 )
+			continue;
+		lit = v;
+		if ( i < 2 ) {
+			vec3 d;
+			if ( i == 1 && midKept ) {
+				const vec4 e = fr.sunMvp[1] * vec4( fr.eye.xyz, 1.0 );
+				d = abs( s - vec3( e.xy / e.w * 0.5 + 0.5, e.z / e.w ) );
+			} else {
+				d = abs( s - vec3( 0.5 ) );
+			}
+			const float t = ( i == 1 && midKept ) ? smoothstep( 0.30, 0.42, max( d.x, max( d.y, d.z ) ) )
+				: smoothstep( 0.38, 0.47, max( d.x, max( d.y, d.z ) ) );
+			if ( t > 0.0 ) {
+				vec3 s2;
+				const float n = sunCascade( i + 1, P, s2 );
+				if ( n >= 0.0 )
+					lit = mix( lit, n, t );
+			}
+		}
+		break;
+	}
+	return far > 0.0 ? mix( lit, 1.0, smoothstep( 0.8 * far, 0.97 * far, dist ) ) : lit;
+}
+
+// the share of light li reaching P (d units from it, l toward it): offset off the surface (n) and toward the light by
+// about a texel, then one bilinear comparison, or four (taps 4) for a softer edge
+float lightShadow( const uint li, const vec3 P, const vec3 n, const vec3 l, const float d, const int taps )
+{
+	const uint s = lightShadows[li];
+	if ( s == 0u || fr.params2.w < 0.5 )
+		return 1.0;
+	uint face = ( s & 0x7fffffffu ) - 1u;
+	if ( ( s & 0x80000000u ) != 0u ) {
+		const vec3 v = -l, a = abs( v );
+		face += a.x >= a.y && a.x >= a.z ? ( v.x > 0.0 ? 0u : 1u ) : a.y >= a.z ? ( v.y > 0.0 ? 2u : 3u ) : ( v.z > 0.0 ? 4u : 5u );
+	}
+	const ShadowFace F = shadowFaces[face];
+	const float texel = F.texel.x * d;
+	const vec4 c = F.viewProj * vec4( P + n * ( 1.5 * texel ) + l * texel, 1.0 );
+	if ( c.w <= 0.0 )
+		return 1.0;
+	const vec3 q = c.xyz / c.w;
+	if ( any( greaterThan( abs( q.xy ), vec2( 1.0 ) ) ) || q.z >= 1.0 )
+		return 1.0;
+	const vec2 uv = q.xy * 0.5 + 0.5;
+	const vec2 lo = vec2( 0.5 * F.texel.y ), hi = vec2( 1.0 - 0.5 * F.texel.y );
+	if ( taps <= 1 )
+		return texture( lightShadowTex, vec4( F.tile.yz + clamp( uv, lo, hi ) * F.tile.x, F.tile.w, q.z ) );
+	float sum = 0.0;
+	for ( int k = 0; k < 4; k++ ) {
+		const vec2 o = vec2( ( k & 1 ) != 0 ? 0.75 : -0.75, ( k & 2 ) != 0 ? 0.75 : -0.75 ) * F.texel.y;
+		sum += texture( lightShadowTex, vec4( F.tile.yz + clamp( uv + o, lo, hi ) * F.tile.x, F.tile.w, q.z ) );
+	}
+	return sum * 0.25;
+}
+
+// a tube light (scene version 6): scene.frag's tubeFalloff (Q its point nearest P)
+float tubeFalloff( const vec3 C, const vec4 S, const vec3 P, const float near2, out vec3 Q )
+{
+	const float a = length( S.xyz );
+	const vec3 rel = P - C;
+	const float along = dot( rel, S.xyz ) / a;
+	Q = C + S.xyz * ( clamp( along, -a, a ) / a );
+	const float s = along / UNITS_PER_METRE, hl = a / UNITS_PER_METRE, r = S.w / UNITS_PER_METRE;
+	const float h = sqrt( max( dot( rel, rel ) / ( UNITS_PER_METRE * UNITS_PER_METRE ) - s * s, 0.0 ) + max( near2, r * r ) );
+	return ( atan( ( hl - s ) / h ) + atan( ( hl + s ) / h ) ) / ( 2.0 * hl * h );
+}
+
+// light li's falloff, cone and shadow at Q (its box already passed; 0 past its radius): near2 the froxel's averaging
+// floor, fadeY its shadow's strength; a tube (version 6) from its point nearest Q, as a line source
+float hazeAtt( const Light L, const uint li, const vec3 Q, const float near2, const float fadeY )
+{
+	const vec4 S = boxes[li].shape;
+	vec3 Lv = L.posRadius.xyz - Q;
+	float reach = L.posRadius.w, line = 0.0;
+	if ( S.x != 0.0 || S.y != 0.0 || S.z != 0.0 ) {
+		vec3 T;
+		line = tubeFalloff( L.posRadius.xyz, S, Q, near2, T );
+		Lv = T - Q;
+		reach -= length( S.xyz );
+	}
+	const float d = length( Lv );
+	if ( d >= reach )
+		return 0.0;
+	const vec3 l = Lv / max( d, 1e-3 );
+	const float x = d / max( reach, 1.0 );
+	float att = clamp( 1.0 - x * x * x * x, 0.0, 1.0 );
+	const float dm = d / UNITS_PER_METRE;
+	att = att * att * ( line > 0.0 ? line : 1.0 / ( dm * dm + near2 ) );
+	if ( ( int( L.cosInnerType.y ) & 1 ) != 0 )
+		att *= smoothstep( L.dirCosOuter.w, L.cosInnerType.x, dot( -l, L.dirCosOuter.xyz ) );
+	if ( ( int( L.cosInnerType.y ) & 4 ) != 0 && att > 0.0 ) {	// the haze's light falls in shafts
+		const float sh = lightShadow( li, Q, vec3( 0.0 ), l, d, 1 );
+		att *= fadeY < 1.0 ? mix( 1.0, sh, fadeY ) : sh;
+	}
+	return att;
+}
+
+// r_sceneFogSegment: light li's falloff averaged over the eye's ray from t0 to t1 metres (V its direction): a point's
+// 1 / (h^2 + (t - s)^2) integrated exactly where the ray lies within its reach (s its projection on the ray, h its
+// distance from it, softened to at least soft m^2 or its source's radius: tubeFalloff's atan pair with the ray as the
+// tube); the window, box, cone and shadow at the ray's point nearest it (l toward it from there). A tube from its point
+// nearest the ray, its line falloff over a point's at the same distance
+float hazeSegment( const Light L, const uint li, const float t0, const float t1, const vec3 V, const float soft, const float fadeY, out vec3 l )
+{
+	l = vec3( 0.0, 0.0, 1.0 );
+	const vec4 S = boxes[li].shape;
+	const bool tube = S.x != 0.0 || S.y != 0.0 || S.z != 0.0;
+	vec3 C = L.posRadius.xyz;
+	float reach = L.posRadius.w;
+	if ( tube ) {
+		const float a = length( S.xyz );
+		const vec3 u = S.xyz / a, w0 = fr.eye.xyz - C;
+		const float b = dot( V, u ), den = 1.0 - b * b;
+		C += u * clamp( den > 1e-4 ? ( dot( u, w0 ) - b * dot( V, w0 ) ) / den : 0.0, -a, a );
+		reach -= a;
+	}
+	const vec3 rel = ( C - fr.eye.xyz ) / UNITS_PER_METRE;
+	const float s = dot( rel, V ), h2 = max( dot( rel, rel ) - s * s, 0.0 ), R = reach / UNITS_PER_METRE;
+	if ( h2 >= R * R )
+		return 0.0;
+	const float c = sqrt( R * R - h2 ), a0 = max( t0, s - c ), a1 = min( t1, s + c );
+	if ( a0 >= a1 )
+		return 0.0;
+	const vec3 Q = fr.eye.xyz + V * ( clamp( s, a0, a1 ) * UNITS_PER_METRE );
+	if ( L.cosInnerType.z > 0.5 ) {
+		const vec4 p = vec4( Q, 1.0 );
+		const LightBox B = boxes[li];
+		if ( max( abs( dot( B.r0, p ) ), max( abs( dot( B.r1, p ) ), abs( dot( B.r2, p ) ) ) ) > 1.0 )
+			return 0.0;
+	}
+	const float r = S.w / UNITS_PER_METRE, floor2 = max( soft, r * r ), H = sqrt( h2 + floor2 );
+	float att = ( atan( ( a1 - s ) / H ) - atan( ( a0 - s ) / H ) ) / ( ( t1 - t0 ) * H );
+	const vec3 Lv = C - Q;
+	const float d = length( Lv );
+	l = Lv / max( d, 1e-3 );
+	const float x = d / max( reach, 1.0 );
+	const float w = clamp( 1.0 - x * x * x * x, 0.0, 1.0 );
+	att *= w * w;
+	if ( tube ) {
+		vec3 T;
+		const float dm = d / UNITS_PER_METRE;
+		att *= tubeFalloff( L.posRadius.xyz, S, Q, floor2, T ) * ( dm * dm + floor2 );
+	}
+	if ( ( int( L.cosInnerType.y ) & 1 ) != 0 )
+		att *= smoothstep( L.dirCosOuter.w, L.cosInnerType.x, dot( -l, L.dirCosOuter.xyz ) );
+	if ( ( int( L.cosInnerType.y ) & 4 ) != 0 && att > 0.0 ) {	// the haze's light falls in shafts
+		const float sh = lightShadow( li, Q, vec3( 0.0 ), l, d, 1 );
+		att *= fadeY < 1.0 ? mix( 1.0, sh, fadeY ) : sh;
+	}
+	return att;
+}
+
+// the eye's ray through a froxel column (forward component 1: a slice's depth along it is its distance along the axis)
+vec3 ray( const ivec2 c )
+{
+	const vec2 uv = ( vec2( c ) + 0.5 ) / vec2( DIMS.xy );
+	return fr.fogFwd.xyz + ( 1.0 - 2.0 * uv.x ) * fr.fogLeft.w * fr.fogLeft.xyz + ( 1.0 - 2.0 * uv.y ) * fr.fogUp.w * fr.fogUp.xyz;
+}
+
+// the ray through a point of the screen's froxel grid (c in froxels from the corner)
+vec3 rayAt( const vec2 c )
+{
+	const vec2 uv = c / vec2( DIMS.xy );
+	return fr.fogFwd.xyz + ( 1.0 - 2.0 * uv.x ) * fr.fogLeft.w * fr.fogLeft.xyz + ( 1.0 - 2.0 * uv.y ) * fr.fogUp.w * fr.fogUp.xyz;
+}
+
+float sliceDepth( const float s ) { return fr.fogFwd.w * exp( fr.fogVol.x * s / float( DIMS.z ) ); }
+
+float density( const vec3 P ) { return fr.fog.w * exp( -max( P.z / UNITS_PER_METRE, 0.0 ) / fr.fog2.x ); }
+
+float hash13( vec3 p )
+{
+	p = fract( p * 0.1031 );
+	p += dot( p, p.zyx + 31.32 );
+	return fract( ( p.x + p.y ) * p.z );
+}
+
+float valueNoise( const vec3 x )
+{
+	const vec3 i = floor( x ), f = x - i, u = f * f * ( 3.0 - 2.0 * f );
+	return mix( mix( mix( hash13( i ), hash13( i + vec3( 1, 0, 0 ) ), u.x ), mix( hash13( i + vec3( 0, 1, 0 ) ), hash13( i + vec3( 1, 1, 0 ) ), u.x ), u.y ),
+		mix( mix( hash13( i + vec3( 0, 0, 1 ) ), hash13( i + vec3( 1, 0, 1 ) ), u.x ), mix( hash13( i + vec3( 0, 1, 1 ) ), hash13( i + vec3( 1, 1, 1 ) ), u.x ), u.y ), u.z );
+}
+
+// the local volumes' density at P on top of the haze's (base): boxes with soft edges, and steam columns, densest at
+// the vent and in the middle, thinning and breaking up as they rise
+void addVolume( const int i, const vec3 P, const float base, inout float sum )
+{
+	const vec4 p = vec4( P, 1.0 );
+	const FogVolume F = volumes[i];
+	const vec3 q = vec3( dot( F.r0, p ), dot( F.r1, p ), dot( F.r2, p ) );
+	if ( any( greaterThan( abs( q ), vec3( 1.0 ) ) ) )
+		return;
+	float w;
+	if ( F.p.w < 0.5 ) {
+		const vec3 e = 1.0 - abs( q );
+		w = smoothstep( 0.0, F.p.z, min( e.x, min( e.y, e.z ) ) );
+	} else {
+		const float h = q.z * 0.5 + 0.5;	// 0 at the vent, 1 at the top
+		const float r = length( q.xy ) / mix( 0.5, 1.0, sqrt( h ) );	// it widens as it rises
+		w = ( 1.0 - smoothstep( 0.4, 1.0, r ) ) * ( 1.0 - smoothstep( 0.3, 1.0, h ) );
+		w *= smoothstep( 0.25, 0.75, valueNoise( P / UNITS_PER_METRE * vec3( 0.6, 0.6, 0.3 ) ) );
+	}
+	sum += w * ( F.p.y > 0.5 ? F.p.x : base * ( F.p.x - 1.0 ) );
+}
+
+// the volumes in view that may hold a froxel centre of this group (8 x 8 columns of one slice), one bit each in the
+// list's order (the volumes' order):
+// the box around the four corner centres (the others lie between them), grown by far more than their rounding, against
+// each volume's box. localDensity tests only these, exactly as before and in the same order, so the sum is unchanged.
+const int FOG_MASK_WORDS = 128;	// up to 4,096 volumes in view; more and every froxel tests them all (32 words: night-2's 1,411 cost 11.9 ms at 4K)
+shared uint volMask[FOG_MASK_WORDS];
+
+void groupVolumes()
+{
+	const uint t = gl_LocalInvocationIndex;
+	for ( uint w = t; w < uint( FOG_MASK_WORDS ); w += 64u )	// (64 threads, 128 words)
+		volMask[w] = 0u;
+	barrier();
+	const int n = int( volumeCount );
+	if ( n <= FOG_MASK_WORDS * 32 ) {
+		const ivec2 c0 = ivec2( gl_WorkGroupID.xy ) * 8, c1 = min( c0 + 7, DIMS.xy - 1 );
+		const float s = sliceDepth( float( gl_WorkGroupID.z ) + 0.5 );
+		vec3 lo = vec3( 1e30 ), hi = vec3( -1e30 );
+		for ( int k = 0; k < 4; k++ ) {
+			const vec3 P = fr.eye.xyz + ray( ivec2( ( k & 1 ) != 0 ? c1.x : c0.x, ( k & 2 ) != 0 ? c1.y : c0.y ) ) * s;
+			lo = min( lo, P );
+			hi = max( hi, P );
+		}
+		const vec3 m = 1.0 + 1e-4 * max( abs( lo ), abs( hi ) );
+		lo -= m;
+		hi += m;
+		const vec4 ctr = vec4( ( lo + hi ) * 0.5, 1.0 );
+		const vec3 h = ( hi - lo ) * 0.5;
+		for ( int i = int( t ); i < n; i += 64 ) {
+			const FogVolume F = volumes[volumeIds[i]];
+			const vec3 q = vec3( dot( F.r0, ctr ), dot( F.r1, ctr ), dot( F.r2, ctr ) );
+			const vec3 e = vec3( dot( abs( F.r0.xyz ), h ), dot( abs( F.r1.xyz ), h ), dot( abs( F.r2.xyz ), h ) );
+			if ( all( lessThanEqual( abs( q ) - e, vec3( 1.001 ) ) ) )
+				atomicOr( volMask[i >> 5], 1u << uint( i & 31 ) );
+		}
+	}
+	barrier();
+}
+
+float localDensity( const vec3 P, const float base )
+{
+	float sum = 0.0;
+	const int n = int( volumeCount );
+	if ( n > FOG_MASK_WORDS * 32 ) {
+		for ( int i = 0; i < n; i++ )
+			addVolume( int( volumeIds[i] ), P, base, sum );
+	} else {
+		for ( int w = 0; w < ( n + 31 ) / 32; w++ ) {	// the words the volumes fill
+			for ( uint b = volMask[w]; b != 0u; b &= b - 1u )
+				addVolume( int( volumeIds[w * 32 + findLSB( b )] ), P, base, sum );
+		}
+	}
+	return sum * fr.fog2.w;
+}
+
+// toDisplay's inverse in scene.frag: the haze colour as light (before exposure), what a dense volume shows unlit
+vec3 hazeRadiance()
+{
+	const vec3 y = pow( clamp( fr.fog.rgb, 0.0, 0.999 ), vec3( 2.2 ) );
+	vec3 x;
+	if ( fr.params2.z > 0.5 ) {
+		const vec3 a = 2.51 - 2.43 * y, b = 0.03 - 0.59 * y, c = -0.14 * y;
+		x = ( -b + sqrt( b * b - 4.0 * a * c ) ) / ( 2.0 * a );
+	} else {
+		x = -log( 1.0 - y );
+	}
+	return x / fr.params.y;
+}
+
+void main()
+{
+	const ivec3 id = ivec3( gl_GlobalInvocationID );
+	if ( kPass == 0 && fr.fog2.z > 0.5 && fr.fog2.w > 0.0 )
+		groupVolumes();		// (every thread of the group, before any returns)
+	if ( any( greaterThanEqual( id.xy, DIMS.xy ) ) )
+		return;
+	const vec3 r = ray( id.xy );
+
+	if ( kPass == 1 ) {
+		const float len = length( r ) / UNITS_PER_METRE;	// metres along the ray per unit of depth
+		vec3 acc = vec3( 0.0 );
+		float T = 1.0;
+		for ( int k = 0; k < DIMS.z; k++ ) {
+			const vec4 s = imageLoad( scatterImg, ivec3( id.xy, k ) );
+			const float dm = ( sliceDepth( float( k + 1 ) ) - sliceDepth( float( k ) ) ) * len;
+			const float e = exp( -s.a * dm );
+			acc += T * ( s.a > 1e-7 ? s.rgb / s.a * ( 1.0 - e ) : s.rgb * dm );
+			T *= e;
+			// r_sceneFogLightMax: a soft ceiling on the light the haze sends the eye so far, by its luminance (a few
+			// lights of millions, through tens of metres of haze, washed the view out; dim glows are hardly changed)
+			// past a knee (r_sceneFogLightKnee, groundAmbient.w: a share of the ceiling; 0 from the start) only
+			vec3 lit = acc;
+			if ( fr.rain.z > 0.0 ) {
+				const float L = dot( acc, vec3( 0.2126, 0.7152, 0.0722 ) ), k = fr.groundAmbient.w * fr.rain.z;
+				const float over = max( L - k, 0.0 );
+				lit = acc * ( ( min( L, k ) + over / ( 1.0 + over / max( fr.rain.z - k, 1e-4 ) ) ) / max( L, 1e-6 ) );
+			}
+			imageStore( integratedImg, ivec3( id.xy, k ), vec4( lit, T ) );
+		}
+		return;
+	}
+
+	if ( id.z >= DIMS.z )
+		return;
+	// r_sceneFogSegment: the slice's segment of the ray (metres from the eye), softened across by the froxel's width
+	const bool segment = fr.rain.w > 1.5;
+	// the froxel's light at its centre; r_sceneFogTemporal: at a point that moves within it every frame, settled over
+	// frames below (one sample at the centre drew the grid's cells as a checker where the ground cuts them near a lamp);
+	// the segment integral already covers the slice along the ray, so there it moves across the view only
+	const bool temporal = fr.hazeJitter.w > 0.0;
+	const vec3 rj = temporal ? rayAt( vec2( id.xy ) + 0.5 + fr.hazeJitter.xy ) : r;
+	const float zj = temporal && !segment ? fr.hazeJitter.z : 0.0;
+	const vec3 P = fr.eye.xyz + rj * sliceDepth( float( id.z ) + 0.5 + zj );
+	const vec3 V = normalize( rj );	// away from the eye
+	// a light inside a froxel is averaged over it, not sampled at its peak: along the ray (the mean of 1 / (x^2 + 1)
+	// over a length D through the light is about pi / D once D passes pi) and across it (at least a froxel wide)
+	const float z = sliceDepth( float( id.z ) + 0.5 ) / UNITS_PER_METRE;
+	const float across = 2.0 * fr.fogLeft.w * z / float( DIMS.x );
+	const float along = ( sliceDepth( float( id.z ) + 1.0 ) - sliceDepth( float( id.z ) ) ) * length( r ) / UNITS_PER_METRE;
+	const float near2 = max( 1.0, max( along / PI, across * across ) );
+	// the froxel's width (across the view) and its slice's length along the ray and along the axis, in units
+	const float acrossU = across * UNITS_PER_METRE, alongU = along * UNITS_PER_METRE;
+	const float sliceU = sliceDepth( float( id.z ) + 1.0 ) - sliceDepth( float( id.z ) );
+	const float t0 = sliceDepth( float( id.z ) ) * length( rj ) / UNITS_PER_METRE, t1 = t0 + ( temporal ? along * length( rj ) / length( r ) : along );
+	const float soft = max( 1.0, across * across );
+	const float sigmaHaze = density( P );
+	const float sigmaLocal = fr.fog2.z > 0.5 && fr.fog2.w > 0.0 ? localDensity( P, sigmaHaze ) : 0.0;
+	const float sigma = sigmaHaze + sigmaLocal;
+	vec3 sum = vec3( 0.0 );
+	// the lights that may reach P: its cluster's (r_sceneClusters), else its light grid cell's (where the cell kept only
+	// its strongest, its count's top bit, or the cluster is full; as scene.frag)
+	uint first = 0u, count = 0u;
+	uvec2 cell = uvec2( 0u );
+	const ivec3 c = ivec3( floor( ( P - fr.gridOrigin.xyz ) / fr.gridOrigin.w ) );
+	if ( all( greaterThanEqual( c, ivec3( 0 ) ) ) && all( lessThan( c, fr.gridDims.xyz ) ) )
+		cell = cells[( c.z * fr.gridDims.y + c.y ) * fr.gridDims.x + c.x];
+	bool clustered = false;
+	if ( fr.cluster.y > 0.5 && ( ( cell.y & 0x80000000u ) == 0u || fr.cluster.y > 1.5 ) ) {
+		const ivec2 cxy = min( ivec2( ( vec2( id.xy ) + 0.5 ) / vec2( DIMS.xy ) * vec2( CLUSTER_X, CLUSTER_Y ) ), ivec2( CLUSTER_X - 1, CLUSTER_Y - 1 ) );
+		const uint at = uint( ( ( id.z / 2 ) * CLUSTER_Y + cxy.y ) * CLUSTER_X + cxy.x ) * CLUSTER_STRIDE;
+		const uint word = fogClusters[at];
+		if ( ( word & 0x80000000u ) == 0u ) {
+			clustered = true;
+			first = at + 1u;
+			count = word;
+		}
+	}
+	if ( !clustered ) {
+		first = cell.x;
+		count = cell.y & 0x7fffffffu;
+	}
+	if ( sigma > 0.0 ) {
+		const float g = fr.fogVol.z;
+		for ( uint i = 0u; i < count; i++ ) {
+			const uint li = clustered ? fogClusters[first + i] : cellLights[first + i];
+			const Light L = lights[li];
+			if ( L.cosInnerType.w <= 0.0 )
+				continue;
+			if ( segment ) {
+				const vec2 fade = lightFade[li].xy;
+				if ( fade.x <= 0.0 )
+					continue;
+				vec3 l;
+				const float att = hazeSegment( L, li, t0, t1, V, soft, fade.y, l ) * fade.x;
+				if ( att > 0.0 )
+					sum += L.colorPower.rgb * ( L.colorPower.w * L.cosInnerType.w * att * phaseHG( g, dot( l, V ) ) );
+				continue;
+			}
+			const vec3 Lv = L.posRadius.xyz - P;
+			const float d2 = dot( Lv, Lv );
+			if ( d2 >= L.posRadius.w * L.posRadius.w )
+				continue;
+			const vec2 fade = lightFade[li].xy;	// (1, 1) unless it is near or past its hide distance
+			if ( fade.x <= 0.0 )
+				continue;
+			const float d = sqrt( d2 );
+			const vec3 l = Lv / max( d, 1e-3 );
+			if ( L.cosInnerType.z > 0.5 ) {
+				const vec4 p = vec4( P, 1.0 );
+				const LightBox B = boxes[li];
+				if ( max( abs( dot( B.r0, p ) ), max( abs( dot( B.r1, p ) ), abs( dot( B.r2, p ) ) ) ) > 1.0 )
+					continue;
+			}
+			float att;
+			if ( fr.rain.w > 0.5 && d < 2.0 * alongU ) {
+				// r_sceneFogNearSamples: near the light, the mean of four points inside the froxel (a tetrahedron at a
+				// quarter of its width, height and depth) instead of its centre: its apex changes faster than a slice
+				att = 0.0;
+				for ( int k = 0; k < 4; k++ ) {
+					const vec3 o = vec3( ( k & 1 ) != 0 ? 0.25 : -0.25, ( k & 2 ) != 0 ? 0.25 : -0.25, ( k == 0 || k == 3 ) ? 0.25 : -0.25 );
+					att += hazeAtt( L, li, P + fr.fogLeft.xyz * ( o.x * acrossU ) + fr.fogUp.xyz * ( o.y * acrossU ) + r * ( o.z * sliceU ), near2, fade.y );
+				}
+				att *= 0.25;
+			} else {
+				att = hazeAtt( L, li, P, near2, fade.y );
+			}
+			att *= fade.x;
+			if ( att <= 0.0 )
+				continue;
+			// light travelling from the source through P (along -l) and on toward the eye (along -V)
+			sum += L.colorPower.rgb * ( L.colorPower.w * L.cosInnerType.w * att * phaseHG( g, dot( l, V ) ) );
+		}
+	}
+	sum *= fr.params.x;
+	// the moon, in shafts where the city shadows it (light from sunDir; scene.frag lights surfaces with sunCol as is)
+	if ( sigma > 0.0 && fr.sunDir.w > 0.5 && fr.fogAlbedo.w > 0.0 )
+		sum += fr.sunCol.rgb * ( fr.fogAlbedo.w * phaseHG( fr.fogVol.z, dot( fr.sunDir.xyz, V ) ) * sunShadow( P ) );
+	// the local volumes also scatter the haze's own (ambient) light; scene.frag already mixes that in for the haze
+	vec3 light = sum * fr.fogAlbedo.rgb * ( sigma * fr.fogVol.y ) + hazeRadiance() * sigmaLocal;
+	if ( fr.hazePrevEye.w > 0.5 ) {
+		// last frame's light where this froxel's centre was in its volume (the same mapping as scene.frag's hazeLight)
+		const vec3 v = fr.eye.xyz + r * sliceDepth( float( id.z ) + 0.5 ) - fr.hazePrevEye.xyz;
+		const float zp = dot( v, fr.hazePrevFwd.xyz );
+		if ( zp > fr.hazePrevFwd.w ) {
+			const vec3 at = vec3( 0.5 - 0.5 * vec2( dot( v, fr.hazePrevLeft.xyz ) / ( zp * fr.hazePrevLeft.w ), dot( v, fr.hazePrevUp.xyz ) / ( zp * fr.hazePrevUp.w ) ),
+				log( zp / fr.hazePrevFwd.w ) / fr.fogVol.x );
+			if ( all( greaterThanEqual( at, vec3( 0.0 ) ) ) && all( lessThanEqual( at, vec3( 1.0 ) ) ) )
+				light = mix( textureLod( prevScatterTex, at, 0.0 ).rgb, light, fr.hazeJitter.w );
+		}
+	}
+	imageStore( scatterImg, id, vec4( light, sigma ) );
+}

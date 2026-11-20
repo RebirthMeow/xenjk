@@ -1,0 +1,606 @@
+{
+ "note": "Watson's 120 spawns (kit 11y, 2026-11-09: the owner's 3, 45 CP2077 named entrances, 25 fast-travel terminals, 47 spread; .codex-research/spawns-20261109, its engine gate passed). build_watson's spawns stage puts them into the compiled hub (cp77_collision.put_spawns) in this order.",
+ "source": "spawns-20261109/spawns.json",
+ "spawns": [
+  {
+   "origin": "-10105.9 -39468.4 190.125",
+   "angle": "72",
+   "name": "mistys_esoterica"
+  },
+  {
+   "origin": "-7275 -44812.1 420",
+   "angle": "90",
+   "name": "afterlife"
+  },
+  {
+   "origin": "1714 -121715 41",
+   "angle": "157",
+   "name": "el_coyote_cojo"
+  },
+  {
+   "origin": "66628 -35988.2 8368.84",
+   "angle": "90.8",
+   "name": "loc_sq011_dennys_house"
+  },
+  {
+   "origin": "-11730.8 29587.7 -116.06",
+   "angle": "325",
+   "name": "loc_sq031_ruinedship"
+  },
+  {
+   "origin": "-43120.3 -81421.2 -269.09",
+   "angle": "88.4",
+   "name": "loc_sts_cct_dtn_05_luxury_yacht"
+  },
+  {
+   "origin": "33611.5 -82380.4 164.06",
+   "angle": "197.8",
+   "name": "loc_sq006_parking_lot"
+  },
+  {
+   "origin": "18937.5 -1368.54 1469.15",
+   "angle": "356.3",
+   "name": "loc_meat_factory"
+  },
+  {
+   "origin": "30399.3 -32185.6 973.88",
+   "angle": "51.7",
+   "name": "loc_sts_wbr_jpn_01_tygerclaw_restaurant"
+  },
+  {
+   "origin": "-20257 1390.71 257.62",
+   "angle": "271.4",
+   "name": "loc_sts_wat_nid_12"
+  },
+  {
+   "origin": "-12074.4 -70887 -117.38",
+   "angle": "299.9",
+   "name": "loc_dlc6_apart_cct_dtn"
+  },
+  {
+   "origin": "26835.4 -55721.2 5087.62",
+   "angle": "335.2",
+   "name": "loc_q112_parade_area"
+  },
+  {
+   "origin": "13359.9 -91391.9 -137.25",
+   "angle": "235",
+   "name": "loc_sts_hey_rey_08"
+  },
+  {
+   "origin": "-10745.9 -104574 -263.62",
+   "angle": "206.6",
+   "name": "loc_sq021_police_lab_surrounding"
+  },
+  {
+   "origin": "-32104.5 24082.5 -158.62",
+   "angle": "0",
+   "name": "loc_mq032_maelstrom_warehouse"
+  },
+  {
+   "origin": "4436.45 -24635.1 441.38",
+   "angle": "353.3",
+   "name": "loc_wat_kab_fixer_01"
+  },
+  {
+   "origin": "-33615.8 -65758.1 -69.88",
+   "angle": "296.6",
+   "name": "loc_sts_cct_dtn_04"
+  },
+  {
+   "origin": "15474.2 -109272 -117.38",
+   "angle": "145",
+   "name": "loc_q111_killers_apartment"
+  },
+  {
+   "origin": "1718.73 1830.23 -166.12",
+   "angle": "219.5",
+   "name": "loc_sts_wat_nid_01"
+  },
+  {
+   "origin": "41916.8 -41537 2027.63",
+   "angle": "269.9",
+   "name": "loc_sq023_bdstudio"
+  },
+  {
+   "origin": "18541.2 -43506 632.62",
+   "angle": "354.4",
+   "name": "loc_108_atlantis_club"
+  },
+  {
+   "origin": "-24645.4 -40384.6 28.87",
+   "angle": "146",
+   "name": "loc_sts_wat_lch_05_dirty_joint"
+  },
+  {
+   "origin": "55999 -43789.6 7090.12",
+   "angle": "173.5",
+   "name": "loc_q108_kerrys_villa"
+  },
+  {
+   "origin": "15235.2 -78398.8 -113.62",
+   "angle": "55",
+   "name": "loc_q111_seedy_sex_shop"
+  },
+  {
+   "origin": "15974 -30129.5 -207.38",
+   "angle": "242",
+   "name": "loc_q112_secret_meeting_decals"
+  },
+  {
+   "origin": "-8685 -125543 -80.88",
+   "angle": "180",
+   "name": "loc_sts_hey_gle_04"
+  },
+  {
+   "origin": "23726.2 -91406.6 -118.5",
+   "angle": "144.6",
+   "name": "loc_q112_safe_house"
+  },
+  {
+   "origin": "-25254.9 -70242.1 -120.68",
+   "angle": "175.1",
+   "name": "loc_cct_dtn_fixer_01"
+  },
+  {
+   "origin": "-13982.8 -46469.5 467.62",
+   "angle": "71.5",
+   "name": "loc_sq017_nightclub"
+  },
+  {
+   "origin": "-3724.52 -36836.7 456.38",
+   "angle": "69.1",
+   "name": "loc_q001_garage_entrance"
+  },
+  {
+   "origin": "35210.5 -75687.4 7558.88",
+   "angle": "55.4",
+   "name": "loc_sq017_pachinko_lounge"
+  },
+  {
+   "origin": "29180.5 -62131.8 580.21",
+   "angle": "147.1",
+   "name": "loc_q305_chang"
+  },
+  {
+   "origin": "2421.93 -127364 838.88",
+   "angle": "297",
+   "name": "loc_sq012_diner"
+  },
+  {
+   "origin": "24083.3 -50760.8 324.63",
+   "angle": "350.8",
+   "name": "loc_q105_jigjig_street"
+  },
+  {
+   "origin": "25640.4 -87003.3 -120.62",
+   "angle": "9",
+   "name": "loc_q111_laundromat"
+  },
+  {
+   "origin": "34709.7 -30237.3 917.62",
+   "angle": "204.3",
+   "name": "loc_sts_wbr_jpn_09_netrunner_parking_lot"
+  },
+  {
+   "origin": "12585.3 -86912.7 -79.09",
+   "angle": "278",
+   "name": "loc_sq023_glorias_house"
+  },
+  {
+   "origin": "-6708.98 -122192 2489.38",
+   "angle": "270",
+   "name": "loc_sts_hey_gle_03"
+  },
+  {
+   "origin": "19929.8 2005.24 1562.62",
+   "angle": "45",
+   "name": "loc_sq006_truck_ambush_spot"
+  },
+  {
+   "origin": "59048.2 -45378.3 8197.42",
+   "angle": "58.7",
+   "name": "loc_q113_arasaka_estate"
+  },
+  {
+   "origin": "18536.7 -46810.4 25.12",
+   "angle": "278.6",
+   "name": "loc_sts_wbr_jpn_12"
+  },
+  {
+   "origin": "-8463.36 -106623 -130.5",
+   "angle": "331.4",
+   "name": "loc_sq021_lab"
+  },
+  {
+   "origin": "30591.7 -82840.6 167.62",
+   "angle": "236",
+   "name": "loc_sq006_truck_parking_lot"
+  },
+  {
+   "origin": "-5572.26 -35076.7 591.38",
+   "angle": "0",
+   "name": "loc_megabuilding_a"
+  },
+  {
+   "origin": "3911.34 -120709 36.38",
+   "angle": "189",
+   "name": "loc_sq018_jackies_storage"
+  },
+  {
+   "origin": "2899.85 -125277 57.12",
+   "angle": "7.3",
+   "name": "loc_sts_hey_gle_06"
+  },
+  {
+   "origin": "26121.9 -53933.3 332.62",
+   "angle": "350.4",
+   "name": "loc_q105_fingers_appartment"
+  },
+  {
+   "origin": "2894.14 -25406.6 434.44",
+   "angle": "354.9",
+   "name": "loc_q004_lizzys_nightclub"
+  },
+  {
+   "origin": "-27842.1 -22424.1 -83.62",
+   "angle": "277.2",
+   "name": "wat_lch_dataterm_03"
+  },
+  {
+   "origin": "-12305 -17531.1 264.38",
+   "angle": "85",
+   "name": "wat_lch_dataterm_02"
+  },
+  {
+   "origin": "27688.7 -14427.4 936.38",
+   "angle": "110",
+   "name": "wat_nid_dataterm_03"
+  },
+  {
+   "origin": "29002.7 -112506 -147.38",
+   "angle": "348",
+   "name": "std_arr_dataterm_08"
+  },
+  {
+   "origin": "879.63 25275.9 -154.88",
+   "angle": "325",
+   "name": "wat_nid_dataterm_05"
+  },
+  {
+   "origin": "-6297.58 -82343.1 178.88",
+   "angle": "282.7",
+   "name": "cct_cpz_dataterm_02"
+  },
+  {
+   "origin": "45849.7 -85859.5 -154.88",
+   "angle": "54.5",
+   "name": "wbr_hil_dataterm_03"
+  },
+  {
+   "origin": "-9025.52 -58028 -91.5",
+   "angle": "91",
+   "name": "cct_dtn_dataterm_05"
+  },
+  {
+   "origin": "25461.1 12867.5 1592.62",
+   "angle": "324",
+   "name": "wat_nid_dataterm_04"
+  },
+  {
+   "origin": "-22806.3 -105544 -128.68",
+   "angle": "178.1",
+   "name": "hey_gle_dataterm_01"
+  },
+  {
+   "origin": "-21730.7 -58691.9 -23.02",
+   "angle": "178",
+   "name": "cct_dtn_dataterm_02"
+  },
+  {
+   "origin": "16286 -15172.4 932.62",
+   "angle": "171.8",
+   "name": "wat_kab_dataterm_06"
+  },
+  {
+   "origin": "2448.62 -13492.2 418.88",
+   "angle": "33.5",
+   "name": "wat_kab_dataterm_02"
+  },
+  {
+   "origin": "7197.85 -34667.3 -229.58",
+   "angle": "268",
+   "name": "wat_kab_dataterm_10"
+  },
+  {
+   "origin": "-11832.9 5435.91 257.62",
+   "angle": "11.3",
+   "name": "wat_nid_dataterm_09"
+  },
+  {
+   "origin": "-12200 -28710.2 258.14",
+   "angle": "85",
+   "name": "wat_lch_metro_ftp_01"
+  },
+  {
+   "origin": "23277.3 -100288 -117.38",
+   "angle": "345.8",
+   "name": "hey_rey_dataterm_04"
+  },
+  {
+   "origin": "28508.9 -23702.4 805.12",
+   "angle": "85.9",
+   "name": "wbr_jpn_dataterm_01"
+  },
+  {
+   "origin": "58607.8 -53962.4 5072.62",
+   "angle": "276",
+   "name": "wbr_nok_dataterm_05"
+  },
+  {
+   "origin": "-17831.6 -77022 201.38",
+   "angle": "324.5",
+   "name": "cct_dtn_dataterm_01"
+  },
+  {
+   "origin": "7757.41 -2422.67 70.12",
+   "angle": "73.7",
+   "name": "wat_kab_dataterm_11"
+  },
+  {
+   "origin": "-5215.36 -546.71 257.62",
+   "angle": "125",
+   "name": "wat_nid_dataterm_01"
+  },
+  {
+   "origin": "-3809.57 -10098.2 448.88",
+   "angle": "175",
+   "name": "wat_lch_dataterm_09"
+  },
+  {
+   "origin": "-40286.5 -67771.5 -130.77",
+   "angle": "225.3",
+   "name": "cct_dtn_dataterm_03"
+  },
+  {
+   "origin": "4716.85 -40470.2 223.88",
+   "angle": "175.6",
+   "name": "wat_kab_dataterm_05"
+  },
+  {
+   "origin": "23425 55175 -139.88",
+   "angle": "0",
+   "name": "spread_00"
+  },
+  {
+   "origin": "-3575 55175 -158.62",
+   "angle": "90",
+   "name": "spread_01"
+  },
+  {
+   "origin": "51578.8 -13906.2 3409.31",
+   "angle": "180",
+   "name": "spread_02"
+  },
+  {
+   "origin": "33671.2 34555 1288.13",
+   "angle": "270",
+   "name": "spread_03"
+  },
+  {
+   "origin": "15178.8 37215 -42.38",
+   "angle": "0",
+   "name": "spread_04"
+  },
+  {
+   "origin": "-57448.8 -66601.2 -158.62",
+   "angle": "90",
+   "name": "spread_05"
+  },
+  {
+   "origin": "-18782.5 44736.2 -184.88",
+   "angle": "180",
+   "name": "spread_06"
+  },
+  {
+   "origin": "36225 -48.75 1540.69",
+   "angle": "270",
+   "name": "spread_07"
+  },
+  {
+   "origin": "-29262.5 -90155 -148.11",
+   "angle": "0",
+   "name": "spread_08"
+  },
+  {
+   "origin": "11361.2 -62800 1045.12",
+   "angle": "90",
+   "name": "spread_09"
+  },
+  {
+   "origin": "-38518.8 -106609 -162.38",
+   "angle": "180",
+   "name": "spread_10"
+  },
+  {
+   "origin": "49752.5 -69727.5 3316.81",
+   "angle": "270",
+   "name": "spread_11"
+  },
+  {
+   "origin": "625 40850 -158.62",
+   "angle": "0",
+   "name": "spread_12"
+  },
+  {
+   "origin": "38218.8 -98587.5 -147.38",
+   "angle": "90",
+   "name": "spread_13"
+  },
+  {
+   "origin": "14975 22300 733.88",
+   "angle": "180",
+   "name": "spread_14"
+  },
+  {
+   "origin": "54840 -28252.5 5620.12",
+   "angle": "270",
+   "name": "spread_15"
+  },
+  {
+   "origin": "58211.2 -92538.8 -169.88",
+   "angle": "0",
+   "name": "spread_16"
+  },
+  {
+   "origin": "10225 51575 -158.62",
+   "angle": "90",
+   "name": "spread_17"
+  },
+  {
+   "origin": "43648.8 -57716.2 2526.38",
+   "angle": "180",
+   "name": "spread_18"
+  },
+  {
+   "origin": "2121.25 -98471.2 -136.12",
+   "angle": "270",
+   "name": "spread_19"
+  },
+  {
+   "origin": "-28977.5 11297.5 257.62",
+   "angle": "0",
+   "name": "spread_20"
+  },
+  {
+   "origin": "1055 -70921.2 -267.38",
+   "angle": "90",
+   "name": "spread_21"
+  },
+  {
+   "origin": "37465 16261.2 4082.62",
+   "angle": "180",
+   "name": "spread_22"
+  },
+  {
+   "origin": "-16843.8 -89921.2 -132.38",
+   "angle": "270",
+   "name": "spread_23"
+  },
+  {
+   "origin": "-13791.2 17525 -158.62",
+   "angle": "0",
+   "name": "spread_24"
+  },
+  {
+   "origin": "-31071.2 -50493.8 1611.38",
+   "angle": "90",
+   "name": "spread_25"
+  },
+  {
+   "origin": "3718.75 13611.2 -154.88",
+   "angle": "180",
+   "name": "spread_26"
+  },
+  {
+   "origin": "57761.2 -78022.5 1078.88",
+   "angle": "270",
+   "name": "spread_27"
+  },
+  {
+   "origin": "24687.5 43587.5 -158.62",
+   "angle": "0",
+   "name": "spread_28"
+  },
+  {
+   "origin": "4218.75 -51687.5 -199.88",
+   "angle": "90",
+   "name": "spread_29"
+  },
+  {
+   "origin": "25093.8 27143.8 561.38",
+   "angle": "180",
+   "name": "spread_30"
+  },
+  {
+   "origin": "76287.5 -41637.5 8237.62",
+   "angle": "270",
+   "name": "spread_31"
+  },
+  {
+   "origin": "38267.5 -17792.5 394.35",
+   "angle": "0",
+   "name": "spread_32"
+  },
+  {
+   "origin": "3940 -109216 -117.38",
+   "angle": "90",
+   "name": "spread_33"
+  },
+  {
+   "origin": "-31328.8 -79542.5 -143.62",
+   "angle": "180",
+   "name": "spread_34"
+  },
+  {
+   "origin": "-18866.2 -9335 250.12",
+   "angle": "270",
+   "name": "spread_35"
+  },
+  {
+   "origin": "-52325 -76375 -312.38",
+   "angle": "0",
+   "name": "spread_36"
+  },
+  {
+   "origin": "-6793.75 -93023.8 -128.62",
+   "angle": "90",
+   "name": "spread_37"
+  },
+  {
+   "origin": "-37851.2 -24647.5 -362.03",
+   "angle": "180",
+   "name": "spread_38"
+  },
+  {
+   "origin": "-8431.25 46212.5 -158.62",
+   "angle": "270",
+   "name": "spread_39"
+  },
+  {
+   "origin": "-38433.8 -94590 130.12",
+   "angle": "0",
+   "name": "spread_40"
+  },
+  {
+   "origin": "45005 -30808.8 3766.97",
+   "angle": "90",
+   "name": "spread_41"
+  },
+  {
+   "origin": "34830 -48751.2 2023.88",
+   "angle": "180",
+   "name": "spread_42"
+  },
+  {
+   "origin": "-30525 -112596 -139.88",
+   "angle": "270",
+   "name": "spread_43"
+  },
+  {
+   "origin": "14675 12325 1022.62",
+   "angle": "0",
+   "name": "spread_44"
+  },
+  {
+   "origin": "2250 -87441.2 -136.12",
+   "angle": "90",
+   "name": "spread_45"
+  },
+  {
+   "origin": "-29943.8 -32108.8 -278.62",
+   "angle": "180",
+   "name": "spread_46"
+  }
+ ]
+}

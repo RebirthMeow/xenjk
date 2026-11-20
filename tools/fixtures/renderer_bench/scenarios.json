@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "note": "Settings per scenario. 'common' applies to every run; 'by_family' adds renderer-specific cvars (a cvar a renderer does not know is ignored by it). Resolution, vsync and fps cap are fixed so frame times compare. Base JKA content has no PBR materials, so 'max' turns on generated normal maps where available to exercise the lighting path; a PBR content pack is a separate, later scenario.",
+  "common": {
+    "r_mode": "-1",
+    "r_customwidth": "1920",
+    "r_customheight": "1080",
+    "r_fullscreen": "0",
+    "r_swapInterval": "0",
+    "com_maxfps": "0",
+    "r_picmip": "0",
+    "r_texturebits": "32",
+    "s_volume": "0",
+    "s_musicvolume": "0",
+    "s_mute": "1",
+    "cl_motd": "0",
+    "net_enabled": "0",
+    "sv_master1": "",
+    "cl_autoRecordDemo": "0",
+    "com_cameraMode": "0",
+    "cg_draw2D": "1",
+    "r_ignorehwgamma": "1"
+  },
+  "scenarios": {
+    "default": {
+      "note": "each renderer's own defaults",
+      "by_family": {}
+    },
+    "max": {
+      "note": "everything a competitive player might turn on for looks",
+      "by_family": {
+        "vanilla": {
+          "r_dynamicglow": "1",
+          "r_ext_multisample": "4"
+        },
+        "rend2": {
+          "r_hdr": "1",
+          "r_toneMap": "1",
+          "r_autoExposure": "1",
+          "r_ssao": "1",
+          "r_sunShadows": "1",
+          "r_normalMapping": "1",
+          "r_specularMapping": "1",
+          "r_genNormalMaps": "1",
+          "r_cubeMapping": "1",
+          "r_dynamicglow": "1",
+          "r_ext_framebuffer_multisample": "4"
+        },
+        "vulkan": {
+          "r_fbo": "1",
+          "r_bloom": "1",
+          "r_hdr": "1",
+          "r_ext_multisample": "4",
+          "r_dynamicglow": "1"
+        },
+        "vulkan-pbr": {
+          "r_fbo": "1",
+          "r_bloom": "1",
+          "r_hdr": "1",
+          "r_ext_multisample": "4",
+          "r_dynamicglow": "1",
+          "r_normalMapping": "1",
+          "r_specularMapping": "1",
+          "r_genNormalMaps": "1",
+          "r_cubeMapping": "1",
+          "r_ssao": "1"
+        }
+      }
+    }
+  },
+  "demos": {
+    "note": "copied (never moved) from retained bot laps worlds into .codex-research/renderer-bench/demos; any .dm_26 works",
+    "kejim-runner": ".codex-research/be-combat-20261008-a/stock/kej-1/live/server/base/demos/autorecord/2026/10/08/mpctf_kejim 2026-10-08_16-53-23/0 Runner_v2 mpctf_kejim 2026-10-08_16-53-24.dm_26"
+  },
+  "shots": {
+    "note": "screenshots in a separate timedemo pass, after these many client frames of playback",
+    "frames": [
+      400,
+      1500,
+      3000
+    ]
+  },
+  "common_note": "r_ignorehwgamma 1: windowed JKA otherwise sets the whole desktop gamma ramp and only restores it on a clean exit (2026-10-08: a killed client left a display bright); every candidate renders without hardware gamma"
+}

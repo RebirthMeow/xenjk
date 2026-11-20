@@ -1,0 +1,86 @@
+{
+  "format": "MOVEBENCH1",
+  "map": "mp/ctf_kejim",
+  "bsp_sha256": "76537a48e7d7273e2be6c033f281f8e0dfa49fcc8d550c334e4a8b0a42682e37",
+  "declared": "The ledge beside the red base where two class-175 round trips walked off the lip toward a refused strafe crossing (edges 87013/18180) and fell into the pit: the landing pose (446.1, 51.2) with its measured velocity (fast) and the same heading at 150 u/s (slow), carrying, returning home. Regression for bot_moveLipGuard.",
+  "cases": [
+    {
+      "name": "red_lip_L1_fast",
+      "team": "red",
+      "leg": "return",
+      "level": 1,
+      "start": {
+        "name": "red_base_ledge_lip",
+        "origin": [
+          446.1,
+          51.2,
+          1808.125
+        ],
+        "yaw": -85.2,
+        "velocity": [
+          32.0,
+          -377.3,
+          0.0
+        ],
+        "carrying": 1
+      },
+      "resources": {
+        "force": 0,
+        "speed_ms": 0
+      },
+      "spend": {
+        "templates": [
+          "walk",
+          "corner",
+          "hop",
+          "tap"
+        ]
+      },
+      "goal": "home_flag",
+      "pass_condition": {
+        "condition": "capture",
+        "bound_ms": 180000,
+        "no_death": true
+      }
+    },
+    {
+      "name": "red_lip_L1_slow",
+      "team": "red",
+      "leg": "return",
+      "level": 1,
+      "start": {
+        "name": "red_base_ledge_lip",
+        "origin": [
+          446.1,
+          51.2,
+          1808.125
+        ],
+        "yaw": -85.1,
+        "velocity": [
+          12.7,
+          -149.5,
+          0.0
+        ],
+        "carrying": 1
+      },
+      "resources": {
+        "force": 0,
+        "speed_ms": 0
+      },
+      "spend": {
+        "templates": [
+          "walk",
+          "corner",
+          "hop",
+          "tap"
+        ]
+      },
+      "goal": "home_flag",
+      "pass_condition": {
+        "condition": "capture",
+        "bound_ms": 180000,
+        "no_death": true
+      }
+    }
+  ]
+}

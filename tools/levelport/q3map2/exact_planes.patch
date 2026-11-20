@@ -1,0 +1,377 @@
+--- a/tools/quake3/q3map2/brush.cpp
++++ b/tools/quake3/q3map2/brush.cpp
+@@ -315,6 +315,39 @@
+    returns false if the brush doesn't enclose a valid volume
+  */
+ 
++/* xenjk 2026-10-31, -exactplanes: the brush's windings in double, in a frame moved by -anchor (CreateBrushWindings'
++   steps without the float copy); a bevel side or a degenerate winding gets an empty one. With whole-unit anchors and
++   plane points on a binary grid the result is the same in any frame the brush is compiled in. */
++void AnchoredBrushWindings( const brush_t& brush, const DoubleVector3& anchor, std::vector<winding_accu_t>& out ){
++	out.assign( brush.sides.size(), winding_accu_t() );
++	std::vector<Plane3> planes( brush.sides.size() );
++	for ( size_t i = 0; i < brush.sides.size(); ++i ){
++		const side_t& side = brush.sides[ i ];
++		const Plane3 p = ( side.plane.normal() != g_vector3_identity )? side.plane : Plane3( mapplanes[ side.planenum ].plane );
++		planes[ i ] = plane3_flipped( plane3_translated( p, -anchor ) );
++	}
++	for ( size_t i = 0; i < brush.sides.size(); ++i )
++	{
++		const side_t& side = brush.sides[ i ];
++		if ( side.bevel ) {
++			continue;
++		}
++		winding_accu_t w = BaseWindingForPlaneAccu( plane3_flipped( planes[ i ] ) );
++		for ( size_t j = 0; j < brush.sides.size() && !w.empty(); ++j )
++		{
++			const side_t& cside = brush.sides[ j ];
++			if ( i == j || cside.bevel || cside.planenum == ( side.planenum ^ 1 ) ) {
++				continue;
++			}
++			ChopWindingInPlaceAccu( w, planes[ j ], 0 );
++		}
++		FixWindingAccu( w );
++		if ( w.size() >= 3 ) {
++			out[ i ].swap( w );
++		}
++	}
++}
++
+ bool CreateBrushWindings( brush_t& brush ){
+ 	std::vector<Plane3> planes;
+ 	planes.reserve( brush.sides.size() );
+--- a/tools/quake3/q3map2/bsp.cpp
++++ b/tools/quake3/q3map2/bsp.cpp
+@@ -723,6 +723,21 @@
+ 			normalEpsilon = atof( args.takeNext() );
+ 			Sys_Printf( "Normal epsilon set to %f\n", normalEpsilon );
+ 		}
++		while ( args.takeArg( "-exactplanes" ) ) {
++			extern bool exactPlanes;
++			exactPlanes = true;
++			Sys_Printf( "Planes are reused only when exactly equal\n" );
++		}
++		while ( args.takeArg( "-xplanes" ) ) {
++			extern bool writeXplanes;
++			writeXplanes = true;
++			Sys_Printf( "Writing each brush's planes in double beside the BSP (.xplanes)\n" );
++		}
++		while ( args.takeArg( "-pointgrid" ) ) {
++			extern double pointGrid;
++			pointGrid = atof( args.takeNext() );
++			Sys_Printf( "Brush plane points rounded to 1/%g\n", pointGrid );
++		}
+ 		while ( args.takeArg( "-de" ) ) {
+ 			distanceEpsilon = atof( args.takeNext() );
+ 			Sys_Printf( "Distance epsilon set to %f\n", distanceEpsilon );
+--- a/tools/quake3/q3map2/map.cpp
++++ b/tools/quake3/q3map2/map.cpp
+@@ -75,6 +75,19 @@
+    ydnar: replaced with variable epsilon for djbob
+  */
+ 
++/* xenjk 2026-10-31: -exactplanes. FindFloatPlane reuses an existing plane only when it is exactly the snapped plane,
++   never the first one within the epsilons, so a brush's planes depend on the brush alone and not on what else is in
++   the compile (a chunk compiled by itself gets the planes the whole map gives it). Brush-local tests keep the
++   epsilons. */
++bool exactPlanes = false;
++/* xenjk 2026-10-31: -pointgrid N rounds every brush plane point to 1/N (a power of two) as it is read */
++double pointGrid = 0;
++
++static bool PlaneExact( const plane_t& p, const Plane3f& plane ){
++	return p.dist() == plane.dist() && p.normal()[0] == plane.normal()[0] && p.normal()[1] == plane.normal()[1]
++	    && p.normal()[2] == plane.normal()[2];
++}
++
+ bool PlaneEqual( const plane_t& p, const Plane3f& plane ){
+ 	/* get local copies */
+ 	const float ne = normalEpsilon;
+@@ -127,6 +140,15 @@
+ 	plane_t& p2 = *( mapplanes.end() - 1 );
+ 	p.plane = plane;
+ 	p2.plane = plane3_flipped( plane );
++	if ( exactPlanes ) {
++		// -0 and +0 compare equal, so which sign is stored would depend on which side of the pair came first
++		for ( plane_t *q : { &p, &p2 } ) {
++			for ( int c = 0; c < 3; ++c ) {
++				q->normal()[c] += 0.0f;
++			}
++			q->dist() += 0.0f;
++		}
++	}
+ 	p.type = p2.type = PlaneTypeForNormal( p.normal() );
+ 
+ 	// always put axial planes facing positive first
+@@ -331,6 +353,18 @@
+ 			plane.dist() = vector3_dot( plane.normal(), center );
+ 		}
+ 	}
++	else if ( exactPlanes && !points.empty() ) {
++		// the distance of the normal as it is stored (float), through the points' centre in double: else it is the
++		// double normal's through one point, off the stored plane by (n_float - n_double).p, which grows with p and so
++		// differs between the frames a brush is compiled in
++		DoubleVector3 center( 0 );
++		for ( const BasicVector3<T>& point : points )
++		{
++			center += point;
++		}
++		center /= points.size();
++		plane.dist() = vector3_dot( DoubleVector3( plane.normal() ), center );
++	}
+ 
+ 	if ( VectorIsOnAxis( plane.normal() ) ) {
+ 		// Only snap distance if the normal is an axis.  Otherwise there
+@@ -393,7 +427,7 @@
+ 			const plane_t& p = mapplanes[pidx];
+ 
+ 			/* do standard plane compare */
+-			if ( !PlaneEqual( p, plane ) ) {
++			if ( exactPlanes ? !PlaneExact( p, plane ) : !PlaneEqual( p, plane ) ) {
+ 				continue;
+ 			}
+ 
+@@ -588,10 +622,123 @@
+    ydnar 2003-01-20: added mrelusive fixes
+  */
+ 
++void AnchoredBrushWindings( const brush_t& brush, const DoubleVector3& anchor, std::vector<winding_accu_t>& out );
++
++/* xenjk 2026-10-31, -exactplanes: AddBrushBevels' edge bevels from the brush's own double windings in a frame anchored
++   at a whole-unit point of the brush, so which bevels a brush gets and their normals depend on the brush alone, not on
++   the frame it is compiled in; only a bevel's stored distance takes the frame's float rounding. The same tests as
++   below, on those windings. */
++static DoubleVector3 BevelAnchor(){
++	DoubleVector3 anchor( 0 );
++	for ( int c = 0; c < 3; ++c ) {
++		// a 64 u cell, offset so that grid-aligned brushes do not sit on its edges
++		anchor[c] = std::floor( ( (double)buildBrush.minmax.mins[c] + 0.123456789 ) / 64 ) * 64;
++	}
++	return anchor;
++}
++
++static void AddEdgeBevelsAnchored( int surfaceFlagsMask ){
++	auto& sides = buildBrush.sides;
++	const DoubleVector3 anchor = BevelAnchor();
++	std::vector<winding_accu_t> win;
++	AnchoredBrushWindings( buildBrush, anchor, win );
++	const size_t count = sides.size();
++	for ( size_t i = 6; i < count; ++i ) {
++		const winding_accu_t& w = win[ i ];
++		for ( size_t j = 0; j < w.size(); ++j ) {
++			DoubleVector3 dvec = w[ j ] - w[ ( j + 1 ) % w.size() ];
++			if ( vector3_length( dvec ) < 0.5 ) {
++				continue;
++			}
++			Vector3 vec( vector3_normalised( dvec ) );
++			SnapNormal( vec );
++			if ( vec[0] == -1 || vec[0] == 1 || ( vec[0] == 0 && vec[1] == 0 )
++			  || vec[1] == -1 || vec[1] == 1 || ( vec[1] == 0 && vec[2] == 0 )
++			  || vec[2] == -1 || vec[2] == 1 || ( vec[2] == 0 && vec[0] == 0 ) ) {
++				continue; // axial, only test non-axial edges
++			}
++			for ( int axis = 0; axis < 3; ++axis ) {
++				for ( int dir = -1; dir <= 1; dir += 2 ) {
++					Vector3 vec2( 0 );
++					vec2[axis] = dir;
++					Plane3f local;
++					local.normal() = vector3_cross( vec, vec2 );
++					if ( VectorNormalize( local.normal() ) < 0.5f ) {
++						continue;
++					}
++					local.dist() = vector3_dot( w[ j ], DoubleVector3( local.normal() ) );
++					// the plane in the compile's frame
++					const Plane3f plane( local.normal(), local.dist() + vector3_dot( anchor, DoubleVector3( local.normal() ) ) );
++
++					auto iside = sides.begin();
++					for ( ; iside != sides.end(); ++iside ) {
++						if ( PlaneEqual( mapplanes[iside->planenum], plane ) ) {
++							if( iside->bevel ){ /* handle bevel surfaceflags */
++								iside->surfaceFlags |= ( sides[i].surfaceFlags & surfaceFlagsMask );
++							}
++							break;
++						}
++						const size_t k = iside - sides.begin();
++						if ( k >= count || win[ k ].empty() ) {
++							continue;
++						}
++						double minBack = 0;
++						bool front = false;
++						for ( const DoubleVector3& point : win[ k ] ) {
++							const double d = vector3_dot( DoubleVector3( local.normal() ), point ) - local.dist();
++							if ( d > 0.1 ) {
++								front = true;
++								break;
++							}
++							value_minimize( minBack, d );
++						}
++						if ( front || minBack > -0.1 ) {
++							break;
++						}
++					}
++					if ( iside != sides.end() ) {
++						continue;   // wasn't part of the outer hull
++					}
++					if ( sides.size() == MAX_BUILD_SIDES ) {
++						xml_Select( "MAX_BUILD_SIDES", buildBrush.entityNum, buildBrush.brushNum, true );
++					}
++					const DoubleVector3 at = w[ j ] + anchor;
++					side_t& s2 = sides.emplace_back();
++					s2.planenum = FindFloatPlane( plane, Span( &at, 1 ) );
++					s2.contentFlags = sides[0].contentFlags;
++					s2.surfaceFlags = ( sides[i].surfaceFlags & surfaceFlagsMask ); /* handle bevel surfaceflags */
++					s2.bevel = true;
++					const DoubleVector3 sn( mapplanes[ s2.planenum ].normal() );
++					s2.xplane = Plane3( sn, vector3_dot( sn, at ) );
++					c_edgebevels++;
++				}
++			}
++		}
++	}
++}
++
+ void AddBrushBevels(){
+ 	const int surfaceFlagsMask = g_game->brushBevelsSurfaceFlagsMask;
+ 	auto& sides = buildBrush.sides;
+ 
++	// -exactplanes: the brush's bounds from its double windings, for the box bevels' -xplanes
++	DoubleVector3 dmins( 0 ), dmaxs( 0 );
++	if ( exactPlanes ) {
++		const DoubleVector3 anchor = BevelAnchor();
++		std::vector<winding_accu_t> win;
++		AnchoredBrushWindings( buildBrush, anchor, win );
++		dmins = DoubleVector3( 1e30 );
++		dmaxs = DoubleVector3( -1e30 );
++		for ( const winding_accu_t& w : win ) {
++			for ( const DoubleVector3& v : w ) {
++				for ( int c = 0; c < 3; ++c ) {
++					value_minimize( dmins[c], v[c] + anchor[c] );
++					value_maximize( dmaxs[c], v[c] + anchor[c] );
++				}
++			}
++		}
++	}
++
+ 	//
+ 	// add the axial planes
+ 	//
+@@ -638,7 +785,8 @@
+ 						plane.dist() = floor( buildBrush.minmax.maxs[ axis ] / bevelSnap ) * bevelSnap;
+ 					}
+ 					else{
+-						plane.dist() = buildBrush.minmax.maxs[ axis ];
++						// -exactplanes: the bounds of the double windings, not of their float copies
++						plane.dist() = exactPlanes ? dmaxs[ axis ] : buildBrush.minmax.maxs[ axis ];
+ 					}
+ 				}
+ 				else
+@@ -648,11 +796,14 @@
+ 						plane.dist() = -ceil( buildBrush.minmax.mins[ axis ] / bevelSnap ) * bevelSnap;
+ 					}
+ 					else{
+-						plane.dist() = -buildBrush.minmax.mins[ axis ];
++						plane.dist() = exactPlanes ? -dmins[ axis ] : -buildBrush.minmax.mins[ axis ];
+ 					}
+ 				}
+ 
+ 				s.planenum = FindFloatPlane( plane );
++				if ( exactPlanes ) {
++					s.xplane = Plane3( DoubleVector3( plane.normal() ), dir == 1 ? dmaxs[ axis ] : -dmins[ axis ] );
++				}
+ 				s.contentFlags = sides[ 0 ].contentFlags;
+ 				/* handle bevel surfaceflags */
+ 				for ( const side_t& side : sides ) {
+@@ -681,6 +832,11 @@
+ 		return;     // pure axial
+ 	}
+ 
++	if ( exactPlanes ) {
++		AddEdgeBevelsAnchored( surfaceFlagsMask );
++		return;
++	}
++
+ 	// test the non-axial plane edges
+ 	for ( size_t i = 6; i < sides.size(); ++i ) {
+ 		for ( size_t j = 0; j < sides[i].winding.size(); ++j ) {
+@@ -1028,9 +1184,28 @@
+ 		Parse1DMatrix( 3, planePoints[ 0 ].data() );
+ 		Parse1DMatrix( 3, planePoints[ 1 ].data() );
+ 		Parse1DMatrix( 3, planePoints[ 2 ].data() );
++		if ( pointGrid > 0 ) {
++			// on a binary grid a whole-unit move of the text is exact, so a plane's normal is the same in any frame
++			for ( DoubleVector3& p : planePoints ) {
++				for ( int c = 0; c < 3; ++c ) {
++					p[c] = std::rint( p[c] * pointGrid ) / pointGrid;
++				}
++			}
++		}
+ 
+ 		/* find the plane number */
+ 		std::tie( side.planenum, side.plane ) = MapPlaneFromPoints( planePoints );
++		if ( side.planenum >= 0 ) {
++			// -xplanes: the stored normal, through the face's own points in double; an axial distance snapped as
++			// SnapPlaneImproved snaps it
++			const DoubleVector3 n( mapplanes[ side.planenum ].normal() );
++			const DoubleVector3 c = ( planePoints[ 0 ] + planePoints[ 1 ] + planePoints[ 2 ] ) / 3.0;
++			double d = vector3_dot( n, c );
++			if ( VectorIsOnAxis( mapplanes[ side.planenum ].normal() ) && std::fabs( d - std::rint( d ) ) < distanceEpsilon ) {
++				d = std::rint( d );
++			}
++			side.xplane = Plane3( n, d );
++		}
+ 
+ 		/* bp: read the texture matrix */
+ 		if ( g_brushType == EBrushType::Bp ) {
+--- a/tools/quake3/q3map2/writebsp.cpp
++++ b/tools/quake3/q3map2/writebsp.cpp
+@@ -383,6 +383,31 @@
+    writes the entity brush list to the bsp
+  */
+ 
++/* xenjk 2026-10-31, -xplanes: every brush written to <source>.xplanes as well, its sides' planes in double (section 15
++   of docs/levelport-collision.md): records of int32 entity, contents, side count, then a side's normal and distance as
++   four doubles and an int32 kind (0 face, 1 edge or box bevel, 2 none recorded: the float plane). */
++bool writeXplanes = false;
++
++static void EmitXplanes( const entity_t& e, const brush_t& b ){
++	static FILE *f = nullptr;
++	if ( f == nullptr ) {
++		const auto path = StringOutputStream( 256 )( source, ".xplanes" );
++		f = SafeOpenWrite( path.c_str() );
++		fwrite( "XPL1", 1, 4, f );
++	}
++	const int head[ 3 ] = { int( &e - entities.data() ), b.contentShader->contentFlags, int( b.sides.size() ) };
++	fwrite( head, sizeof( int ), 3, f );
++	for ( const side_t& side : b.sides ) {
++		const bool have = side.xplane.normal() != g_vector3_identity;
++		const Plane3 p = have ? side.xplane : Plane3( mapplanes[ side.planenum ].plane );
++		const double v[ 4 ] = { p.normal()[0], p.normal()[1], p.normal()[2], p.dist() };
++		const int kind = !have ? 2 : side.bevel ? 1 : 0;
++		fwrite( v, sizeof( double ), 4, f );
++		fwrite( &kind, sizeof( int ), 1, f );
++	}
++	fflush( f );
++}
++
+ void EmitBrushes( entity_t& e ){
+ 	/* set initial brush */
+ 	e.firstBrush = bspBrushes.size();
+@@ -398,6 +423,9 @@
+ 		db.shaderNum = EmitShader( b.contentShader->shader, &b.contentShader->contentFlags, &b.contentShader->surfaceFlags );
+ 		db.firstSide = bspBrushSides.size();
+ 		db.numSides = b.sides.size();
++		if ( writeXplanes ) {
++			EmitXplanes( e, b );
++		}
+ 
+ 		/* walk sides */
+ 		for ( side_t& side : b.sides )
+--- a/tools/quake3/q3map2/q3map2.h
++++ b/tools/quake3/q3map2/q3map2.h
+@@ -704,6 +704,7 @@
+ 	Vector4 vecs[ 2 ];                      /* old-style texture coordinate mapping */
+ 
+ 	Plane3 plane{ 0, 0, 0, 0 };             /* optional plane in double precision for building windings */
++	Plane3 xplane{ 0, 0, 0, 0 };            /* xenjk -xplanes: the side's plane in double, written beside the BSP */
+ 	winding_t           winding;
+ 	winding_t           visibleHull;        /* convex hull of all visible fragments */
+ 

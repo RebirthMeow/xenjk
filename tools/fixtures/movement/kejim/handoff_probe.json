@@ -1,0 +1,128 @@
+{
+ "format": "MOVEBENCH1",
+ "map": "mp/ctf_kejim",
+ "bsp_sha256": "76537a48e7d7273e2be6c033f281f8e0dfa49fcc8d550c334e4a8b0a42682e37",
+ "declared": "2026-09-15",
+ "cases": [
+  {
+   "name": "probe_ret_L2_momentum392",
+   "team": "red",
+   "leg": "return",
+   "level": 2,
+   "start": {
+    "name": "probe_handoff_landing",
+    "origin": [
+     696.9,
+     1330.5,
+     1368.125
+    ],
+    "yaw": -140.0,
+    "velocity": [
+     -277.681,
+     -277.681,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 73,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "probe_ret_L2_momentum250",
+   "team": "red",
+   "leg": "return",
+   "level": 2,
+   "start": {
+    "name": "probe_handoff_landing",
+    "origin": [
+     696.9,
+     1330.5,
+     1368.125
+    ],
+    "yaw": -140.0,
+    "velocity": [
+     -176.777,
+     -176.777,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 73,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "probe_ret_L2_rest",
+   "team": "red",
+   "leg": "return",
+   "level": 2,
+   "start": {
+    "name": "probe_handoff_landing",
+    "origin": [
+     696.9,
+     1330.5,
+     1368.125
+    ],
+    "yaw": -140.0,
+    "velocity": [
+     -0.0,
+     -0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 73,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  }
+ ]
+}

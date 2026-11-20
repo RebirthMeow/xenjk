@@ -1,0 +1,964 @@
+{
+ "schema": 1,
+ "note": "Scene bench (tools/renderer_scenes.py): maps with real rend2 content, visited at fixed viewpoints. Views are x y z yaw pitch from the rend2 comparison's view files. Packs are copied by name from the content source (env SCENE_CONTENT_SOURCE, or content_source here) into the bench's own content folder; the source's engine files are never copied or loaded.",
+ "content_source": null,
+ "packs": [
+  "assets8_pbr1.pk3",
+  "assets8_pbr2.pk3",
+  "assets8_pbr3.pk3",
+  "siege_urban_v_10.pk3",
+  "zz_xen_rend2_illimiran.pk3",
+  "zz_xen_rend2_urban.pk3",
+  "zz_xen_rend2_dantooine.pk3",
+  "zz_xen_cyber_urban.pk3"
+ ],
+ "settle_frames": 120,
+ "measure_frames": 480,
+ "maps": {
+  "ctf_illimiran_pbr": {
+   "views": {
+    "red_base": [
+     -4392,
+     -5176,
+     280,
+     90,
+     10
+    ],
+    "red_flag": [
+     -4496,
+     -4960,
+     300,
+     90,
+     15
+    ],
+    "red_upper": [
+     -4032,
+     -3080,
+     530,
+     90,
+     5
+    ],
+    "red_low": [
+     -2944,
+     -3792,
+     120,
+     65,
+     5
+    ],
+    "mid_low": [
+     -1536,
+     -800,
+     120,
+     -115,
+     5
+    ],
+    "blue_upper": [
+     -448,
+     -1512,
+     530,
+     -90,
+     5
+    ],
+    "blue_side": [
+     96,
+     -2136,
+     410,
+     135,
+     5
+    ],
+    "blue_base": [
+     -88,
+     584,
+     280,
+     -90,
+     10
+    ]
+   }
+  },
+  "ctf_dantooine_pbr_clean": {
+   "views": {
+    "courtyard": [
+     1472,
+     -384,
+     280,
+     225,
+     0
+    ],
+    "blueflag": [
+     640,
+     704,
+     410,
+     270,
+     12
+    ],
+    "lowspawn": [
+     2496,
+     -2496,
+     30,
+     45,
+     0
+    ],
+    "westruin": [
+     -384,
+     -1728,
+     220,
+     0,
+     0
+    ]
+   }
+  },
+  "siege_urban_pbr": {
+   "views": {
+    "intermission": [
+     2688,
+     8756,
+     328,
+     135,
+     10
+    ],
+    "start": [
+     1288,
+     -3644,
+     232,
+     180,
+     10
+    ],
+    "obj1": [
+     -435,
+     -3236,
+     90,
+     210,
+     3
+    ],
+    "obj3": [
+     3316,
+     2857,
+     98,
+     240,
+     4
+    ],
+    "obj4": [
+     3767,
+     7204,
+     90,
+     330,
+     4
+    ]
+   }
+  },
+  "siege_urban_cyber": {
+   "views": {
+    "start": [
+     1288,
+     -3644,
+     232,
+     180,
+     10
+    ],
+    "store4": [
+     -1410,
+     -4667,
+     8,
+     -153,
+     -15
+    ],
+    "obj3": [
+     3316,
+     2857,
+     98,
+     240,
+     4
+    ],
+    "obj4": [
+     3767,
+     7204,
+     90,
+     330,
+     4
+    ],
+    "holo5": [
+     -1188,
+     -3140,
+     136,
+     -83,
+     -28
+    ],
+    "holo4": [
+     -45,
+     -811,
+     252,
+     86,
+     -12
+    ],
+    "intermission": [
+     2688,
+     8756,
+     328,
+     135,
+     10
+    ],
+    "store2": [
+     1942,
+     -4981,
+     8,
+     -153,
+     -11
+    ],
+    "blade1": [
+     3952,
+     2839,
+     8,
+     -63,
+     -25
+    ]
+   }
+  },
+  "mp/ffa1": {
+   "views": {
+    "behind": [
+     3210,
+     1792,
+     896,
+     0,
+     20
+    ],
+    "side": [
+     3464,
+     2012,
+     896,
+     270,
+     15
+    ],
+    "above": [
+     3300,
+     1792,
+     976,
+     0,
+     50
+    ],
+    "side_high": [
+     3464,
+     2012,
+     1076,
+     270,
+     50
+    ]
+   }
+  },
+  "mp/ctf_kejim": {
+   "views": {
+    "east": [
+     1640,
+     1664,
+     1440,
+     180,
+     18
+    ],
+    "high": [
+     1520,
+     1920,
+     1560,
+     244,
+     36
+    ],
+    "lightside": [
+     1386,
+     1380,
+     1440,
+     90,
+     18
+    ]
+   }
+  },
+  "mp/ffa3": {
+   "views": {
+    "behind": [
+     2394,
+     1186,
+     296,
+     225,
+     20
+    ],
+    "side": [
+     2370,
+     851,
+     296,
+     135,
+     15
+    ],
+    "above": [
+     2330,
+     1122,
+     376,
+     225,
+     50
+    ]
+   }
+  }
+ },
+ "common": {
+  "r_mode": "-1",
+  "r_customwidth": "3840",
+  "r_customheight": "2160",
+  "r_fullscreen": "0",
+  "r_swapInterval": "0",
+  "com_maxfps": "240",
+  "com_maxfpsUnfocused": "0",
+  "r_picmip": "0",
+  "r_texturebits": "32",
+  "r_ignorehwgamma": "1",
+  "r_gamma": "1",
+  "s_volume": "0",
+  "s_musicvolume": "0",
+  "s_mute": "1",
+  "cl_motd": "0",
+  "net_enabled": "0",
+  "sv_master1": "",
+  "cl_autoRecordDemo": "0",
+  "cg_draw2D": "0",
+  "cg_drawGun": "0",
+  "cg_fov": "80",
+  "cg_fovAspectAdjust": "0",
+  "g_gametype": "0",
+  "r_screenshotJpegQuality": "92",
+  "r_noborder": "1",
+  "vid_xpos": "0",
+  "vid_ypos": "0"
+ },
+ "by_family": {
+  "rend2": {
+   "r_normalMapping": "1",
+   "r_specularMapping": "1",
+   "r_deluxeMapping": "1",
+   "r_cubeMapping": "1",
+   "r_cubemapSize": "256",
+   "r_parallaxMapping": "1",
+   "r_depthPrepass": "1",
+   "r_sunlightMode": "2",
+   "r_sunShadows": "1",
+   "r_shadowMapSize": "2048",
+   "r_shadowFilter": "2",
+   "r_shadowCascadeZFar": "4096",
+   "r_ssao": "1",
+   "r_hdr": "0",
+   "r_toneMap": "0",
+   "r_autoExposure": "0",
+   "r_dynamicGlow": "1",
+   "r_pbrTextures": "1"
+  },
+  "vulkan": {
+   "r_fbo": "1",
+   "r_bloom": "1",
+   "r_dynamicGlow": "1",
+   "r_pbrTextures": "0"
+  },
+  "vulkan-pbr": {
+   "r_fbo": "1",
+   "r_normalMapping": "1",
+   "r_specularMapping": "1",
+   "r_deluxeMapping": "1",
+   "r_cubeMapping": "1",
+   "r_ssao": "1",
+   "r_hdr": "0",
+   "r_dynamicGlow": "1",
+   "r_pbrTextures": "1"
+  },
+  "vanilla": {
+   "r_dynamicGlow": "1",
+   "r_pbrTextures": "0"
+  }
+ },
+ "profiles": {
+  "best": {
+   "note": "Each renderer at its best on the rend2 content, layered on by_family. Both: 4x MSAA, 16x anisotropy. rend2 keeps the owner's preset. JKSunny PBR: every PBR feature it has, its 16-bit framebuffer (its r_hdr), bloom, deluxe specular. Builds before perf/vulkan 40d176ac0 rejected a whole material on rend2's q3gl2_sun (the grid sky): layer 'sunrewrite' for them. Owner 2026-10-09: parallax on in every comparison (JKSunny r_parallaxMapping 1 here, rend2's preset has it).",
+   "by_family": {
+    "rend2": {
+     "r_ext_multisample": "4",
+     "r_ext_texture_filter_anisotropic": "16"
+    },
+    "vulkan-pbr": {
+     "r_ext_multisample": "4",
+     "r_ext_texture_filter_anisotropic": "16",
+     "r_ext_max_anisotropy": "16",
+     "r_hdr": "1",
+     "r_bloom": "1",
+     "r_deluxeSpecular": "1",
+     "r_parallaxMapping": "1"
+    }
+   }
+  },
+  "sunrewrite": {
+   "note": "For JKSunny builds before perf/vulkan 40d176ac0 (stock pbr, jksunny-pbr-perf 06e30f0c1): their parser rejects a whole material on q3gl2_sun, so the run gets copies of the materials with q3map_sunExt, the classic keyword with the same leading values (colour, intensity, yaw, elevation). Since 40d176ac0 q3gl2_sun parses and no rewrite is needed.",
+   "material_rewrites": {
+    "vulkan-pbr": {
+     "q3gl2_sun": "q3map_sunExt"
+    }
+   }
+  },
+  "uncapped": {
+   "note": "No fps cap, to measure headroom (layer after best).",
+   "common": {
+    "com_maxfps": "0"
+   }
+  },
+  "nosun": {
+   "note": "rend2 without the sun term and sun shadows, to measure their cost (layer after best).",
+   "by_family": {
+    "rend2": {
+     "r_sunlightMode": "0",
+     "r_sunShadows": "0"
+    }
+   }
+  },
+  "gputimers": {
+   "note": "rend2 per-pass GPU timer printout every frame (r_speeds 100; candidate somaz-rend2-prof has the per-pass blocks). It reads the timers back synchronously, so frame times in this run are not comparable; read the breakdown with renderer_gpu_passes.py. rd-vulkan (jksunny-pbr-perf): r_gpuTimes 1 prints timestamps per render pass, read back two frames later without a stall.",
+   "by_family": {
+    "rend2": {
+     "r_speeds": "100"
+    },
+    "vulkan-pbr": {
+     "r_gpuTimes": "1"
+    }
+   }
+  },
+  "noparallax": {
+   "note": "rend2 without parallax mapping, to measure its cost (layer after best).",
+   "by_family": {
+    "rend2": {
+     "r_parallaxMapping": "0"
+    }
+   }
+  },
+  "latency2": {
+   "note": "perf builds: old frame queue (two frames in flight).",
+   "by_family": {
+    "rend2": {
+     "r_maxFrameLatency": "2"
+    },
+    "vulkan-pbr": {
+     "r_maxFrameLatency": "2"
+    }
+   }
+  },
+  "latency0": {
+   "note": "perf builds: wait for each frame before the next input.",
+   "by_family": {
+    "rend2": {
+     "r_maxFrameLatency": "0"
+    },
+    "vulkan-pbr": {
+     "r_maxFrameLatency": "0"
+    }
+   }
+  },
+  "oldparallax": {
+   "note": "perf build: original 16+8 step parallax everywhere.",
+   "by_family": {
+    "rend2": {
+     "r_parallaxFast": "0"
+    }
+   }
+  },
+  "oldglow": {
+   "note": "perf build: glow chain, depth copy and refraction pass always on.",
+   "by_family": {
+    "rend2": {
+     "r_dynamicGlowSkipEmpty": "0"
+    }
+   }
+  },
+  "urban_v2": {
+   "note": "siege_urban_pbr materials rebuilt by tools/pbr_heights.py build-urban: parallax only on materials with real relief, full-range heights, normal maps elsewhere. Override pack loaded from the run's homepath.",
+   "paks": [
+    ".codex-research/renderer-bench/variants/urban_v2/zzzz_urban_v2.pk3"
+   ]
+  },
+  "new_urban": {
+   "note": "Map pipeline 2026-10-09: the rebuilt zz_xen_rend2_urban.pk3 (build_urban.py with pbr_heights folded in), loaded over the bench's old copy for old/new screenshot pairs.",
+   "paks": [
+    ".codex-research/renderer-bench/variants/maps_20261009/zzzz_new_urban.pk3"
+   ]
+  },
+  "new_dantooine": {
+   "note": "Map pipeline 2026-10-09: the rebuilt zz_xen_rend2_dantooine.pk3 (build_dantooine.py with pbr_heights DANTOONINE_V2), loaded over the bench's old copy for old/new screenshot pairs.",
+   "paks": [
+    ".codex-research/renderer-bench/variants/maps_20261009/zzzz_new_dantooine.pk3"
+   ]
+  },
+  "new_illimiran": {
+   "note": "Map pipeline 2026-10-09: the rebuilt zz_xen_rend2_illimiran.pk3 (build_ctf_pbr.py --heights illimiran: parallax on 5 generated materials with traced relief), loaded over the bench's old copy for old/new screenshot pairs.",
+   "paks": [
+    ".codex-research/renderer-bench/variants/maps_20261009/zzzz_new_illimiran.pk3"
+   ]
+  },
+  "new_cyber": {
+   "note": "Map pipeline 2026-10-09: zz_xen_cyber_urban.pk3 re-assembled by build_cyber.py with pbr_heights CYBER_V2 (parallax on the four CP masonry materials), loaded over the bench's old copy for old/new screenshot pairs.",
+   "paks": [
+    ".codex-research/renderer-bench/variants/maps_20261009/zzzz_new_cyber.pk3"
+   ]
+  },
+  "old_morning": {
+   "note": "Map pipeline trace fix 2026-10-09: the four map packs as they were before any pbr_heights work (morning backup, rend2_comparison/backups/20261009), loaded over the bench's current copy for old/fixed screenshot pairs.",
+   "paks": [
+    ".codex-research/renderer-bench/variants/maps_20261009/old_morning/zzzz_old_rend2_urban.pk3",
+    ".codex-research/renderer-bench/variants/maps_20261009/old_morning/zzzz_old_rend2_dantooine.pk3",
+    ".codex-research/renderer-bench/variants/maps_20261009/old_morning/zzzz_old_rend2_illimiran.pk3",
+    ".codex-research/renderer-bench/variants/maps_20261009/old_morning/zzzz_old_cyber_urban.pk3"
+   ]
+  },
+  "nobloom": {
+   "note": "JKSunny without its bloom chain (rend2 has none).",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_bloom": "0"
+    }
+   }
+  },
+  "nohdr": {
+   "note": "JKSunny with an 8-bit main target (its r_hdr 1 is 16-bit UNORM: precision, no range), dithered.",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_hdr": "0",
+     "r_dither": "1"
+    }
+   }
+  },
+  "swap2": {
+   "note": "JKSunny r_swapchainImages 2 (perf/vulkan 46950287c+): two swapchain images without vsync.",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_swapchainImages": "2"
+    }
+   }
+  },
+  "decided": {
+   "note": "JKSunny with the owner's 2026-10-09 defaults (layer after best): bloom off, 8-bit targets (r_hdr 0) with dithering.",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_bloom": "0",
+     "r_hdr": "0",
+     "r_dither": "1"
+    }
+   }
+  },
+  "lmonly": {
+   "note": "Probe: lightmap only (r_lightmap 1) in both renderers, to compare the light each surface receives.",
+   "by_family": {
+    "rend2": {
+     "r_lightmap": "1"
+    },
+    "vulkan-pbr": {
+     "r_lightmap": "1"
+    }
+   }
+  },
+  "nocube": {
+   "note": "Probe: no cubemap reflections (r_cubeMapping 0) in both renderers.",
+   "by_family": {
+    "rend2": {
+     "r_cubeMapping": "0"
+    },
+    "vulkan-pbr": {
+     "r_cubeMapping": "0"
+    }
+   }
+  },
+  "nospec": {
+   "note": "Probe: no specular/physical maps (r_specularMapping 0) in both renderers.",
+   "by_family": {
+    "rend2": {
+     "r_specularMapping": "0"
+    },
+    "vulkan-pbr": {
+     "r_specularMapping": "0"
+    }
+   }
+  },
+  "npcs": {
+   "note": "Ghoul2 check (R3, R4): NPCs spawned in front of the urban start view (a spectator cannot spawn them: the player joins, spawns three, goes back to spectator), so Ghoul2 models are on screen with the sun cascades and the bone cache. Layer after best. Team changes are rate-limited (5 s), hence the long waits.",
+   "pre_cmds": [
+    "wait 2600",
+    "team free",
+    "wait 600",
+    "setviewpos 1100 -3644 232 180",
+    "wait 60",
+    "npc spawn stormtrooper",
+    "wait 60",
+    "setviewpos 1100 -3560 232 180",
+    "wait 60",
+    "npc spawn reborn",
+    "wait 60",
+    "setviewpos 1100 -3730 232 180",
+    "wait 60",
+    "npc spawn stormtrooper",
+    "wait 2600",
+    "team spectator",
+    "wait 300"
+   ]
+  },
+  "sunonly": {
+   "note": "Sun-only light for shadow comparisons (R4, layer after best): r_forceSun with map light scale 0 removes lightmap/grid light, cubemaps off; what remains is the sun term times the shadow value (and the sun's ambient in mode 1).",
+   "by_family": {
+    "rend2": {
+     "r_forceSun": "1",
+     "r_forceSunMapLightScale": "0",
+     "r_forceSunLightScale": "1",
+     "r_cubeMapping": "0"
+    },
+    "vulkan-pbr": {
+     "r_forceSun": "1",
+     "r_forceSunMapLightScale": "0",
+     "r_forceSunLightScale": "1",
+     "r_cubeMapping": "0"
+    }
+   }
+  },
+  "nonormal": {
+   "note": "Probe (R4): no normal maps (r_normalMapping 0) in both renderers.",
+   "by_family": {
+    "rend2": {
+     "r_normalMapping": "0"
+    },
+    "vulkan-pbr": {
+     "r_normalMapping": "0"
+    }
+   }
+  },
+  "noflares": {
+   "note": "Probe (R4): JKSunny without flare sprites (r_flares 0, rend2's default; JKSunny defaults to 1).",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_flares": "0"
+    }
+   }
+  },
+  "nocgshadows": {
+   "note": "Probe (R4): no cgame blob shadows (cg_shadows 0) in both renderers.",
+   "common": {
+    "cg_shadows": "0"
+   }
+  },
+  "nossao": {
+   "note": "Probe (R4): SSAO off (r_ssao 0) in both renderers.",
+   "by_family": {
+    "rend2": {
+     "r_ssao": "0"
+    },
+    "vulkan-pbr": {
+     "r_ssao": "0"
+    }
+   }
+  },
+  "deluxeview": {
+   "note": "Probe (R4): rend2's deluxe map view (r_lightmap 3); JKSunny's light direction view is the dev build's r_sunShadowDebug 7.",
+   "by_family": {
+    "rend2": {
+     "r_lightmap": "3"
+    }
+   }
+  },
+  "nodlight": {
+   "note": "Probe (R4): JKSunny without dynamic lights (r_dynamiclight 0), for the black quads on Dantooine's cobble path.",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_dynamiclight": "0"
+    }
+   }
+  },
+  "clear": {
+   "note": "Probe (R4): JKSunny clears the colour buffer every frame (r_clear 1), so undrawn pixels show the clear colour.",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_clear": "1"
+    }
+   }
+  },
+  "noglow": {
+   "note": "Probe (R4): no dynamic glow (r_DynamicGlow 0) in both renderers.",
+   "by_family": {
+    "rend2": {
+     "r_dynamicGlow": "0"
+    },
+    "vulkan-pbr": {
+     "r_DynamicGlow": "0",
+     "r_dynamicGlow": "0"
+    }
+   }
+  },
+  "nomsaa": {
+   "note": "Probe (R4): no MSAA in both renderers.",
+   "by_family": {
+    "rend2": {
+     "r_ext_multisample": "0"
+    },
+    "vulkan-pbr": {
+     "r_ext_multisample": "0"
+    }
+   }
+  },
+  "nodeluxe": {
+   "note": "Probe (R4): no deluxe mapping (r_deluxeMapping 0) in both renderers.",
+   "by_family": {
+    "rend2": {
+     "r_deluxeMapping": "0"
+    },
+    "vulkan-pbr": {
+     "r_deluxeMapping": "0"
+    }
+   }
+  },
+  "cpudlight": {
+   "note": "Probe (R4): JKSunny CPU dynamic lights (r_dlightMethod 0).",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_dlightMethod": "0"
+    }
+   }
+  },
+  "hidden": {
+   "note": "Owner 2026-10-09: look-only runs off the visible desktop, so the owner can keep working. The launcher moves the client window to y 12000 (below every monitor) within half a second of it appearing and hands the foreground back (vid_ypos alone left it at 0,0); no mouse grab. Not for timing: an off-screen window may present differently.",
+   "hide_window": true,
+   "common": {
+    "in_nograb": "1",
+    "in_mouse": "0"
+   }
+  },
+  "styledump": {
+   "note": "Probe (sun-once study, 2026-10-09): JKSunny dev build prints the final stages of every shader with lightmap styles (shaderlist styles; STYLESHADER/STYLESTAGE lines in the console log).",
+   "pre_cmds": [
+    "wait 600",
+    "shaderlist styles"
+   ]
+  },
+  "onesun": {
+   "note": "Sun once per surface (sun-once study, 2026-10-09): JKSunny r_sunStylePasses 0, rend2 perf r_sunStylePasses 0 (lightmap style layers add only their own lightmap light, as the vanilla renderer does).",
+   "by_family": {
+    "rend2": {
+     "r_sunStylePasses": "0"
+    },
+    "vulkan-pbr": {
+     "r_sunStylePasses": "0"
+    }
+   }
+  },
+  "stylesimple": {
+   "note": "Style-copy cost study (2026-10-09): JKSunny r_stylePassSimple 1, lightmap style passes without parallax, normal map or specular (perf/vulkan 69b5f9e12+).",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_stylePassSimple": "1"
+    }
+   }
+  },
+  "manysun": {
+   "note": "rend2's per-style sun (sun-once study, 2026-10-09): r_sunStylePasses 1 in both perf builds, for comparisons after the default became 0.",
+   "by_family": {
+    "rend2": {
+     "r_sunStylePasses": "1"
+    },
+    "vulkan-pbr": {
+     "r_sunStylePasses": "1"
+    }
+   }
+  },
+  "dbglight": {
+   "note": "Probe (2026-10-13, police car): rd-vulkan r_sunShadowDebug 5 shows the light before the PI scale.",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_sunShadowDebug": "5"
+    }
+   }
+  },
+  "dbglm": {
+   "note": "Probe (2026-10-13, police car): rd-vulkan r_sunShadowDebug 11 shows the lightmap sample.",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_sunShadowDebug": "11"
+    }
+   }
+  },
+  "dbgvc": {
+   "note": "Probe (2026-10-13, police car): rd-vulkan r_sunShadowDebug 12 shows the vertex colour.",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_sunShadowDebug": "12"
+    }
+   }
+  },
+  "dbgnl": {
+   "note": "Probe (2026-10-13, police car): rd-vulkan r_sunShadowDebug 6 shows N.L of the baked light direction.",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_sunShadowDebug": "6"
+    }
+   }
+  },
+  "dbgl": {
+   "note": "Probe (2026-10-13, police car): rd-vulkan r_sunShadowDebug 7 shows the baked light direction L.",
+   "by_family": {
+    "vulkan-pbr": {
+     "r_sunShadowDebug": "7"
+    }
+   }
+  },
+  "dev1": {
+   "note": "Probe (2026-10-13, police car): developer 1 logs rend2 stage collapsing per shader.",
+   "by_family": {
+    "rend2": {
+     "developer": "1"
+    }
+   }
+  },
+  "npcs_ffa1": {
+   "note": "Character shadows (2026-10-14): three NPCs at a mp/ffa1 spawn point with strong directed grid light, spawned as the npcs profile does; views from behind, the side and above. NPC AI frozen (d_npcfreeze 1) before the spawns so they stay in the views. Layer after best.",
+   "pre_cmds": [
+    "wait 2600",
+    "d_npcfreeze 1",
+    "wait 60",
+    "team free",
+    "wait 600",
+    "setviewpos 3360 1792 856 0",
+    "wait 60",
+    "npc spawn stormtrooper",
+    "wait 60",
+    "setviewpos 3360 1722 856 0",
+    "wait 60",
+    "npc spawn reborn",
+    "wait 60",
+    "setviewpos 3360 1862 856 0",
+    "wait 60",
+    "npc spawn stormtrooper",
+    "wait 2600",
+    "team spectator",
+    "wait 300"
+   ]
+  },
+  "loadprof": {
+   "note": "Map load evaluation (2026-10-14): r_loadProfile 1 times the renderer's load phases from RE_LoadWorldMap (world, light directions, probe setup and bake, VBOs, images, pipelines); loadprofile prints them (LOADPROF lines) once the map is up. The whole load is the log from Server Initialization to the cgame's CL_InitCGame line.",
+   "common": {
+    "r_loadProfile": "1"
+   },
+   "pre_cmds": [
+    "loadprofile"
+   ]
+  },
+  "charshadow_print": {
+   "note": "Character shadows (2026-10-14, r_charShadowFloor): print each caster's light, floor drop and reach once a second (r_charShadowDebug 2, no visual change). Layer last.",
+   "common": {
+    "r_charShadowDebug": "2"
+   }
+  },
+  "npcs_ctf_kejim": {
+   "note": "Character shadows (2026-10-14): three NPCs at a mp/ctf_kejim spawn point with strong directed grid light, spawned as the npcs profile does; views from behind, the side and above. NPC AI frozen (d_npcfreeze 1) before the spawns so they stay in the views. Layer after best. The NPCs fall from the spawn ledge to the floor below (about 1386 1664 1368, from r_charShadowDebug 2), where the views look.",
+   "pre_cmds": [
+    "wait 2600",
+    "d_npcfreeze 1",
+    "wait 60",
+    "team free",
+    "wait 600",
+    "setviewpos 1504 1664 1824 180",
+    "wait 60",
+    "npc spawn stormtrooper",
+    "wait 60",
+    "setviewpos 1504 1734 1824 180",
+    "wait 60",
+    "npc spawn reborn",
+    "wait 60",
+    "setviewpos 1504 1594 1824 180",
+    "wait 60",
+    "npc spawn stormtrooper",
+    "wait 2600",
+    "team spectator",
+    "wait 300"
+   ]
+  },
+  "npcs_ffa3": {
+   "note": "Character shadows (2026-10-14): three NPCs at a mp/ffa3 spawn point with strong directed grid light, spawned as the npcs profile does; views from behind, the side and above. NPC AI frozen (d_npcfreeze 1) before the spawns so they stay in the views. Layer after best.",
+   "pre_cmds": [
+    "wait 2600",
+    "d_npcfreeze 1",
+    "wait 60",
+    "team free",
+    "wait 600",
+    "setviewpos 2288 1080 256 225",
+    "wait 60",
+    "npc spawn stormtrooper",
+    "wait 60",
+    "setviewpos 2239 1129 256 225",
+    "wait 60",
+    "npc spawn reborn",
+    "wait 60",
+    "setviewpos 2337 1031 256 225",
+    "wait 60",
+    "npc spawn stormtrooper",
+    "wait 2600",
+    "team spectator",
+    "wait 300"
+   ]
+  },
+  "charshadowprint": {
+   "note": "Character shadows (2026-10-14): print each caster's light once a second (r_charShadowDebug 2; layer after the candidate's own r_charShadows) and list the entities.",
+   "common": {
+    "r_charShadowDebug": "2"
+   },
+   "pre_cmds": [
+    "wait 200",
+    "cmdlist npc",
+    "wait 60"
+   ]
+  },
+  "charshadowdbg3": {
+   "note": "Character shadows debug view 3 (r_charShadowDebug 3; see its cvar help). Layer after the candidate.",
+   "common": {
+    "r_charShadowDebug": "3"
+   }
+  },
+  "charshadowdbg4": {
+   "note": "Character shadows debug view 4 (r_charShadowDebug 4; see its cvar help). Layer after the candidate.",
+   "common": {
+    "r_charShadowDebug": "4"
+   }
+  },
+  "gputimes": {
+   "note": "GPU milliseconds per render pass every frame (r_gpuTimes 1, VKGPU lines in the console log; rd-vulkan). Layer last.",
+   "common": {
+    "r_gpuTimes": "1"
+   }
+  },
+  "charshadowdump_kejim": {
+   "note": "Character shadows reference (2026-10-14): frame ctf_kejim's east view, then charshadowdump writes the casters (skinned, world space) and the camera and lights to home/base/charshadow/ for tools/charshadow_reference.py. Layer after npcs_ctf_kejim. Bloom, SSAO, dither and the cgame's blob shadow (cg_shadows 0) off so the debug view (r_charShadowDebug 1, overbright divided out) is the kept light, linear on screen.",
+   "pre_cmds": [
+    "setviewpos 1640 1664 1440 180",
+    "benchcam 180 18",
+    "wait 300",
+    "charshadowdump",
+    "wait 120"
+   ],
+   "common": {
+    "r_bloom": "0",
+    "r_ssao": "0",
+    "r_dither": "0",
+    "cg_shadows": "0"
+   }
+  },
+  "charshadowdbg5": {
+   "note": "Character shadows debug view 5 (r_charShadowDebug 5: the first caster's receiver-to-blocker distance, 128 u white). Layer after the candidate.",
+   "common": {
+    "r_charShadowDebug": "5"
+   }
+  },
+  "charshadowhard": {
+   "note": "Character shadows without contact hardening (r_charShadowLightSize 0: no blocker search, fixed r_charShadowSoftness filter), for cost splits.",
+   "common": {
+    "r_charShadowLightSize": "0"
+   }
+  },
+  "charshadowon": {
+   "note": "Character shadows on (r_charShadows 1) for a build whose default is off; layer after the map profile.",
+   "common": {
+    "r_charShadows": "1"
+   }
+  }
+ },
+ "family_note": "rend2 = the rend2 capture recipe's REND2_ON preset (HDR/tonemap off as there). Vulkan has no PBR path; r_pbrTextures 0 keeps PBR packs from replacing its diffuse textures where an engine gates them. Engines ignore cvars they do not have.",
+ "common_note": "borderless 3840x2160 window on the main (4K, 240 Hz) monitor instead of exclusive fullscreen: unattended, a fullscreen client lost focus and rendered black at ~48 fps (2026-10-08)"
+}

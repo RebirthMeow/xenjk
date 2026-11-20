@@ -1,0 +1,210 @@
+[
+  {
+    "name": "red_respawn_0",
+    "team": "red",
+    "kind": "respawn",
+    "index": 0,
+    "guide": "guides/red_respawn_0.csv",
+    "commands": "planned/red_respawn_0.csv"
+  },
+  {
+    "name": "blue_respawn_0",
+    "team": "blue",
+    "kind": "respawn",
+    "index": 0,
+    "guide": "guides/blue_respawn_0.csv",
+    "commands": "planned/blue_respawn_0.csv"
+  },
+  {
+    "name": "red_respawn_1",
+    "team": "red",
+    "kind": "respawn",
+    "index": 1,
+    "guide": "guides/red_respawn_1.csv",
+    "commands": "planned/red_respawn_1.csv"
+  },
+  {
+    "name": "blue_respawn_1",
+    "team": "blue",
+    "kind": "respawn",
+    "index": 1,
+    "guide": "guides/blue_respawn_1.csv",
+    "commands": "planned/blue_respawn_1.csv"
+  },
+  {
+    "name": "red_respawn_4",
+    "team": "red",
+    "kind": "respawn",
+    "index": 4,
+    "guide": "guides/red_respawn_4.csv",
+    "commands": "planned/red_respawn_4.csv"
+  },
+  {
+    "name": "blue_respawn_4",
+    "team": "blue",
+    "kind": "respawn",
+    "index": 4,
+    "guide": "guides/blue_respawn_4.csv",
+    "commands": "planned/blue_respawn_4.csv"
+  },
+  {
+    "name": "red_respawn_5",
+    "team": "red",
+    "kind": "respawn",
+    "index": 5,
+    "guide": "guides/red_respawn_5.csv",
+    "commands": "planned/red_respawn_5.csv"
+  },
+  {
+    "name": "blue_respawn_5",
+    "team": "blue",
+    "kind": "respawn",
+    "index": 5,
+    "guide": "guides/blue_respawn_5.csv",
+    "commands": "planned/blue_respawn_5.csv"
+  },
+  {
+    "name": "red_respawn_2",
+    "team": "red",
+    "kind": "respawn",
+    "index": 2,
+    "guide": "guides/red_respawn_2.csv",
+    "commands": "planned/red_respawn_2.csv"
+  },
+  {
+    "name": "red_respawn_3",
+    "team": "red",
+    "kind": "respawn",
+    "index": 3,
+    "guide": "guides/red_respawn_3.csv",
+    "commands": "planned/red_respawn_3.csv"
+  },
+  {
+    "name": "blue_respawn_2",
+    "team": "blue",
+    "kind": "respawn",
+    "index": 2,
+    "guide": "guides/blue_respawn_2.csv",
+    "commands": "planned/blue_respawn_2.csv"
+  },
+  {
+    "name": "blue_respawn_3",
+    "team": "blue",
+    "kind": "respawn",
+    "index": 3,
+    "guide": "guides/blue_respawn_3.csv",
+    "commands": "planned/blue_respawn_3.csv"
+  },
+  {
+    "name": "red_flagstand",
+    "team": "red",
+    "kind": "flagstand",
+    "index": null,
+    "guide": "guides/red_flagstand.csv",
+    "commands": "planned/red_flagstand.csv"
+  },
+  {
+    "name": "blue_flagstand",
+    "team": "blue",
+    "kind": "flagstand",
+    "index": null,
+    "guide": "guides/blue_flagstand.csv",
+    "commands": "planned/blue_flagstand.csv"
+  },
+  {
+    "name": "blue_initial_0",
+    "team": "blue",
+    "kind": "initial",
+    "index": 0,
+    "guide": "guides/blue_initial_0.csv",
+    "commands": "planned/blue_initial_0.csv"
+  },
+  {
+    "name": "blue_initial_1",
+    "team": "blue",
+    "kind": "initial",
+    "index": 1,
+    "guide": "guides/blue_initial_1.csv",
+    "commands": "planned/blue_initial_1.csv"
+  },
+  {
+    "name": "blue_initial_2",
+    "team": "blue",
+    "kind": "initial",
+    "index": 2,
+    "guide": "guides/blue_initial_2.csv",
+    "commands": "planned/blue_initial_2.csv"
+  },
+  {
+    "name": "blue_initial_3",
+    "team": "blue",
+    "kind": "initial",
+    "index": 3,
+    "guide": "guides/blue_initial_3.csv",
+    "commands": "planned/blue_initial_3.csv"
+  },
+  {
+    "name": "blue_initial_4",
+    "team": "blue",
+    "kind": "initial",
+    "index": 4,
+    "guide": "guides/blue_initial_4.csv",
+    "commands": "planned/blue_initial_4.csv"
+  },
+  {
+    "name": "blue_initial_5",
+    "team": "blue",
+    "kind": "initial",
+    "index": 5,
+    "guide": "guides/blue_initial_5.csv",
+    "commands": "planned/blue_initial_5.csv"
+  },
+  {
+    "name": "red_initial_0",
+    "team": "red",
+    "kind": "initial",
+    "index": 0,
+    "guide": "guides/red_initial_0.csv",
+    "commands": "planned/red_initial_0.csv"
+  },
+  {
+    "name": "red_initial_1",
+    "team": "red",
+    "kind": "initial",
+    "index": 1,
+    "guide": "guides/red_initial_1.csv",
+    "commands": "planned/red_initial_1.csv"
+  },
+  {
+    "name": "red_initial_2",
+    "team": "red",
+    "kind": "initial",
+    "index": 2,
+    "guide": "guides/red_initial_2.csv",
+    "commands": "planned/red_initial_2.csv"
+  },
+  {
+    "name": "red_initial_3",
+    "team": "red",
+    "kind": "initial",
+    "index": 3,
+    "guide": "guides/red_initial_3.csv",
+    "commands": "planned/red_initial_3.csv"
+  },
+  {
+    "name": "red_initial_4",
+    "team": "red",
+    "kind": "initial",
+    "index": 4,
+    "guide": "guides/red_initial_4.csv",
+    "commands": "planned/red_initial_4.csv"
+  },
+  {
+    "name": "red_initial_5",
+    "team": "red",
+    "kind": "initial",
+    "index": 5,
+    "guide": "guides/red_initial_5.csv",
+    "commands": "planned/red_initial_5.csv"
+  }
+]

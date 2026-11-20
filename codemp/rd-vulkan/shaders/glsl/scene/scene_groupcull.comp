@@ -1,0 +1,54 @@
+#version 450
+// Render scenes (vk_scene.cpp, r_sceneCullGroups): one view's cull groups that may hold something it draws, listed for
+// scene_cull.comp, which then runs over those groups' instances alone (an indirect dispatch this pass sizes). A group is
+// SCENE_CULL_SUB instances in the scene's order; its box holds its instances' spheres and lo.w is its largest instance's
+// radius. Left out, as the instance test would leave out every instance in it:
+//   - a box wholly outside a plane (its farthest corner along the plane's normal on the outer side);
+//   - a largest radius under the view's smallest drawn one (cull.y);
+//   - a largest radius under the view's pixel cut (cull.x) at the box's nearest point to the LOD eye (no instance centre
+//     is nearer than that point, none is larger).
+// The host made this list before (its 4,096-instance groups, frustum only); it now costs the CPU nothing.
+
+layout(local_size_x = 64) in;
+
+struct Sub { vec4 lo; vec4 hi; };
+
+layout(std430, set = 0, binding = 0) readonly buffer Subs { Sub subs[]; };
+// the view's list: its count, then scene_cull.comp's dispatch (workgroups, 1, 1), then the groups (scene_cull.comp's Groups)
+layout(std430, set = 0, binding = 1) buffer Groups { uint count, gx, gy, gz; uint ids[]; } list;
+
+layout(push_constant) uniform Push {
+	vec4 planes[5];		// scene_cull.comp's
+	vec4 lod;			// xyz: the LOD's eye
+	vec4 cull;			// x: smallest drawn radius / distance (0: none), y: smallest drawn radius
+	uvec4 counts;		// x: the groups
+} pc;
+
+const uint WORKGROUPS_PER_GROUP = 8u;	// SCENE_CULL_SUB / 64
+
+void main()
+{
+	const uint i = gl_GlobalInvocationID.x;
+	if ( i >= pc.counts.x )
+		return;
+	const Sub s = subs[i];
+	if ( s.lo.x > s.hi.x )	// (no instance)
+		return;
+	for ( int k = 0; k < 5; k++ ) {
+		const vec4 p = pc.planes[k];
+		const vec3 far = vec3( p.x > 0.0 ? s.hi.x : s.lo.x, p.y > 0.0 ? s.hi.y : s.lo.y, p.z > 0.0 ? s.hi.z : s.lo.z );
+		if ( dot( far, p.xyz ) - p.w < 0.0 )
+			return;
+	}
+	const float maxR = s.lo.w;
+	if ( maxR < pc.cull.y )
+		return;
+	if ( pc.cull.x > 0.0 ) {
+		const float d = length( clamp( pc.lod.xyz, s.lo.xyz, s.hi.xyz ) - pc.lod.xyz );
+		if ( d > maxR && maxR / d < pc.cull.x )
+			return;
+	}
+	const uint t = atomicAdd( list.count, 1u );
+	list.ids[t] = i;
+	atomicMax( list.gx, ( t + 1u ) * WORKGROUPS_PER_GROUP );
+}

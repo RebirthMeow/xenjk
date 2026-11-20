@@ -1,0 +1,6 @@
+# Search exclusions only: evidence remains on disk and Git behavior is unchanged.
+# Use an exact evidence path with rg --no-ignore --hidden when needed.
+/.codex-research/
+/.codex-archive/
+/.codex-trash/
+/.claude/worktrees/

@@ -1,0 +1,12 @@
+// Declared base defender (Defender_v2, Defender2_v2; codemp/game/bot2_defender.c,
+// milestone B3): dark side, owner-approved 2026-10-02 (plays dark: TE is dark side;
+// drain and grip counter rage and protect). Team energize 3, drain 3, grip 3, kept
+// push 3, pull 3 and levitation 3: 60 of rank 7's 100 points (bgForcePowerCost,
+// bg_misc.c). Chase D keeps kejim_defender.jkb. Bots take their powers from forceinfo.
+GeneralBotInfo
+{
+forceinfo 7-2-030330300000330110
+saberspecialist 1
+chatability 0
+camper 0
+}

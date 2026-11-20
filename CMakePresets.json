@@ -1,0 +1,31 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "vs2022",
+      "hidden": true,
+      "displayName": "Visual Studio 2022",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/${presetName}"
+    },
+    {
+      "name": "x64",
+      "inherits": "vs2022",
+      "displayName": "64-bit (xenjk.x86_64.exe, the main client)",
+      "architecture": "x64"
+    },
+    {
+      "name": "win32",
+      "inherits": "vs2022",
+      "displayName": "32-bit (xenjk.x86.exe)",
+      "architecture": "Win32"
+    }
+  ],
+  "buildPresets": [
+    { "name": "x64-release", "displayName": "64-bit Release", "configurePreset": "x64", "configuration": "Release" },
+    { "name": "x64-debug", "displayName": "64-bit Debug", "configurePreset": "x64", "configuration": "Debug" },
+    { "name": "win32-release", "displayName": "32-bit Release", "configurePreset": "win32", "configuration": "Release" },
+    { "name": "win32-debug", "displayName": "32-bit Debug", "configurePreset": "win32", "configuration": "Debug" }
+  ]
+}

@@ -1,0 +1,998 @@
+#version 450
+/*
+===========================================================================
+Copyright (C) 2026, xenjk contributors
+
+This file is part of xenjk, an OpenJK derivative.
+
+This program is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License version 2 as
+published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, see <http://www.gnu.org/licenses/>.
+===========================================================================
+*/
+// Garment cloth on the GPU: the particle part of one solver step (or a reset) of rd-common/cloth/skirt_sim.c.
+// The CPU runs the frame part (SkirtSim_StepFrame) and writes the step record; this follows SkirtSim_Step /
+// substep / SkirtSim_Reset function by function, split into stages (push constant `stage`), one dispatch each:
+//
+//   step:  SKIN, then per substep PRE, AERO_HASH, PREDICT, CONTACT, ITER, POST, then OUT
+//   reset: RSKIN, RSTATE, RSEED, then (resetProject) CONTACT, RPROJ, then OUT
+//
+// Every stage but ITER is element-parallel and runs over as many workgroups as it has elements (the "wide"
+// pipeline). ITER, the constraint iterations, is one workgroup (the "single" pipeline, as many invocations as the
+// device allows) with the positions in shared memory when they fit (floats when 3 N words fit; otherwise packed, 21-bit fixed
+// point per axis in two words, when 2 N fit and every particle is within +-512 cm: about 1.5x the particles, 4.9 um steps;
+// else the buffer): the Gauss-Seidel sets (edges, hinges,
+// triangles) run colour by colour (no two constraints of a colour share a dynamic particle), with a workgroup
+// barrier between colours; the per-particle constraints (anim drive, tethers, max distance, flare cap, collision)
+// touch only their own particle and pinned anchors.
+//
+// Differences from the CPU solver: the constraint order within a set is the colour order; the aero forces of a
+// substep all see the velocities from before aero; the contact hash is not culled to the cloth's box and has
+// fewer buckets (the same collider vertices are found); atan2 is float.
+
+#include "cloth_layout.h"
+
+layout(local_size_x_id = 0) in;
+layout(constant_id = 1) const uint SP_CAP = 4u;   // shared position words; ITER uses them when 3 N (floats) or 2 N (packed) fit
+
+// instance buffer: coherent views for the state, non-coherent read-only views for the topology (L1-cached)
+layout(set = 0, binding = 0, std430) coherent buffer InstF { float f[]; };
+layout(set = 0, binding = 1, std430) coherent buffer InstU { uint u[]; };
+layout(set = 0, binding = 2, std430) coherent buffer InstI { int ii[]; };
+layout(set = 0, binding = 4, std430) readonly buffer TopoF { float tf[]; };
+layout(set = 0, binding = 5, std430) readonly buffer TopoU { uint tu[]; };
+// frame records: read-only floats (matrices), coherent words (record, statistics)
+layout(set = 1, binding = 0, std430) readonly buffer FrameF { float cf[]; };
+layout(set = 1, binding = 1, std430) coherent buffer FrameU { uint cu[]; };
+
+layout(push_constant) uniform Push { uint rec; uint stage; uint sub; uint pad; } pc;
+
+#define ST_SKIN       0u
+#define ST_PRE        1u
+#define ST_AERO_HASH  2u
+#define ST_PREDICT    3u
+#define ST_CONTACT    4u
+#define ST_ITER       5u
+#define ST_POST       6u
+#define ST_OUT        7u
+#define ST_RSKIN      10u
+#define ST_RSTATE     11u
+#define ST_RSEED      12u
+#define ST_RPROJ      14u
+
+#define EPS 1e-9
+#define BEND_MAX 0.5
+#define PI 3.14159265358979323846
+#define BIG 1e30
+
+shared float sCapS[CL_MAX_CAPS * 6];
+shared float sCapBB[CL_MAX_CAPS * 6];
+shared float sCapB[6];
+shared uint sContacts, sHand, sCone, sTethers;
+shared uint sRec[CLR_MATS];   // the step record (the skinning matrices stay in the buffer)
+shared uint sP[SP_CAP];   // float bits (mode 1) or packed fixed point (mode 2)
+shared uint sOOR;
+
+uint WG, lid, gid, gsz;
+uint N, NT, M, NDYN, NCAPS;
+uint oX, oV, oP, oTold, oTnew, oTs, oCold, oCnew, oCs, oW, oKin, oDyn, oCtrix, oCvert, oPush, oCnrm;
+uint oCtri, oVts, oVtl, oVvs, oVvl, oVrad, oStri, oConeC;
+float tau, backD, flipN, cMaxEdge;
+uint pmode;   // ITER positions: 0 the buffer, 1 shared floats, 2 shared packed
+
+float R(uint k) { return uintBitsToFloat(sRec[k]); }
+uint RU(uint k) { return sRec[k]; }
+uint H(uint k) { return tu[k]; }
+
+vec3 ld(uint off, uint i) { uint j = off + i * 3u; return vec3(f[j], f[j + 1u], f[j + 2u]); }
+void st(uint off, uint i, vec3 v) { uint j = off + i * 3u; f[j] = v.x; f[j + 1u] = v.y; f[j + 2u] = v.z; }
+vec3 tld(uint off, uint i) { uint j = off + i * 3u; return vec3(tf[j], tf[j + 1u], tf[j + 2u]); }
+vec3 rv3(uint k) { return vec3(R(k), R(k + 1u), R(k + 2u)); }
+
+// positions during ITER: shared memory when they fit. Packed: x, y, z as 21-bit fixed point (2048 per cm, offset 512 cm),
+// x and the low 11 bits of y in word 0, the high 10 bits of y and z in word 1.
+#define PQ_SCALE 2048.0
+#define PQ_OFF 512.0
+#define PQ_LIM 500.0
+uint pq(float x) { return uint(clamp(round((x + PQ_OFF) * PQ_SCALE), 0.0, 2097151.0)); }
+float dq(uint q) { return float(q) / PQ_SCALE - PQ_OFF; }
+uvec2 pack3(vec3 v) { const uint qy = pq(v.y); return uvec2(pq(v.x) | (qy << 21), (qy >> 11) | (pq(v.z) << 10)); }
+vec3 unpack3(uvec2 w) { return vec3(dq(w.x & 0x1FFFFFu), dq((w.x >> 21) | ((w.y & 0x3FFu) << 11)), dq(w.y >> 10)); }
+vec3 lp(uint i) {
+	if (pmode == 1u) { uint j = i * 3u; return vec3(uintBitsToFloat(sP[j]), uintBitsToFloat(sP[j + 1u]), uintBitsToFloat(sP[j + 2u])); }
+	if (pmode == 2u) return unpack3(uvec2(sP[i * 2u], sP[i * 2u + 1u]));
+	return ld(oP, i);
+}
+void sp(uint i, vec3 v) {
+	if (pmode == 1u) { uint j = i * 3u; sP[j] = floatBitsToUint(v.x); sP[j + 1u] = floatBitsToUint(v.y); sP[j + 2u] = floatBitsToUint(v.z); return; }
+	if (pmode == 2u) { const uvec2 w = pack3(v); sP[i * 2u] = w.x; sP[i * 2u + 1u] = w.y; return; }
+	st(oP, i, v);
+}
+
+void sync() {
+	memoryBarrierBuffer();
+	memoryBarrierShared();
+	barrier();
+}
+
+uint dyn(uint n) { return tu[H(CLH_O_DYN) + n]; }
+bool pinned(uint i) { return tu[H(CLH_O_KIN) + i] != 0u; }
+float wInv(uint i) { return tf[oW + i]; }
+
+// ---------------------------------------------------------------- skinning
+
+// linear blend skinning of vertex v into component space, then into the sim frame (skinToLocal)
+vec3 skinToLocal(uint posOff, uint ssOff, uint sbOff, uint swOff, uint v) {
+	const vec3 a0 = rv3(CLR_F), a1 = rv3(CLR_F + 3u), a2 = rv3(CLR_F + 6u), o = rv3(CLR_F + 9u);
+	const uint mats = pc.rec + CLR_MATS;
+	const vec3 x = tld(posOff, v);
+	vec3 s = vec3(0.0);
+	const uint k0 = tu[ssOff + v], k1 = tu[ssOff + v + 1u];
+	for (uint k = k0; k < k1; k++) {
+		const uint m = mats + tu[sbOff + k] * 16u;
+		const float ww = tf[swOff + k];
+		s.x += ww * (x.x * cf[m] + x.y * cf[m + 4u] + x.z * cf[m + 8u] + cf[m + 12u]);
+		s.y += ww * (x.x * cf[m + 1u] + x.y * cf[m + 5u] + x.z * cf[m + 9u] + cf[m + 13u]);
+		s.z += ww * (x.x * cf[m + 2u] + x.y * cf[m + 6u] + x.z * cf[m + 10u] + cf[m + 14u]);
+	}
+	s -= o;
+	return vec3(dot(a0, s), dot(a1, s), dot(a2, s));
+}
+vec3 skinCloth(uint v) { return skinToLocal(H(CLH_O_X0), H(CLH_O_SKS), H(CLH_O_SKB), H(CLH_O_SKW), v); }
+vec3 skinCollider(uint v) { return skinToLocal(H(CLH_O_CP0), H(CLH_O_CSKS), H(CLH_O_CSKB), H(CLH_O_CSKW), v); }
+
+// ---------------------------------------------------------------- geometry
+
+// closest point on triangle (Ericson 5.1.5): barycentrics, returns the region (0 interior, 1 edge/vertex)
+int closestBary(vec3 p, vec3 a, vec3 b, vec3 c, out vec3 bary) {
+	const vec3 ab = b - a, ac = c - a, ap = p - a;
+	const float d1 = dot(ab, ap), d2 = dot(ac, ap);
+	if (d1 <= 0.0 && d2 <= 0.0) { bary = vec3(1, 0, 0); return 1; }
+	const vec3 bp = p - b;
+	const float d3 = dot(ab, bp), d4 = dot(ac, bp);
+	if (d3 >= 0.0 && d4 <= d3) { bary = vec3(0, 1, 0); return 1; }
+	const float vc = d1 * d4 - d3 * d2;
+	if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) { const float v = d1 / (d1 - d3); bary = vec3(1.0 - v, v, 0); return 1; }
+	const vec3 cp = p - c;
+	const float d5 = dot(ab, cp), d6 = dot(ac, cp);
+	if (d6 >= 0.0 && d5 <= d6) { bary = vec3(0, 0, 1); return 1; }
+	const float vb = d5 * d2 - d1 * d6;
+	if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) { const float w = d2 / (d2 - d6); bary = vec3(1.0 - w, 0, w); return 1; }
+	const float va = d3 * d6 - d5 * d4;
+	if (va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0) {
+		const float w = (d4 - d3) / ((d4 - d3) + (d5 - d6)); bary = vec3(0, 1.0 - w, w); return 1;
+	}
+	const float den = 1.0 / (va + vb + vc);
+	const float v = vb * den, w = vc * den;
+	bary = vec3(1.0 - v - w, v, w);
+	return 0;
+}
+
+// the substep's collider: written by PRE / RSTATE, read-only in every later stage, so the L1-cached view
+vec3 cs(uint v) { return tld(oCs, v); }
+
+uint ctri(uint t, uint k) { return tu[oCtri + t * 3u + k]; }
+
+// squared distance from p to collider triangle t (at Cs)
+float triDist2(vec3 p, uint t) {
+	const vec3 a = cs(ctri(t, 0u)), b = cs(ctri(t, 1u)), c = cs(ctri(t, 2u));
+	vec3 bary;
+	closestBary(p, a, b, c, bary);
+	const vec3 q = bary.x * a + bary.y * b + bary.z * c - p;
+	return dot(q, q);
+}
+
+// greedy descent over the collider's vertex graph (walk); returns the vertex, its squared distance in dvOut
+int walk(int v, vec3 p, int maxSteps, out float dvOut) {
+	float dv;
+	{ const vec3 e = cs(uint(v)) - p; dv = dot(e, e); }
+	for (int stp = 0; stp < maxSteps; stp++) {
+		const int v0 = v;
+		const uint q0 = tu[oVvs + uint(v0)], q1 = tu[oVvs + uint(v0) + 1u];
+		for (uint q = q0; q < q1; q++) {
+			const uint w = tu[oVvl + q];
+			const vec3 e = cs(w) - p;
+			const float du = dot(e, e);
+			if (du < dv) { dv = du; v = int(w); }
+		}
+		if (v == v0) break;
+	}
+	dvOut = dv;
+	return v;
+}
+
+// signed distance of particle i at p to collider triangle t; writes the contact normal into cNrm
+float signedDist(uint i, vec3 p, uint t) {
+	const vec3 a = cs(ctri(t, 0u)), b = cs(ctri(t, 1u)), c = cs(ctri(t, 2u));
+	vec3 bary;
+	const int region = closestBary(p, a, b, c, bary);
+	const vec3 cp = bary.x * a + bary.y * b + bary.z * c;
+	const vec3 uu = b - a, vv = c - a;
+	vec3 n = vec3(vv.y * uu.z - vv.z * uu.y, vv.z * uu.x - vv.x * uu.z, vv.x * uu.y - vv.y * uu.x);
+	const float nl = sqrt(dot(n, n));
+	if (nl < EPS) return BIG;
+	n *= flipN / nl;
+	const vec3 q = p - cp;
+	const float sd = dot(q, n);
+	if (region != 0 && RU(CLR_EDGENORMAL) != 0u) {
+		const float ql = sqrt(dot(q, q));
+		if (ql > 1e-6) {
+			const float sg = sd >= 0.0 ? 1.0 : -1.0;
+			st(oCnrm, i, sg * q / ql);
+			return sg * ql;
+		}
+	}
+	st(oCnrm, i, n);
+	return sd;
+}
+
+int ifloorf(float v) {
+	if (!(abs(v) < 1e9)) return 0;
+	return int(floor(v));
+}
+
+uint cellHash(int ix, int iy, int iz) {
+	const uint a = uint(ix) * 73856093u, b = uint(iy) * 19349663u, c = uint(iz) * 83492791u;
+	return (a ^ b ^ c) & uint(CL_HASH - 1);
+}
+
+float cellSize() { return R(CLR_CELL) > 0.5 ? R(CLR_CELL) : 0.5; }
+
+// ---------------------------------------------------------------- collision
+
+void hashInsert(uint v) {
+	const float ics = 1.0 / cellSize();
+	const vec3 c = cs(v);
+	const uint b = cellHash(ifloorf(c.x * ics), ifloorf(c.y * ics), ifloorf(c.z * ics));
+	ii[H(CLH_O_HNEXT) + v] = atomicExchange(ii[H(CLH_O_HHEAD) + b], int(v));
+}
+
+// contactSearch for one dynamic particle: the tracked vertex walk, the two nearest hashed collider vertices and the
+// closest triangle of their one-rings; returns 1 for a contact within the thickness
+uint contactOne(uint i) {
+	const float cell = cellSize(), ics = 1.0 / cell;
+	const float lim2 = tau + cMaxEdge + 0.5;
+	const float Rr = cell < lim2 ? cell : lim2;
+	const uint oHH = H(CLH_O_HHEAD), oHN = H(CLH_O_HNEXT);
+	const float R2 = Rr * Rr;
+	const float keep = tau + (R(CLR_MARGIN) > 0.0 ? R(CLR_MARGIN) : 0.0);
+	const bool track = RU(CLR_TRACK) != 0u;
+	const float mk = keep > backD ? keep : backD;
+	const float farLim = (mk + cMaxEdge) * (mk + cMaxEdge);
+	const vec3 p = ld(oP, i);
+	const int at = RU(CLR_SIDED) != 0u ? ii[oStri + i] : -1;
+	if (RU(CLR_SIDED) != 0u) ii[oStri + i] = -1;   // set again by an anchored contact here or a resolved one in collideOne
+	int best1 = -1, best2 = -1;
+	float d1 = R2, d2 = R2;
+	{
+		const int ix = ifloorf(p.x * ics), iy = ifloorf(p.y * ics), iz = ifloorf(p.z * ics);
+		for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) {
+			const uint b = cellHash(ix + dx, iy + dy, iz + dz);
+			for (int vv = int(tu[oHH + b]); vv >= 0; vv = int(tu[oHN + uint(vv)])) {   // built by the previous stage
+				const vec3 e = cs(uint(vv)) - p;
+				const float dd = dot(e, e);
+				if (dd >= d2) continue;
+				if (vv == best1) continue;
+				if (dd < d1) { best2 = best1; d2 = d1; best1 = vv; d1 = dd; } else { best2 = vv; d2 = dd; }
+			}
+		}
+	}
+	if (track) {
+		int vw = ii[oCvert + i];
+		if (vw >= 0) {
+			float dv;
+			vw = walk(vw, p, 64, dv);
+			if (best1 < 0) {
+				const float dist = sqrt(dv);
+				ii[oCvert + i] = vw;
+				if (dv > farLim) { ii[oCtrix + i] = -1; return 0u; }
+				if (dist > keep + tf[oVrad + uint(vw)]) {
+					const uint t0 = tu[oVtl + tu[oVts + uint(vw)]];
+					const vec3 a = cs(ctri(t0, 0u)), b = cs(ctri(t0, 1u)), c = cs(ctri(t0, 2u));
+					const vec3 uu = b - a, ww = c - a;
+					const vec3 nn = flipN * vec3(ww.y * uu.z - ww.z * uu.y, ww.z * uu.x - ww.x * uu.z, ww.x * uu.y - ww.y * uu.x);
+					const float nl = sqrt(dot(nn, nn));
+					if (nl > EPS && dot(p - cs(uint(vw)), nn) > 0.5 * dist * nl) { ii[oCtrix + i] = -1; return 0u; }
+				}
+				best1 = vw; d1 = dv;
+			} else if (vw != best1 && dv < d2) {
+				if (dv < d1) { best2 = best1; d2 = d1; best1 = vw; d1 = dv; } else { best2 = vw; d2 = dv; }
+			}
+		}
+		if (best1 >= 0) ii[oCvert + i] = best1;
+	}
+	// closest triangle among the one-rings (plus last substep's triangle)
+	int bt = -1;
+	float bd = BIG;
+	const int prev = ii[oCtrix + i];
+	for (int r = 0; r < 3; r++) {
+		int lo, hi;
+		if (r == 0) { if (best1 < 0) continue; lo = int(tu[oVts + uint(best1)]); hi = int(tu[oVts + uint(best1) + 1u]); }
+		else if (r == 1) { if (best2 < 0) continue; lo = int(tu[oVts + uint(best2)]); hi = int(tu[oVts + uint(best2) + 1u]); }
+		else { if (prev < 0) continue; lo = -1; hi = 0; }
+		for (int q = lo; q < hi; q++) {
+			const uint t = q < 0 ? uint(prev) : tu[oVtl + uint(q)];
+			const float dd = triDist2(p, t);
+			if (dd < bd) { bd = dd; bt = int(t); }
+		}
+	}
+	ii[oCtrix + i] = -1;
+	if (at >= 0) {
+		// sidedContacts: behind its remembered face by less than sideDepth, the particle leaves through that face
+		// (the closest face counts only when it faces the same way)
+		vec3 nb = vec3(0.0);
+		if (bt >= 0 && bt != at) { signedDist(i, p, uint(bt)); nb = ld(oCnrm, i); }
+		const float dA = signedDist(i, p, uint(at)), sD = R(CLR_SIDEDEPTH);
+		if (dA < 0.0 && triDist2(p, uint(at)) < sD * sD) {
+			const int use = (bt < 0 || bt == at || dot(nb, ld(oCnrm, i)) < -0.25) ? at : bt;
+			const float du = use == at ? dA : signedDist(i, p, uint(use));
+			if (du > -sD) { ii[oCtrix + i] = use; ii[oStri + i] = use; return 1u; }
+		}
+	}
+	if (bt < 0) return 0u;
+	const float d = signedDist(i, p, uint(bt));
+	if (track && bd > (d >= 0.0 ? keep * keep : backD * backD)) return 0u;
+	if (d < keep && d > -backD) { ii[oCtrix + i] = bt; if (d < tau) return 1u; }
+	return 0u;
+}
+
+// walk the tracked vertex to p and return the closest triangle of its one-ring within the thickness, else -1
+int reacquire(uint i, vec3 p) {
+	int v = ii[oCvert + i];
+	if (v < 0) return -1;
+	const float lim = tau + 1.0;
+	{
+		const vec3 e = cs(uint(v)) - p;
+		const float r0 = lim + tf[oVrad + uint(v)] + 3.0;
+		if (dot(e, e) > r0 * r0) return -1;
+	}
+	float dv;
+	v = walk(v, p, 16, dv);
+	const float r1 = lim + tf[oVrad + uint(v)];
+	if (dv > r1 * r1) return -1;
+	int bt = -1;
+	float bd = BIG;
+	const uint q0 = tu[oVts + uint(v)], q1 = tu[oVts + uint(v) + 1u];
+	for (uint q = q0; q < q1; q++) {
+		const uint t = tu[oVtl + q];
+		const float dd = triDist2(p, t);
+		if (dd < bd) { bd = dd; bt = int(t); }
+	}
+	if (bt < 0 || bd > lim * lim) return -1;
+	return bt;
+}
+
+// collide() for one particle: capsules (it >= 0), then the contact (or a reacquired one)
+vec3 collideOne(uint i, vec3 p, int it, bool re, inout uint hits) {
+	if (NCAPS > 0u && RU(CLR_HANDCOL) != 0u && it >= 0) {
+		if (!(p.x < sCapB[0] || p.x > sCapB[3] || p.y < sCapB[1] || p.y > sCapB[4] || p.z < sCapB[2] || p.z > sCapB[5])) {
+			const float th = R(CLR_HANDTH);
+			for (uint c = 0u; c < NCAPS; c++) {
+				const uint o = c * 6u;
+				if (p.x < sCapBB[o] || p.x > sCapBB[o + 3u] || p.y < sCapBB[o + 1u] || p.y > sCapBB[o + 4u] || p.z < sCapBB[o + 2u] || p.z > sCapBB[o + 5u]) continue;
+				const vec3 a = vec3(sCapS[o], sCapS[o + 1u], sCapS[o + 2u]);
+				const vec3 uu = vec3(sCapS[o + 3u], sCapS[o + 4u], sCapS[o + 5u]) - a;
+				const float l2 = dot(uu, uu);
+				float t = l2 > EPS ? dot(p - a, uu) / l2 : 0.0;
+				t = clamp(t, 0.0, 1.0);
+				const vec3 d = p - a - t * uu;
+				const float Rc = tf[H(CLH_O_CAPR) + c] + th, d2 = dot(d, d);
+				if (d2 >= Rc * Rc || d2 < 1e-12) continue;
+				const float dl = sqrt(d2);
+				p += d * ((Rc - dl) / dl);
+				hits++;
+			}
+		}
+	}
+	if (M == 0u) return p;   // no body mesh: capsules only
+	int t = ii[oCtrix + i];
+	if (t < 0) {
+		if (!re) return p;
+		t = reacquire(i, p);
+		if (t < 0) return p;
+		const float d = signedDist(i, p, uint(t));
+		if (d >= R(CLR_REACQDEPTH) * tau || d <= -backD) return p;
+		if (RU(CLR_SIDED) != 0u) ii[oStri + i] = t;
+		return p + (tau - d) * ld(oCnrm, i);
+	}
+	const float d = signedDist(i, p, uint(t));
+	const bool sided = RU(CLR_SIDED) != 0u;
+	// an anchored contact (sidedContacts) is pushed out through its face from deeper
+	if (d <= -(sided && ii[oStri + i] == t ? R(CLR_SIDEDEPTH) : backD)) return p;
+	if (sided) ii[oStri + i] = t;
+	if (d >= tau) return p;
+	f[oPush + i] += tau - d;
+	return p + (tau - d) * ld(oCnrm, i);
+}
+
+// ---------------------------------------------------------------- constraints (ITER: positions via lp / sp)
+
+void edgesColoured() {
+	const float k = R(CLR_KEDGE);
+	const uint oEC = H(CLH_O_EC), oE = H(CLH_O_E), nC = H(CLH_NEC);
+	for (uint c = 0u; c < nC; c++) {
+		const uint e0 = tu[oEC + c], e1 = tu[oEC + c + 1u];
+		for (uint e = e0 + lid; e < e1; e += WG) {
+			const uint a = tu[oE + e * 3u], b = tu[oE + e * 3u + 1u];
+			const float L = tf[oE + e * 3u + 2u];
+			const float wa = wInv(a), wb = wInv(b), ws = wa + wb;
+			if (ws == 0.0) continue;
+			const vec3 pa = lp(a), pb = lp(b);
+			const vec3 dd = pa - pb;
+			const float d = sqrt(dot(dd, dd));
+			if (d < EPS) continue;
+			const float s = k * (d - L) / (d * ws);
+			if (wa != 0.0) sp(a, pa - wa * s * dd);
+			if (wb != 0.0) sp(b, pb + wb * s * dd);
+		}
+		sync();
+	}
+}
+
+// signed dihedral angle and its gradients (dihedral); false on degenerate geometry
+bool dihedral(uint i1, uint i2, uint i3, uint i4, out float theta, out vec3 g1, out vec3 g2, out vec3 g3, out vec3 g4) {
+	const vec3 x1 = lp(i1), x2 = lp(i2), x3 = lp(i3), x4 = lp(i4);
+	const vec3 e = x4 - x3;
+	const float el2 = dot(e, e);
+	theta = 0.0; g1 = vec3(0); g2 = vec3(0); g3 = vec3(0); g4 = vec3(0);
+	if (el2 < EPS) return false;
+	const float el = sqrt(el2);
+	const vec3 a1 = x1 - x3, b1 = x1 - x4, a2 = x2 - x4, b2 = x2 - x3;
+	const vec3 n1 = cross(a1, b1), n2 = cross(a2, b2);
+	const float n1l2 = dot(n1, n1), n2l2 = dot(n2, n2);
+	const float lim = 4e-4 * el2 * el2;
+	if (n1l2 < lim || n2l2 < lim || n1l2 < EPS || n2l2 < EPS) return false;
+	const vec3 u1 = n1 / sqrt(n1l2), u2 = n2 / sqrt(n2l2);
+	const float cosT = dot(u1, u2);
+	const float sinT = dot(cross(u1, u2), e) / el;
+	theta = atan(sinT, cosT);
+	const float f1 = el / n1l2, f2 = el / n2l2;
+	const float h1 = 1.0 / n1l2, h2 = 1.0 / n2l2;
+	const float t13 = dot(b1, e) / el, t23 = dot(a2, e) / el;
+	const float t14 = dot(a1, e) / el, t24 = dot(b2, e) / el;
+	g1 = -(n1 * f1);
+	g2 = -(n2 * f2);
+	g3 = -(t13 * n1 * h1 + t23 * n2 * h2);
+	g4 = (t14 * n1 * h1 + t24 * n2 * h2);
+	return true;
+}
+
+void bendsColoured() {
+	const float k = R(CLR_KBEND);
+	const uint oBC = H(CLH_O_BC), oB = H(CLH_O_B), nC = H(CLH_NBC);
+	const bool spring = RU(CLR_BENDMODEL) == 1u;
+	for (uint c = 0u; c < nC; c++) {
+		const uint b0 = tu[oBC + c], b1 = tu[oBC + c + 1u];
+		for (uint b = b0 + lid; b < b1; b += WG) {
+			const uint q = oB + b * 6u;
+			const uint i1 = tu[q], i2 = tu[q + 1u], i3 = tu[q + 2u], i4 = tu[q + 3u];
+			if (spring) {
+				const float wa = wInv(i1), wb = wInv(i2), ws = wa + wb;
+				if (ws == 0.0) continue;
+				const vec3 pa = lp(i1), pb = lp(i2);
+				const vec3 dd = pa - pb;
+				const float d = sqrt(dot(dd, dd));
+				if (d < EPS) continue;
+				const float s = k * (d - tf[q + 5u]) / (d * ws);
+				if (wa != 0.0) sp(i1, pa - wa * s * dd);
+				if (wb != 0.0) sp(i2, pb + wb * s * dd);
+				continue;
+			}
+			const float w1 = wInv(i1), w2 = wInv(i2), w3 = wInv(i3), w4 = wInv(i4);
+			if (w1 + w2 + w3 + w4 == 0.0) continue;
+			float th; vec3 g1, g2, g3, g4;
+			if (!dihedral(i1, i2, i3, i4, th, g1, g2, g3, g4)) continue;
+			float cc = th - tf[q + 4u];
+			if (cc > PI) cc -= 2.0 * PI; else if (cc < -PI) cc += 2.0 * PI;
+			cc = clamp(cc, -BEND_MAX, BEND_MAX);
+			const float den = w1 * dot(g1, g1) + w2 * dot(g2, g2) + w3 * dot(g3, g3) + w4 * dot(g4, g4);
+			if (den < EPS) continue;
+			const float s = k * cc / den;
+			if (w1 != 0.0) sp(i1, lp(i1) - s * w1 * g1);
+			if (w2 != 0.0) sp(i2, lp(i2) - s * w2 * g2);
+			if (w3 != 0.0) sp(i3, lp(i3) - s * w3 * g3);
+			if (w4 != 0.0) sp(i4, lp(i4) - s * w4 * g4);
+		}
+		sync();
+	}
+}
+
+void areasColoured() {
+	const float k = R(CLR_KAREA);
+	const uint oAC = H(CLH_O_AC), oA = H(CLH_O_A), nC = H(CLH_NAC);
+	for (uint c = 0u; c < nC; c++) {
+		const uint t0 = tu[oAC + c], t1 = tu[oAC + c + 1u];
+		for (uint t = t0 + lid; t < t1; t += WG) {
+			const uint q = oA + t * 4u;
+			const uint a = tu[q], b = tu[q + 1u], cc = tu[q + 2u];
+			const float wa = wInv(a), wb = wInv(b), wc = wInv(cc);
+			if (wa + wb + wc == 0.0) continue;
+			const vec3 pa = lp(a), pb = lp(b), pc3 = lp(cc);
+			const vec3 uu = pb - pa, vv = pc3 - pa;
+			vec3 n = cross(uu, vv);
+			const float nl = sqrt(dot(n, n));
+			if (nl < EPS) continue;
+			n /= nl;
+			const float C0 = 0.5 * nl - tf[q + 3u];
+			const vec3 gb = 0.5 * cross(vv, n);
+			const vec3 gc = 0.5 * cross(n, uu);
+			const vec3 ga = -gb - gc;
+			const float den = wa * dot(ga, ga) + wb * dot(gb, gb) + wc * dot(gc, gc);
+			if (den < EPS) continue;
+			const float s = k * C0 / den;
+			if (wa != 0.0) sp(a, pa - s * wa * ga);
+			if (wb != 0.0) sp(b, pb - s * wb * gb);
+			if (wc != 0.0) sp(cc, pc3 - s * wc * gc);
+		}
+		sync();
+	}
+}
+
+vec3 animDriveOne(uint i, vec3 p) {
+	const float k = R(CLR_KAD);
+	const float ki = RU(CLR_ADUSEMAP) != 0u ? k * tf[H(CLH_O_ADMAP) + i] : k;
+	return p + ki * (tld(oTs, i) - p);
+}
+
+vec3 tethersOne(uint i, vec3 p, inout uint nActive) {
+	const float k = R(CLR_KTETHER), sc = R(CLR_TETHERSCALE);
+	const uint oS = H(CLH_O_TETS), oA = H(CLH_O_TETA), oL = H(CLH_O_TETL);
+	const uint t0 = tu[oS + i], t1 = tu[oS + i + 1u];
+	for (uint t = t0; t < t1; t++) {
+		const vec3 d = p - lp(tu[oA + t]);
+		const float dl = sqrt(dot(d, d)), lim = sc * tf[oL + t];
+		if (dl <= lim || dl < EPS) continue;
+		nActive++;
+		p -= (k * (dl - lim) / dl) * d;
+	}
+	return p;
+}
+
+vec3 maxDistOne(uint i, vec3 p) {
+	const vec3 T = tld(oTs, i);
+	const vec3 d = p - T;
+	const float r = tf[H(CLH_O_MAXD) + i] * R(CLR_MAXDSCALE), d2 = dot(d, d);
+	if (d2 <= r * r) return p;
+	return T + d * (r / sqrt(d2));
+}
+
+vec3 coneOne(uint i, vec3 p, inout uint capped) {
+	const uint oS = H(CLH_O_TETS);
+	if (tu[oS + i] == tu[oS + i + 1u]) return p;
+	const uint a = tu[H(CLH_O_TETA) + tu[oS + i]];
+	const vec3 ax = rv3(CLR_CONEAXIS);
+	const float cMax = R(CLR_CONECOS);
+	const vec3 pa = lp(a);
+	const vec3 r = p - pa;
+	float h = dot(r, ax);
+	const float L = sqrt(dot(r, r));
+	// coneBody: where the body holds the cloth out it keeps that angle (relaxed in stageIter)
+	const bool body = RU(CLR_CONEBODY) != 0u && M > 0u;
+	if (body && ii[oCtrix + i] >= 0 && L > EPS && h < L * f[oConeC + i]) f[oConeC + i] = h / L;
+	if (h >= L * cMax) return p;
+	const vec3 tt = tld(oTs, i) - tld(oTs, a);
+	const float tl = sqrt(dot(tt, tt));
+	float cl = body && f[oConeC + i] < cMax ? f[oConeC + i] : cMax;
+	if (tl > EPS) { const float ct = dot(tt, ax) / tl; if (ct < cl) cl = ct; }
+	if (h >= L * cl) return p;
+	vec3 q = r - h * ax;
+	float ql = sqrt(dot(q, q));
+	if (ql <= 1e-6 * L) {
+		const float th = dot(tt, ax);
+		q = tt - th * ax;
+		ql = sqrt(dot(q, q));
+		if (ql <= EPS) return p;
+	}
+	float sl = 1.0 - cl * cl;
+	sl = sl > 0.0 ? sqrt(sl) : 0.0;
+	capped++;
+	return pa + (L * cl) * ax + (L * sl / ql) * q;
+}
+
+// ---------------------------------------------------------------- stages
+
+void capsuleSetup(float a) {
+	if (lid == 0u) {
+		float rm = 0.0;
+		const float th = R(CLR_HANDTH);
+		for (uint k = 0u; k < 3u; k++) { sCapB[k] = BIG; sCapB[k + 3u] = -BIG; }
+		for (uint k = 0u; k < NCAPS * 6u; k++) {
+			const float co = R(CLR_CAPOLD + k);
+			const float v = co + a * (R(CLR_CAPNEW + k) - co);
+			sCapS[k] = v;
+			const uint ax = k % 3u;
+			if (v < sCapB[ax]) sCapB[ax] = v;
+			if (v > sCapB[ax + 3u]) sCapB[ax + 3u] = v;
+		}
+		for (uint c = 0u; c < NCAPS; c++) rm = max(rm, tf[H(CLH_O_CAPR) + c]);
+		const float pad = rm + th;
+		for (uint ax = 0u; ax < 3u; ax++) { sCapB[ax] -= pad; sCapB[ax + 3u] += pad; }
+		for (uint c = 0u; c < NCAPS; c++) {
+			const uint o = c * 6u;
+			const float Rc = tf[H(CLH_O_CAPR) + c] + th;
+			for (uint ax = 0u; ax < 3u; ax++) {
+				const float l0 = sCapS[o + ax], l1 = sCapS[o + 3u + ax];
+				sCapBB[o + ax] = min(l0, l1) - Rc;
+				sCapBB[o + 3u + ax] = max(l0, l1) + Rc;
+			}
+		}
+	}
+}
+
+float substepAlpha() { return float(pc.sub) / float(RU(CLR_NSUB)); }
+
+// SkirtSim_Step before the substeps: the previous targets/collider (model B moves them and the state by the felt
+// frame motion, F3), the kick, then the new skinned targets/collider (skinAll)
+void stageSkin() {
+	const vec3 D0 = rv3(CLR_D), D1 = rv3(CLR_D + 3u), D2 = rv3(CLR_D + 6u), dv = rv3(CLR_DVEC);
+	const bool modelB = RU(CLR_INERTIA) == 1u;
+	const bool rotVel = RU(CLR_ROTVEL) != 0u;
+	const bool carry = modelB && RU(CLR_CARRY) != 0u, kick = !modelB && RU(CLR_KICKIMP) != 0u;
+	const vec3 e = rv3(CLR_CARRYV), kv = rv3(CLR_KICKV), ko = rv3(CLR_KICKO);
+	for (uint k = gid; k < N; k += gsz) {
+		vec3 t = ld(oTnew, k);
+		vec3 x = ld(oX, k), v = ld(oV, k);
+		if (modelB) {
+			t = vec3(dot(D0, t), dot(D1, t), dot(D2, t)) - dv;
+			x = vec3(dot(D0, x), dot(D1, x), dot(D2, x)) - dv;
+			if (rotVel) v = vec3(dot(D0, v), dot(D1, v), dot(D2, v));
+		}
+		if (!pinned(k)) {
+			if (carry) v += e;
+			else if (kick) v += kv + cross(ko, x);
+		}
+		st(oTold, k, t); st(oX, k, x); st(oV, k, v);
+		st(oTnew, k, skinCloth(k));
+	}
+	for (uint k = gid; k < M; k += gsz) {
+		vec3 c = ld(oCnew, k);
+		if (modelB) c = vec3(dot(D0, c), dot(D1, c), dot(D2, c)) - dv;
+		st(oCold, k, c);
+		st(oCnew, k, skinCollider(k));
+	}
+}
+
+// substep: targets/collider at alpha, external accelerations, hash reset
+void stagePre() {
+	const float alpha = substepAlpha(), h = R(CLR_H);
+	const float ta = RU(CLR_TARGETLERP) != 0u ? alpha : 1.0;
+	const float ca = RU(CLR_COLLERP) != 0u ? alpha : 1.0;
+	const vec3 g = rv3(CLR_GL), w = rv3(CLR_WF), kv = rv3(CLR_KICKV), ko = rv3(CLR_KICKO);
+	const float spread = R(CLR_SPREAD);
+	for (uint k = gid; k < N; k += gsz) {
+		const vec3 o = ld(oTold, k);
+		st(oTs, k, o + ta * (ld(oTnew, k) - o));
+		if (pinned(k)) continue;
+		// S2 external accelerations
+		const vec3 r = ld(oX, k), v = ld(oV, k);
+		vec3 a = g;
+		const vec3 c = cross(w, r);
+		a -= cross(w, c);
+		a -= 2.0 * cross(w, v);
+		if (spread != 0.0) a += spread * (kv + cross(ko, r));
+		st(oV, k, v + h * a);
+	}
+	for (uint k = gid; k < M; k += gsz) { const vec3 o = ld(oCold, k); st(oCs, k, o + ca * (ld(oCnew, k) - o)); }
+	if (M > 0u) for (uint b = gid; b < uint(CL_HASH); b += gsz) ii[H(CLH_O_HHEAD) + b] = -1;
+}
+
+// aero force per triangle (all from the velocities after the accelerations); hash the substep's collider
+void stageAeroHash() {
+	if (RU(CLR_AERO) != 0u && (RU(CLR_DEBUG) & 8u) == 0u) {	// r_clothGpuSkip 8: no aero
+		const float rho = R(CLR_RHO), cd = R(CLR_CD), cl = R(CLR_CL);
+		const vec3 fv = rv3(CLR_AEROLIN) * rv3(CLR_VL);
+		const vec3 om = R(CLR_AEROANG) * rv3(CLR_OL);
+		const uint oT = H(CLH_O_TRI), oF = H(CLH_O_TRIF);
+		for (uint t = gid; t < NT; t += gsz) {
+			const uint a = tu[oT + t * 3u], b = tu[oT + t * 3u + 1u], c = tu[oT + t * 3u + 2u];
+			vec3 force = vec3(0.0);
+			if (!(wInv(a) == 0.0 && wInv(b) == 0.0 && wInv(c) == 0.0)) {
+				const vec3 xa = ld(oX, a), xb = ld(oX, b), xc = ld(oX, c);
+				const vec3 r = (xa + xb + xc) / 3.0;
+				const vec3 uv = (ld(oV, a) + ld(oV, b) + ld(oV, c)) / 3.0 + fv + cross(om, r);
+				const float q2 = dot(uv, uv);
+				if (q2 >= 1e-6) {
+					const float q = sqrt(q2);
+					const vec3 qd = -uv / q;
+					vec3 n = cross(xb - xa, xc - xa);
+					const float n2 = sqrt(dot(n, n));
+					if (n2 >= EPS) {
+						const float area = 0.5 * n2;
+						n /= n2;
+						const float cth = dot(n, qd);
+						const float base = 0.5 * rho * area * q2;
+						force = (base * cd * abs(cth)) * qd;
+						const vec3 l = n - cth * qd;
+						const float ll = sqrt(dot(l, l));
+						if (ll > 1e-6) force += (base * cl * cth / ll) * l;
+					}
+				}
+			}
+			st(oF, t, force);
+		}
+	}
+	for (uint v = gid; v < M; v += gsz) hashInsert(v);
+}
+
+// aero gather, S3 damping, S4 predict
+void stagePredict() {
+	const float h = R(CLR_H), dt = R(CLR_DT);
+	const bool aero = RU(CLR_AERO) != 0u && (RU(CLR_DEBUG) & 8u) == 0u, damp = R(CLR_DAMPING) > 0.0, rel = RU(CLR_DAMPREL) != 0u;
+	const float fct = R(CLR_DAMPF), inv = 1.0 / dt, s3 = h / 3.0;
+	const uint oS = H(CLH_O_PTS), oL = H(CLH_O_PTL), oF = H(CLH_O_TRIF);
+	for (uint k = gid; k < N; k += gsz) {
+		f[oPush + k] = 0.0;
+		if (pinned(k)) { const vec3 t = tld(oTs, k); st(oP, k, t); st(oX, k, t); continue; }
+		vec3 v = ld(oV, k);
+		if (aero) {
+			vec3 acc = vec3(0.0);
+			const uint q0 = tu[oS + k], q1 = tu[oS + k + 1u];
+			for (uint q = q0; q < q1; q++) acc += tld(oF, tu[oL + q]);
+			v += (wInv(k) * s3) * acc;
+		}
+		if (damp) {
+			if (rel) { const vec3 vt = (ld(oTnew, k) - ld(oTold, k)) * inv; v = vt + (v - vt) * fct; }
+			else v *= fct;
+		}
+		st(oV, k, v);
+		st(oP, k, ld(oX, k) + h * v);
+	}
+}
+
+void stageContact() {
+	if ((RU(CLR_DEBUG) & 1u) != 0u) return;
+	uint contacts = 0u;
+	for (uint n = gid; n < NDYN; n += gsz) contacts += contactOne(dyn(n));
+	if (contacts > 0u) atomicAdd(sContacts, contacts);
+}
+
+// S6 iterations (one workgroup)
+void stageIter() {
+	const uint nIt = RU(CLR_NIT);
+	const float ca = RU(CLR_COLLERP) != 0u ? substepAlpha() : 1.0;
+	if (NCAPS > 0u && RU(CLR_HANDCOL) != 0u) capsuleSetup(ca);
+	pmode = N * 3u <= SP_CAP ? 1u : (N * 2u <= SP_CAP ? 2u : 0u);
+	if (pmode == 2u) {   // packed only when every particle is in range; otherwise the buffer (positions untouched there)
+		if (lid == 0u) sOOR = 0u;
+		barrier();
+		for (uint i = lid; i < N; i += WG) {
+			const vec3 v = ld(oP, i);
+			if (any(greaterThan(abs(v), vec3(PQ_LIM)))) atomicOr(sOOR, 1u);
+		}
+		memoryBarrierShared();
+		barrier();
+		if (sOOR != 0u) pmode = 0u;
+	}
+	if (pmode == 1u) for (uint k = lid; k < N * 3u; k += WG) sP[k] = floatBitsToUint(f[oP + k]);
+	if (pmode == 2u) for (uint i = lid; i < N; i += WG) { const uvec2 w = pack3(ld(oP, i)); sP[i * 2u] = w.x; sP[i * 2u + 1u] = w.y; }
+	sync();
+	if (RU(CLR_CONEBODY) != 0u && M > 0u && (RU(CLR_DEBUG) & 4u) == 0u) {
+		// coneBody: the allowance eases back to the cap, and passes down the sheet (colour by colour) to the cloth
+		// hanging below a held particle, further along its tether
+		const float kr = R(CLR_CONEKR);
+		for (uint n = lid; n < NDYN; n += WG) { const uint i = dyn(n); f[oConeC + i] += (1.0 - f[oConeC + i]) * kr; }
+		sync();
+		const uint oEC = H(CLH_O_EC), oE = H(CLH_O_E), nC = H(CLH_NEC), oTS = H(CLH_O_TETS), oTL = H(CLH_O_TETL);
+		for (uint c = 0u; c < nC; c++) {
+			const uint e0 = tu[oEC + c], e1 = tu[oEC + c + 1u];
+			for (uint e = e0 + lid; e < e1; e += WG) {
+				const uint a = tu[oE + e * 3u], b = tu[oE + e * 3u + 1u];
+				if (tu[oTS + a] == tu[oTS + a + 1u] || tu[oTS + b] == tu[oTS + b + 1u]) continue;
+				const bool aLo = tf[oTL + tu[oTS + a]] < tf[oTL + tu[oTS + b]];
+				const uint lo = aLo ? a : b, hi = aLo ? b : a;
+				if (f[oConeC + lo] < f[oConeC + hi]) f[oConeC + hi] = f[oConeC + lo];
+			}
+			sync();
+		}
+	}
+	const bool adPer = RU(CLR_ADPERSUB) != 0u, hasAD = R(CLR_KAD) > 0.0;
+	if (adPer && hasAD) {
+		for (uint n = lid; n < NDYN; n += WG) { const uint i = dyn(n); sp(i, animDriveOne(i, lp(i))); }
+		sync();
+	}
+	const uint ep = RU(CLR_EDGEPASSES), bp = RU(CLR_BENDPASSES), reacq = RU(CLR_REACQ);
+	const bool colLast = RU(CLR_ORDER) == 0u, cone = RU(CLR_CONE) != 0u, drive = !adPer && hasAD;
+	uint nActive = 0u, capped = 0u, hits = 0u;
+	for (uint it = 0u; it < nIt; it++) {
+		const bool col = (M > 0u || (NCAPS > 0u && RU(CLR_HANDCOL) != 0u)) && (RU(CLR_COLLEVERY) != 0u || it == nIt - 1u);
+		const bool re = RU(CLR_TRACK) != 0u && reacq != 0u && (reacq == 2u || it == nIt - 1u);
+		if ((RU(CLR_DEBUG) & 2u) == 0u) {
+			for (uint r = 0u; r < ep; r++) edgesColoured();
+			if (R(CLR_KBEND) > 0.0) for (uint r = 0u; r < bp; r++) bendsColoured();
+			if (R(CLR_KAREA) > 0.0) areasColoured();
+		}
+		if ((RU(CLR_DEBUG) & 4u) == 0u) {
+			// the per-particle constraints: own particle, pinned anchors
+			for (uint n = lid; n < NDYN; n += WG) {
+				const uint i = dyn(n);
+				vec3 p = lp(i);
+				if (drive) p = animDriveOne(i, p);
+				if (colLast) {
+					p = tethersOne(i, p, nActive);
+					p = maxDistOne(i, p);
+					if (cone) p = coneOne(i, p, capped);
+					if (col) p = collideOne(i, p, int(it), re, hits);
+				} else {
+					if (cone) p = coneOne(i, p, capped);
+					if (col) p = collideOne(i, p, int(it), re, hits);
+					p = maxDistOne(i, p);
+					p = tethersOne(i, p, nActive);
+				}
+				sp(i, p);
+			}
+		}
+		sync();
+	}
+	if (pmode == 1u) for (uint k = lid; k < N * 3u; k += WG) f[oP + k] = uintBitsToFloat(sP[k]);
+	if (pmode == 2u) for (uint i = lid; i < N; i += WG) st(oP, i, unpack3(uvec2(sP[i * 2u], sP[i * 2u + 1u])));
+	if (capped > 0u) atomicAdd(sCone, capped);
+	if (hits > 0u) atomicAdd(sHand, hits);
+	if (nActive > 0u) atomicAdd(sTethers, nActive);
+}
+
+// S7 velocity update, friction, drive damping; S8
+void stagePost() {
+	const float h = R(CLR_H), ih = 1.0 / h, mu = R(CLR_MU), dAD = R(CLR_DAD), inv = 1.0 / R(CLR_DT);
+	const bool fric = M > 0u && mu > 0.0, posFric = RU(CLR_FRICMODEL) == 1u, colLerp = RU(CLR_COLLERP) != 0u;
+	const bool useMap = RU(CLR_ADUSEMAP) != 0u, last = pc.sub == RU(CLR_NSUB);
+	bool bad = false;
+	for (uint n = gid; n < NDYN; n += gsz) {
+		const uint i = dyn(n);
+		vec3 p = ld(oP, i);
+		const vec3 x = ld(oX, i);
+		vec3 v = (p - x) * ih;
+		const int t = ii[oCtrix + i];
+		if (fric && t >= 0 && f[oPush + i] > 0.0) {
+			const uint ta = ctri(uint(t), 0u), tb = ctri(uint(t), 1u), tc = ctri(uint(t), 2u);
+			vec3 bary;
+			closestBary(p, cs(ta), cs(tb), cs(tc), bary);
+			vec3 vc = vec3(0.0);
+			if (colLerp) {
+				vc = bary.x * inv * (tld(oCnew, ta) - tld(oCold, ta)) + bary.y * inv * (tld(oCnew, tb) - tld(oCold, tb))
+					+ bary.z * inv * (tld(oCnew, tc) - tld(oCold, tc));
+			}
+			const vec3 nn = ld(oCnrm, i);
+			const vec3 rr = v - vc;
+			const float vn = dot(rr, nn);
+			vec3 tg = rr - vn * nn;
+			const float vt = sqrt(dot(tg, tg));
+			const float dpen = f[oPush + i];
+			float sc;
+			if (posFric) {
+				const float dxt = vt * h;
+				if (dxt < mu * dpen) sc = 0.0; else { const float den = dxt > EPS ? dxt : EPS; sc = max(1.0 - mu * dpen / den, 0.0); }
+			} else {
+				sc = 0.0;
+				if (vt > EPS) sc = max(1.0 - mu * (dpen / h) / vt, 0.0);
+			}
+			tg *= sc;
+			v = vc + tg + max(vn, 0.0) * nn;
+			if (posFric) p = x + v * h;
+		}
+		if (dAD > 0.0) {
+			const float di = useMap ? dAD * tf[H(CLH_O_ADMAP) + i] : dAD;
+			const vec3 vt = (ld(oTnew, i) - ld(oTold, i)) * inv;
+			v += di * (vt - v);
+		}
+		st(oV, i, v);
+		st(oX, i, p);
+		if (last && (any(isnan(p)) || any(isinf(p)))) bad = true;
+	}
+	if (bad) atomicOr(cu[RU(CLR_STATS) + CLS_BAD], 1u);
+}
+
+// the state back to the skinned pose (SkirtSim_Reset; also after a non-finite step)
+void resetElement(uint k) {
+	const vec3 t = ld(oTnew, k);
+	st(oTold, k, t); st(oX, k, t); st(oP, k, t); st(oV, k, vec3(0.0));
+	ii[oCtrix + k] = -1;
+	ii[oStri + k] = -1; f[oConeC + k] = 1.0;
+}
+
+void stageOut() {
+	const bool bad = RU(CLR_RESET) == 0u && cu[RU(CLR_STATS) + CLS_BAD] != 0u;
+	const uint ro = RU(CLR_RELOUT);
+	const uint o = ro == 2u ? H(CLH_O_REL2) : ro == 1u ? H(CLH_O_REL1) : H(CLH_O_REL0);
+	const vec4 g0 = vec4(R(CLR_G), R(CLR_G + 1u), R(CLR_G + 2u), R(CLR_G + 3u));
+	const vec4 g1 = vec4(R(CLR_G + 4u), R(CLR_G + 5u), R(CLR_G + 6u), R(CLR_G + 7u));
+	const vec4 g2 = vec4(R(CLR_G + 8u), R(CLR_G + 9u), R(CLR_G + 10u), R(CLR_G + 11u));
+	for (uint k = gid; k < N; k += gsz) {
+		if (bad) resetElement(k);
+		const vec4 x = vec4(ld(oX, k), 1.0);
+		st(o, k, vec3(dot(g0, x), dot(g1, x), dot(g2, x)));
+	}
+	if (bad) for (uint k = gid; k < M; k += gsz) { const vec3 c = ld(oCnew, k); st(oCold, k, c); st(oCs, k, c); }
+}
+
+void stageResetSkin() {
+	for (uint k = gid; k < N; k += gsz) st(oTnew, k, skinCloth(k));
+	for (uint k = gid; k < M; k += gsz) st(oCnew, k, skinCollider(k));
+}
+
+void stageResetState() {
+	for (uint k = gid; k < N; k += gsz) resetElement(k);
+	for (uint k = gid; k < M; k += gsz) { const vec3 c = ld(oCnew, k); st(oCold, k, c); st(oCs, k, c); }
+	if (M > 0u) for (uint b = gid; b < uint(CL_HASH); b += gsz) ii[H(CLH_O_HHEAD) + b] = -1;
+}
+
+// seedTracking (brute-force nearest collider vertex) and the hash of the reset pose
+void stageResetSeed() {
+	for (uint n = gid; n < NDYN; n += gsz) {
+		const uint i = dyn(n);
+		const vec3 x = ld(oX, i);
+		int best = -1;
+		float bd = BIG;
+		for (uint v = 0u; v < M; v++) {
+			const vec3 d = ld(oCnew, v) - x;
+			const float dd = dot(d, d);
+			if (dd < bd) { bd = dd; best = int(v); }
+		}
+		ii[oCvert + i] = best;
+	}
+	for (uint v = gid; v < M; v += gsz) hashInsert(v);
+}
+
+// the reset projection: four collision passes, then the state from it
+void stageResetProject() {
+	const bool re = RU(CLR_RESETRE) != 0u;
+	uint hits = 0u;
+	for (uint n = gid; n < NDYN; n += gsz) {
+		const uint i = dyn(n);
+		vec3 p = ld(oP, i);
+		for (int r = 0; r < 4; r++) p = collideOne(i, p, -1, re, hits);
+		st(oP, i, p);
+		st(oX, i, p);
+		ii[oCtrix + i] = -1;
+	}
+}
+
+void main() {
+	WG = gl_WorkGroupSize.x;
+	lid = gl_LocalInvocationID.x;
+	gid = gl_GlobalInvocationID.x;
+	gsz = gl_NumWorkGroups.x * WG;
+	for (uint k = lid; k < uint(CLR_MATS); k += WG) sRec[k] = cu[pc.rec + k];
+	if (lid == 0u) { sContacts = 0u; sHand = 0u; sCone = 0u; sTethers = 0u; }
+	barrier();
+	N = H(CLH_N); NT = H(CLH_NT); M = H(CLH_M); NDYN = H(CLH_NDYN); NCAPS = H(CLH_NCAPS);
+	oX = H(CLH_O_X); oV = H(CLH_O_V); oP = H(CLH_O_P); oTold = H(CLH_O_TOLD); oTnew = H(CLH_O_TNEW); oTs = H(CLH_O_TS);
+	oCold = H(CLH_O_COLD); oCnew = H(CLH_O_CNEW); oCs = H(CLH_O_CS); oW = H(CLH_O_W); oKin = H(CLH_O_KIN); oDyn = H(CLH_O_DYN);
+	oCtrix = H(CLH_O_CTRIX); oCvert = H(CLH_O_CVERT); oPush = H(CLH_O_PUSH); oCnrm = H(CLH_O_CNRM);
+	oCtri = H(CLH_O_CTRI); oVts = H(CLH_O_VTS); oVtl = H(CLH_O_VTL); oVvs = H(CLH_O_VVS); oVvl = H(CLH_O_VVL); oVrad = H(CLH_O_VRAD);
+	oStri = H(CLH_O_STRI); oConeC = H(CLH_O_CONEC);
+	tau = R(CLR_TAU); backD = R(CLR_BACK); flipN = R(CLR_FLIP); cMaxEdge = uintBitsToFloat(H(CLH_CMAXEDGE));
+	pmode = 0u;
+
+	switch (pc.stage) {
+	case ST_SKIN: stageSkin(); break;
+	case ST_PRE: stagePre(); break;
+	case ST_AERO_HASH: stageAeroHash(); break;
+	case ST_PREDICT: stagePredict(); break;
+	case ST_CONTACT: stageContact(); break;
+	case ST_ITER: stageIter(); break;
+	case ST_POST: stagePost(); break;
+	case ST_OUT: stageOut(); break;
+	case ST_RSKIN: stageResetSkin(); break;
+	case ST_RSTATE: stageResetState(); break;
+	case ST_RSEED: stageResetSeed(); break;
+	case ST_RPROJ: stageResetProject(); break;
+	}
+
+	// statistics of the stage: one atomic per workgroup
+	barrier();
+	if (lid == 0u) {
+		const uint so = RU(CLR_STATS);
+		if (sContacts > 0u) atomicAdd(cu[so + CLS_CONTACTS], sContacts);
+		if (sHand > 0u) atomicAdd(cu[so + CLS_HAND], sHand);
+		if (sCone > 0u) atomicAdd(cu[so + CLS_CONE], sCone);
+		if (sTethers > 0u) atomicAdd(cu[so + CLS_TETHERS], sTethers);
+	}
+}

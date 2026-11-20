@@ -1,0 +1,357 @@
+--- a/tools/quake3/q3map2/bsp.cpp
++++ b/tools/quake3/q3map2/bsp.cpp
+@@ -258,6 +258,10 @@
+    brushes dropped), and one empty leaf: no tree, portals, flood, draw surfaces or vis. For collision maps whose tree is
+    rebuilt elsewhere (tools/levelport/colmerge.py); the brush, side, plane and shader output is -bsp's. */
+ bool brushCook = false;
++/* xenjk 2026-11-07, -brushbin <in> <out>: brushes as binary records through the map load's brush steps, the world's
++   brushes, sides, planes and shaders written as records (map.cpp, brushbin.inc); no .map, no BSP */
++const char *brushBinIn = nullptr, *brushBinOut = nullptr;
++int BrushBinMain( const char *inPath, const char *outPath );
+ 
+ static void ProcessWorldModel( entity_t& e ){
+ 	const char  *value;
+@@ -751,6 +755,12 @@
+ 			writeXplanes = true;
+ 			Sys_Printf( "Writing each brush's planes in double beside the BSP (.xplanes)\n" );
+ 		}
++		while ( args.takeArg( "-brushbin" ) ) {
++			extern const char *brushBinIn, *brushBinOut;
++			brushBinIn = args.takeNext();
++			brushBinOut = args.takeNext();
++			Sys_Printf( "Brushes from a binary stream (-brushbin %s %s)\n", brushBinIn, brushBinOut );
++		}
+ 		while ( args.takeArg( "-brushcook" ) ) {
+ 			extern bool brushCook;
+ 			brushCook = true;
+@@ -938,6 +948,10 @@
+ 	/* load shaders */
+ 	LoadShaderInfo();
+ 
++	if ( brushBinIn != nullptr ) {
++		return BrushBinMain( brushBinIn, brushBinOut );
++	}
++
+ 	/* load original file from temp spot in case it was renamed by the editor on the way in */
+ 	if ( !strEmpty( tempSource ) ) {
+ 		LoadMapFile( tempSource, false, g_autocaulk );
+--- a/tools/quake3/q3map2/map.cpp
++++ b/tools/quake3/q3map2/map.cpp
+@@ -1945,3 +1945,6 @@
+ 		}
+ 	}
+ }
++
++
++#include "brushbin.inc"
+--- a/tools/quake3/q3map2/main.cpp
++++ b/tools/quake3/q3map2/main.cpp
+@@ -32,6 +32,7 @@
+ #include "q3map2.h"
+ #include "autopk3.h"
+ #include "timer.h"
++#include <io.h>
+ 
+ 
+ 
+@@ -57,6 +58,8 @@
+    q3map mojo...
+  */
+ 
++int brushBinStdout = -1;      /* xenjk -brushbin - -: stdout's handle for the records; the log goes to stderr */
++
+ int main( int argc, char **argv ){
+ 	int r;
+ 
+@@ -64,6 +67,16 @@
+ 	_setmaxstdio( 2048 );
+ #endif
+ 
++	/* xenjk 2026-11-07: -brushbin <in> -: the records own stdout, from before the first line of the log */
++	for ( int i = 1; i + 2 < argc; ++i ) {
++		if ( strEqual( argv[i], "-brushbin" ) && strEqual( argv[i + 2], "-" ) ) {
++			fflush( stdout );
++			brushBinStdout = _dup( 1 );
++			_dup2( 2, 1 );
++			break;
++		}
++	}
++
+ 	/* we want consistent 'randomness' */
+ 	srand( 0 );
+ 
+--- /dev/null
++++ b/tools/quake3/q3map2/brushbin.inc
+@@ -0,0 +1,272 @@
++/*
++   xenjk 2026-11-07, -brushbin: the world's brushes as binary records (tools/levelport/colcook.py) instead of .map text,
++   through the steps ParseRawBrush, ParseBrush and FinishBrush take for a brushDef brush of the world (the plane from
++   three points on the -pointgrid, the plane table, duplicate and mirrored planes, contents, windings, bevels), then
++   EmitBrushes' order and EmitShader: the brushes, sides, planes and shaders -bsp writes for the same brushes. Tiles
++   (colmerge.split's) come one after another; each starts with an empty plane table, as its own q3map2 run would.
++   Included at the end of map.cpp: it calls that file's static brush steps.
++
++   in:  "XBRUSH01", u32 shaders, each u16 length + the name after "textures/" (as the .map has it); then per tile u32 1,
++        u32 brushes, u32 sides, u16 sides of each brush[], then each side u32 shader + 9 f64 (the three points, as the
++        .map's text reads)[]; u32 2 ends.
++   out: per tile "XTILE001", u32 + bspShader_t[], u32 + plane (4 f32)[] (the tile's mapplanes), u32 + bspBrush_t[],
++        u32 + bspBrushSide_t[], u32 brushes read, u32 brushes kept; then "XDONE001".
++ */
++#include <io.h>
++#include <fcntl.h>
++
++namespace
++{
++struct BinSide
++{
++	int planenum;
++	shaderInfo_t *shaderInfo;
++	int surfaceFlags;
++	bool bevel;
++};
++struct BinBrush
++{
++	shaderInfo_t *contentShader;
++	bool opaque;
++	size_t firstSide, numSides;
++};
++
++void BinRead( FILE *f, void *p, size_t n ){
++	if ( fread( p, 1, n, f ) != n ) {
++		Error( "-brushbin: input ended early" );
++	}
++}
++template<typename T> T BinGet( FILE *f ){
++	T v;
++	BinRead( f, &v, sizeof( v ) );
++	return v;
++}
++void BinWrite( FILE *f, const void *p, size_t n ){
++	if ( n && fwrite( p, 1, n, f ) != n ) {
++		Error( "-brushbin: output write failed" );
++	}
++}
++template<typename T> void BinPutVec( FILE *f, const std::vector<T>& v ){
++	const std::uint32_t n = v.size();
++	BinWrite( f, &n, 4 );
++	BinWrite( f, v.data(), v.size() * sizeof( T ) );
++}
++
++/* ParseRawBrush's per-side work for one record: the side's plane, xplane and shader flags */
++void BinRawBrush( FILE *f, const std::vector<shaderInfo_t*>& shaders, const int numSides ){
++	buildBrush.sides.clear();
++	buildBrush.detail = false;
++	for ( int s = 0; s < numSides; ++s ) {
++		if ( buildBrush.sides.size() >= MAX_BUILD_SIDES ) {
++			xml_Select( "MAX_BUILD_SIDES", buildBrush.entityNum, buildBrush.brushNum, true );
++		}
++		side_t& side = buildBrush.sides.emplace_back();
++		const std::uint32_t shader = BinGet<std::uint32_t>( f );
++		DoubleVector3 planePoints[ 3 ];
++		double raw[ 9 ];
++		BinRead( f, raw, sizeof( raw ) );
++		for ( int k = 0; k < 3; ++k ) {
++			planePoints[ k ] = DoubleVector3( raw[ 3 * k ], raw[ 3 * k + 1 ], raw[ 3 * k + 2 ] );
++		}
++		if ( pointGrid > 0 ) {
++			for ( DoubleVector3& p : planePoints ) {
++				for ( int c = 0; c < 3; ++c ) {
++					p[c] = std::rint( p[c] * pointGrid ) / pointGrid;
++				}
++			}
++		}
++		std::tie( side.planenum, side.plane ) = MapPlaneFromPoints( planePoints );
++		if ( side.planenum >= 0 ) {
++			const DoubleVector3 n( mapplanes[ side.planenum ].normal() );
++			const DoubleVector3 c = ( planePoints[ 0 ] + planePoints[ 1 ] + planePoints[ 2 ] ) / 3.0;
++			double d = vector3_dot( n, c );
++			if ( VectorIsOnAxis( mapplanes[ side.planenum ].normal() ) && std::fabs( d - std::rint( d ) ) < distanceEpsilon ) {
++				d = std::rint( d );
++			}
++			side.xplane = Plane3( n, d );
++		}
++		if ( shader >= shaders.size() ) {
++			Error( "-brushbin: shader %u of %zu", shader, shaders.size() );
++		}
++		shaderInfo_t& si = *shaders[ shader ];
++		side.shaderInfo = &si;
++		side.surfaceFlags = si.surfaceFlags;
++		side.contentFlags = si.contentFlags;
++		side.compileFlags = si.compileFlags;
++		side.value        = si.value;
++		/* the .map's three trailing flags are 0 0 0: no C_DETAIL from them */
++	}
++}
++
++/* ParseBrush then FinishBrush for the world entity, the brush kept as what EmitBrushes reads */
++bool BinBrushFinish( std::vector<BinBrush>& brushes, std::vector<BinSide>& sides ){
++	if ( !RemoveDuplicateBrushPlanes( buildBrush ) ) {
++		return false;
++	}
++	SetBrushContents( buildBrush );
++	if ( nodetail && ( buildBrush.compileFlags & C_DETAIL ) ) {
++		return false;
++	}
++	if ( nowater && ( buildBrush.compileFlags & C_LIQUID ) ) {
++		return false;
++	}
++	if ( noHint && ( buildBrush.compileFlags & C_HINT ) ) {
++		return false;
++	}
++	if ( !CreateBrushWindings( buildBrush ) ) {
++		return false;
++	}
++	if ( buildBrush.compileFlags & C_ORIGIN ) {
++		/* FinishBrush: origin brushes are not allowed in the world */
++		Sys_FPrintf( SYS_WRN, "Brush %i: origin brushes not allowed in world\n", buildBrush.brushNum );
++		return false;
++	}
++	if ( buildBrush.compileFlags & C_AREAPORTAL ) {
++		Error( "-brushbin: brush %i is an areaportal (FixAreaportalBrush needs the map's entity)", buildBrush.brushNum );
++	}
++	AddBrushBevels();
++	BinBrush& b = brushes.emplace_back();
++	b.contentShader = buildBrush.contentShader;
++	b.opaque = buildBrush.opaque;
++	b.firstSide = sides.size();
++	b.numSides = buildBrush.sides.size();
++	for ( const side_t& s : buildBrush.sides ) {
++		sides.push_back( BinSide{ s.planenum, s.shaderInfo, s.surfaceFlags, s.bevel } );
++	}
++	return true;
++}
++
++/* EmitBrushes on the world's brush list: opaque brushes went to its head (so in reverse), translucent to its end */
++void BinEmit( const std::vector<BinBrush>& brushes, const std::vector<BinSide>& sides ){
++	bspShaders.clear();
++	bspBrushes.clear();
++	bspBrushSides.clear();
++	std::vector<const BinBrush*> order;
++	order.reserve( brushes.size() );
++	for ( size_t i = brushes.size(); i-- > 0; ) {
++		if ( brushes[ i ].opaque ) {
++			order.push_back( &brushes[ i ] );
++		}
++	}
++	for ( const BinBrush& b : brushes ) {
++		if ( !b.opaque ) {
++			order.push_back( &b );
++		}
++	}
++	for ( const BinBrush *pb : order ) {
++		const BinBrush& b = *pb;
++		bspBrush_t& db = bspBrushes.emplace_back();
++		db.shaderNum = EmitShader( b.contentShader->shader, &b.contentShader->contentFlags, &b.contentShader->surfaceFlags );
++		db.firstSide = bspBrushSides.size();
++		db.numSides = b.numSides;
++		for ( size_t s = b.firstSide; s < b.firstSide + b.numSides; ++s ) {
++			const BinSide& side = sides[ s ];
++			bspBrushSide_t& cp = bspBrushSides.emplace_back();
++			cp.planeNum = side.planenum;
++			if ( side.shaderInfo ) {
++				cp.shaderNum = EmitShader( side.shaderInfo->shader, &side.shaderInfo->contentFlags, &side.shaderInfo->surfaceFlags );
++			}
++			else if( side.bevel ) {
++				cp.shaderNum = EmitShader( nullptr, nullptr, &side.surfaceFlags );
++			}
++			else{
++				cp.shaderNum = EmitShader( nullptr, nullptr, nullptr );
++			}
++		}
++	}
++}
++}
++
++int BrushBinMain( const char *inPath, const char *outPath ){
++	/* "-": stdin, and stdout carries the records (the log goes to stderr) */
++	FILE *in = strEqual( inPath, "-" ) ? stdin : fopen( inPath, "rb" );
++	FILE *out = nullptr;
++	if ( strEqual( outPath, "-" ) ) {
++		extern int brushBinStdout;      /* main.cpp: stdout's handle, kept from the start */
++		if ( brushBinStdout < 0 ) {
++			Error( "-brushbin: stdout was not kept for the records" );
++		}
++		_setmode( brushBinStdout, _O_BINARY );
++		out = _fdopen( brushBinStdout, "wb" );
++	}
++	else{
++		out = fopen( outPath, "wb" );
++	}
++	if ( in == nullptr || out == nullptr ) {
++		Error( "-brushbin: cannot open %s or %s", inPath, outPath );
++	}
++	if ( in == stdin ) {
++		_setmode( 0, _O_BINARY );
++	}
++	setvbuf( in, nullptr, _IOFBF, 1 << 20 );
++	setvbuf( out, nullptr, _IOFBF, 1 << 20 );
++
++	char magic[ 8 ];
++	BinRead( in, magic, 8 );
++	if ( memcmp( magic, "XBRUSH01", 8 ) ) {
++		Error( "-brushbin: not a brush stream" );
++	}
++	std::vector<shaderInfo_t*> shaders( BinGet<std::uint32_t>( in ) );
++	for ( shaderInfo_t*& si : shaders ) {
++		const int len = BinGet<std::uint16_t>( in );
++		std::string name( len, ' ' );
++		BinRead( in, name.data(), len );
++		si = &ShaderInfoForShader( String64( "textures/", name.c_str() ) );
++	}
++	g_brushType = EBrushType::Bp;
++	buildBrush.sides.reserve( MAX_BUILD_SIDES );
++	entities.clear();
++	entities.emplace_back();           /* the world: FinishBrush's tests read the entity count */
++	int tile = 0;
++	std::vector<BinBrush> brushes;
++	std::vector<BinSide> sides;
++	for ( ;; ) {
++		const std::uint32_t op = BinGet<std::uint32_t>( in );
++		if ( op == 2 ) {
++			break;
++		}
++		if ( op != 1 ) {
++			Error( "-brushbin: op %u", op );
++		}
++		const std::uint32_t numBrushes = BinGet<std::uint32_t>( in );
++		const std::uint32_t numSides = BinGet<std::uint32_t>( in );
++		std::vector<std::uint16_t> brushSides( numBrushes );
++		BinRead( in, brushSides.data(), numBrushes * 2 );
++		std::uint64_t total = 0;
++		for ( const std::uint16_t n : brushSides ) {
++			total += n;
++		}
++		if ( total != numSides ) {
++			Error( "-brushbin: tile %d: %llu sides, not %u", tile, (unsigned long long)total, numSides );
++		}
++		mapplanes.clear();
++		planehash2.clear();
++		brushes.clear();
++		sides.clear();
++		for ( std::uint32_t i = 0; i < numBrushes; ++i ) {
++			buildBrush.entityNum = 0;
++			buildBrush.brushNum = i;
++			BinRawBrush( in, shaders, brushSides[ i ] );
++			BinBrushFinish( brushes, sides );
++		}
++		BinEmit( brushes, sides );
++		BinWrite( out, "XTILE001", 8 );
++		BinPutVec( out, bspShaders );
++		std::vector<bspPlane_t> planes;
++		planes.reserve( mapplanes.size() );
++		for ( const plane_t& p : mapplanes ) {
++			planes.push_back( p.plane );
++		}
++		BinPutVec( out, planes );
++		BinPutVec( out, bspBrushes );
++		BinPutVec( out, bspBrushSides );
++		const std::uint32_t counts[ 2 ] = { numBrushes, (std::uint32_t)brushes.size() };
++		BinWrite( out, counts, 8 );
++		fflush( out );
++		Sys_Printf( "brushbin tile %d: %u brushes read, %zu kept, %zu sides, %zu planes, %zu shaders\n", tile++,
++		            numBrushes, brushes.size(), bspBrushSides.size(), mapplanes.size(), bspShaders.size() );
++	}
++	BinWrite( out, "XDONE001", 8 );
++	fclose( out );
++	return 0;
++}

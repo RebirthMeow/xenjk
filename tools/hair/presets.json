@@ -1,0 +1,33 @@
+{
+ "about": "Hair-chain presets for tools/hair/build_chains.py. Physical and scale-free: radius in cm, damping and velocity_damping per second, limit in degrees, every stiffness a per-iteration fraction at the solver block's rate. [root, tip] values interpolate along a chain. See docs/hair/PRESETS.md.",
+ "solver": {
+  "dt": 0.033333335,
+  "substeps": 2,
+  "lateral_iterations": 2,
+  "collision_iterations": 1
+ },
+ "presets": {
+  "bob": {
+   "description": "cheek-length bob of 4-6 bone chains, 12-19 cm long, hanging off the crown. Fitted 2026-10-21 to a reference bone-chain simulation of such a bob (our own UE AnimDynamics tuning of Eve 2B, owner-accepted for form), at the solver block below and the game runtime defaults (r_hairFeel 1, r_hairFlow 1)",
+   "radius_cm": 0.368,
+   "gravity_scale": 0.652,
+   "damping": 0.0,
+   "velocity_damping": 0.932,
+   "constraint_damping": 0.941,
+   "friction": 0.3,
+   "bounciness": 0.0,
+   "park_rate": 0.0,
+   "limit_deg": 53.604,
+   "inner": [
+    0.127,
+    0.015
+   ],
+   "outer": 0.619,
+   "stretch": 1.0,
+   "compress": 1.0,
+   "parent_strength": 1.0,
+   "link_stretch": 0.009,
+   "link_compress": 0.009
+  }
+ }
+}

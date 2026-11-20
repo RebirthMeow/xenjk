@@ -1,0 +1,409 @@
+{
+  "format": "DEFENDERPOSTS1",
+  "source": "median base-POV position within 512 u of its own stand, own flag home, an enemy within 1024 u: 10 Kejim base demos of the position pilot (.codex-research/position-pilot-20260927/extract-v3), red folded onto blue by the map's point symmetry; 2,559 samples",
+  "posts": {
+    "mp/ctf_kejim": {
+      "blue": [
+        2440,
+        5204,
+        1930,
+        270
+      ],
+      "red": [
+        176,
+        -1052,
+        1930,
+        90
+      ]
+    },
+    "mp/ctf4": {
+      "red": [
+        4672,
+        -2560,
+        4,
+        135
+      ],
+      "blue": [
+        -576,
+        2688,
+        4,
+        315
+      ]
+    },
+    "ctf_dantooine_v3": {
+      "blue": [
+        696,
+        1,
+        227,
+        0
+      ],
+      "red": [
+        6142,
+        54,
+        244,
+        180
+      ]
+    }
+  },
+  "guard_source": "base-POV posts while its own flag is home, clustered, largest home-time share first: 22 Kejim 4v4 base demos (.codex-research/base-defender-study-20260928/posts.csv, docs/movement/records/2026-09-28-base-defender-study.md)",
+  "guard_posts": {
+    "mp/ctf_kejim": {
+      "red": [
+        [
+          195,
+          -952,
+          1926
+        ],
+        [
+          634,
+          -1235,
+          1810
+        ],
+        [
+          274,
+          -181,
+          1805
+        ],
+        [
+          -256,
+          -1343,
+          1861
+        ]
+      ],
+      "blue": [
+        [
+          2429,
+          4988,
+          1922
+        ],
+        [
+          2090,
+          5402,
+          1850
+        ],
+        [
+          2289,
+          4314,
+          1770
+        ],
+        [
+          2801,
+          5476,
+          1879
+        ]
+      ]
+    }
+  },
+  "guard_2v2_source": "lone 2v2 defender, Kejim, with an attacker coming in (tools/defender_approach_posts.py, 46 demos; records/2026-09-28-aim-kernel.md): the entry spot where the lower route surfaces (a 6% 2v2 cluster), the stand (55% while an enemy is within 1,500 u), the forward post toward mid (36%). The entry spot is held while the attacker is unseen.",
+  "guard_posts_2v2": {
+    "mp/ctf_kejim": {
+      "red": [
+        [
+          631,
+          -1335,
+          1841
+        ],
+        [
+          219,
+          -1066,
+          1926
+        ],
+        [
+          194,
+          -143,
+          1797
+        ]
+      ],
+      "blue": [
+        [
+          1985,
+          5487,
+          1841
+        ],
+        [
+          2397,
+          5218,
+          1926
+        ],
+        [
+          2353,
+          4323,
+          1794
+        ]
+      ]
+    },
+    "mp/ctf4": {
+      "red": [
+        [
+          4672,
+          -2560,
+          4
+        ],
+        [
+          3792,
+          -1680,
+          88
+        ]
+      ],
+      "blue": [
+        [
+          -576,
+          2688,
+          4
+        ],
+        [
+          304,
+          1808,
+          88
+        ]
+      ]
+    },
+    "ctf_dantooine_v3": {
+      "blue": [
+        [
+          696,
+          1,
+          227
+        ],
+        [
+          1313,
+          -34,
+          234
+        ],
+        [
+          1539,
+          -748,
+          234
+        ]
+      ],
+      "red": [
+        [
+          6142,
+          54,
+          244
+        ],
+        [
+          5452,
+          -45,
+          234
+        ],
+        [
+          5224,
+          -728,
+          239
+        ]
+      ]
+    }
+  },
+  "chase_source": "chase D holds the lone 2v2 defender's forward post toward mid while its flag is home (36% of 2v2 defending with an enemy near: tools/defender_approach_posts.py)",
+  "chase_posts": {
+    "mp/ctf_kejim": {
+      "red": [
+        [
+          194,
+          -143,
+          1797
+        ]
+      ],
+      "blue": [
+        [
+          2353,
+          4323,
+          1794
+        ]
+      ]
+    },
+    "mp/ctf4": {
+      "red": [
+        [
+          3792,
+          -1680,
+          88
+        ]
+      ],
+      "blue": [
+        [
+          304,
+          1808,
+          88
+        ]
+      ]
+    },
+    "ctf_dantooine_v3": {
+      "blue": [
+        [
+          1539,
+          -748,
+          234
+        ]
+      ],
+      "red": [
+        [
+          5224,
+          -728,
+          239
+        ]
+      ]
+    }
+  },
+  "mine_source": "base D's proximity mine spots: the floor west and east of its flag pedestal, from the human mine study (.codex-research/mines-20261001-a: 99% proximity, median 77 u from their own stand, about 100 u apart); blue is red point-mirrored through the map centre. Against the earlier approach-corridor spots (305 -1270, 415 -1347, 118 -921) at 16 laps worlds: runner mine deaths 3.6 to 6.3 a world, base D's own-mine deaths 18 to 2; a third mine on the pedestal top added nothing (records/2026-10-01-golan-refit-mines-jitter.md)",
+  "mine_spots": {
+    "mp/ctf_kejim": {
+      "red": [
+        [
+          80,
+          -1105,
+          1914
+        ],
+        [
+          215,
+          -1185,
+          1914
+        ]
+      ],
+      "blue": [
+        [
+          2536,
+          5257,
+          1914
+        ],
+        [
+          2401,
+          5337,
+          1914
+        ]
+      ]
+    },
+    "mp/ctf4": {
+      "red": [
+        [
+          4707,
+          -2525,
+          4
+        ],
+        [
+          4637,
+          -2595,
+          4
+        ]
+      ],
+      "blue": [
+        [
+          -611,
+          2653,
+          4
+        ],
+        [
+          -541,
+          2723,
+          4
+        ]
+      ]
+    },
+    "ctf_dantooine_v3": {
+      "blue": [
+        [
+          640,
+          50,
+          228
+        ],
+        [
+          640,
+          -50,
+          228
+        ]
+      ],
+      "red": [
+        [
+          6144,
+          50,
+          228
+        ],
+        [
+          6144,
+          -50,
+          228
+        ]
+      ]
+    }
+  },
+  "ambush_source": "chase D's ambush posts: where the owner stood for the pushes and pulls that put the runner into the chasm (play-vs-runner-20260929T205057Z, red), blue by the map's point symmetry about (1308, 2076); ordered forward first; the four posts recorded at z 1887 (79 u above the walkway floor, the owner airborne) set to 1808 on 2026-09-30: with no graph cell within 64 u they were no_path goals (records/2026-09-30-defender-falls-and-route.md)",
+  "ambush_posts": {
+    "mp/ctf_kejim": {
+      "red": [
+        [
+          1645,
+          2690,
+          1808
+        ],
+        [
+          923,
+          1486,
+          1808
+        ],
+        [
+          571,
+          1276,
+          1808
+        ]
+      ],
+      "blue": [
+        [
+          971,
+          1462,
+          1808
+        ],
+        [
+          1693,
+          2666,
+          1808
+        ],
+        [
+          2045,
+          2876,
+          1808
+        ]
+      ]
+    }
+  },
+  "transfer_source": "2026-10-02 transfer check, no demo-derived ambush posts for these maps (chase D waits on its own post). ctf_dantooine_v3: posts and guard posts from the 4v4 base-defender study clusters (.codex-research/base-defender-study-20260928/posts.csv): the stand, the forward post (23%), the side post (14%, also chase D's post). mp/ctf4 (no base demos): the stand facing the enemy stand and one graph cell 1,245 u toward it (prepared seed); blue by point symmetry about (2048, 64). Mine spots on both: 50 u either side of the stand across the line to the enemy stand, after the human mine study's spacing. All posts are snapped to graph cells at the release (POST_SNAP).",
+  "camper_source": "Placeholder (2026-10-02, milestone B step B1): the blue camper waits where Kejim's lower route surfaces beside the red stand (the red 2v2 entry spot, about 500 u from the stand, facing it); to be replaced by the offense POVs' positions from the position pilot. Blue only: the camper is on the runner's team. Red (2026-10-02, the 4v4): the blue post point-mirrored through Kejim's centre (1308, 2076), the blue 2v2 entry spot. ctf_dantooine_v3 (2026-10-03, the 4v4 on Dantooine): no offense demos placed yet, so each camper waits on the enemy base's forward guard post (guard_posts_2v2, the base-defender study's 23% cluster, about 690 u from the enemy stand), facing the stand.",
+  "camper_posts": {
+    "mp/ctf_kejim": {
+      "blue": [
+        [
+          631,
+          -1335,
+          1841,
+          160
+        ]
+      ],
+      "red": [
+        [
+          1985,
+          5487,
+          1841,
+          -20
+        ]
+      ]
+    },
+    "ctf_dantooine_v3": {
+      "blue": [
+        [
+          5452,
+          -45,
+          234,
+          8
+        ]
+      ],
+      "red": [
+        [
+          1313,
+          -34,
+          234,
+          177
+        ]
+      ]
+    }
+  }
+}

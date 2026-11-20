@@ -1,0 +1,1391 @@
+{
+  "schema": 1,
+  "note": "Renderer candidates for tools/renderer_bench.py. Each is built from its own tree (read-only clones beside this repository; a relative tree resolves from its root) out of source, client engine + renderers only; game, cgame and ui come from the installed GameData for every candidate so only the engine/renderer differs. 'ref' is the commit the setup was written against (the tool records what it actually builds).",
+  "common_cmake_args": [
+    "-DBuildMPDed=OFF",
+    "-DBuildMPGame=OFF",
+    "-DBuildMPCGame=OFF",
+    "-DBuildMPUI=OFF",
+    "-DBuildSPEngine=OFF",
+    "-DBuildSPGame=OFF",
+    "-DBuildSPRdVanilla=OFF",
+    "-DBuildSPRend2=OFF",
+    "-DBuildTests=OFF",
+    "-DBuildPortableVersion=OFF",
+    "-DBuildDiscordRichPresence=OFF",
+    "-DUseTurboJPEG=OFF"
+  ],
+  "candidates": [
+    {
+      "name": "openjk-vanilla",
+      "tree": "../OpenJK-upstream",
+      "ref": "1a6a6434",
+      "family": "vanilla",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-vanilla",
+      "dlls": [
+        "rd-vanilla_x86.dll"
+      ],
+      "note": "stock OpenJK master rd-vanilla (SHADER_MAX_VERTEXES 1000): the Tifa Test basejka column"
+    },
+    {
+      "name": "xenjk-vanilla",
+      "tree": ".",
+      "family": "vanilla",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-vanilla",
+      "dlls": [
+        "rd-vanilla_x86.dll"
+      ],
+      "note": "ours (OpenJK rd-vanilla + xenjk visual cvars)"
+    },
+    {
+      "name": "xenjk-rend2",
+      "tree": ".",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "ours: OpenJK master rend2 (dormant upstream)"
+    },
+    {
+      "name": "somaz-rend2",
+      "tree": "../SomaZ-OpenJK-rend2",
+      "ref": "788c19e9",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "SomaZ rend2-unified-wip, where rend2 is developed"
+    },
+    {
+      "name": "somaz-rend2-prof",
+      "tree": ".codex-research/renderer-bench/src/somaz-prof",
+      "ref": "f59b2ef3b",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "the SomaZ worktree's current HEAD: bench/gpu-timers (f59b2ef3b, per-pass GPU timed blocks for r_speeds 100) and since 2026-10-08 perf/rend2 on top of it; r_speeds 100 syncs on the GPU every frame, so use it for the pass breakdown only"
+    },
+    {
+      "name": "somaz-rend2-perf",
+      "tree": ".codex-research/renderer-bench/src/somaz-prof",
+      "ref": "f26634fcb",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "perf/rend2 branch in the SomaZ worktree: r_maxFrameLatency, r_parallaxFast, r_dynamicGlowSkipEmpty (each defaults on; 2/0/0 restore the old behaviour), sun shadow skip on unlit sides, cascade snap fix; the 'before' is somaz-rend2",
+      "build": "somaz-prof-f26634fcb"
+    },
+    {
+      "name": "somaz-rend2-dev",
+      "tree": ".codex-research/renderer-bench/src/somaz-prof",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "dev build of the perf/rend2 worktree (uncommitted, look only): r_sunStylePasses (default 0, sun once; 1 = rend2's sun in every lightmap style pass)",
+      "build": "somaz-prof-dev"
+    },
+    {
+      "name": "tayst-rend2",
+      "tree": "../TaystJK",
+      "ref": "2ab07a79",
+      "family": "rend2",
+      "exe": "taystjk.x86.exe",
+      "renderer": "rd-rend2t",
+      "dlls": [
+        "rd-rend2t_x86.dll"
+      ],
+      "note": "TaystJK rend2 (SomaZ's plus SMAA, volumetric fog, distance cull)"
+    },
+    {
+      "name": "tayst-vulkan",
+      "tree": "../TaystJK",
+      "ref": "2ab07a79",
+      "family": "vulkan",
+      "exe": "taystjk.x86.exe",
+      "renderer": "rd-vulkant",
+      "dlls": [
+        "rd-vulkant_x86.dll"
+      ],
+      "note": "TaystJK Vulkan (JKSunny master, Quake3e lineage): vanilla look + post effects"
+    },
+    {
+      "name": "jksunny-pbr",
+      "tree": "../JKSunny-EternalJK",
+      "ref": "d4225a303",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "note": "JKSunny pbr branch: Vulkan with rend2-style materials (pre-release builds 'latest-pbr')",
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "cgame_note": "EternalJK's engine refuses xenjk's cgame (modern API differs) and falls back to the old one; its own cgame from a worktree (.codex-research/renderer-bench/src/jksunny-bench) with cgame/cg_bench.c added (6 lines of hooks) carries the same frame logger"
+    },
+    {
+      "name": "jksunny-pbr-perf",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "ref": "06e30f0c1",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "note": "perf/vulkan worktree branch on JKSunny pbr d4225a303: r_maxFrameLatency (default 1; 2 = old behaviour), r_gpuTimes (per render pass GPU ms); the 'before' is jksunny-pbr",
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll"
+    },
+    {
+      "name": "jksunny-vk-build",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "build-only detached worktree of perf/vulkan: check out a commit there and `renderer_bench.py build jksunny-vk-build` gives builds/jksunny-build-<rev>, which a pinned candidate below runs (keeps edits in jksunny-perf from leaking into a build in progress)"
+    },
+    {
+      "name": "jksunny-vk-base",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-06e30f0c1",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "perf/vulkan 06e30f0c1: r_maxFrameLatency + r_gpuTimes, before the 2026-10-09 parity steps"
+    },
+    {
+      "name": "jksunny-vk-s1",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-40d176ac0",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "step 1: robust material parser, q3gl2_sun parsed (no bench material rewrite needed)"
+    },
+    {
+      "name": "jksunny-vk-s2",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-46950287c",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "step 2: r_swapchainImages (latched; 2 = shortest presentation queue without vsync)"
+    },
+    {
+      "name": "jksunny-vk-s2-swap2",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-46950287c",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "step 2 build with r_swapchainImages 2 (a candidate's \"sets\" apply after the profiles)",
+      "sets": {
+        "r_swapchainImages": "2"
+      }
+    },
+    {
+      "name": "somaz-rend2-perf-lat0",
+      "tree": ".codex-research/renderer-bench/src/somaz-prof",
+      "ref": "f26634fcb",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "perf/rend2 with r_maxFrameLatency 0, interleaved with somaz-rend2-perf for its fps cost (owner: make 0 the default if under ~5%)",
+      "sets": {
+        "r_maxFrameLatency": "0"
+      },
+      "build": "somaz-prof-f26634fcb"
+    },
+    {
+      "name": "jksunny-vk-s3",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-dc758321f",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "step 3: one MSAA resolve, SSAO/glow/bloom composites and HUD at 1x"
+    },
+    {
+      "name": "jksunny-vk-s4",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-65f82206c",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "step 4: half-res SSAO + separable bilateral blur (r_ssao_halfRes, r_ssao_blurRadius), 8-bit glow blur chain, r_DynamicGlowScale wired (0.5), defaults r_hdr 0 + r_dither 1"
+    },
+    {
+      "name": "jksunny-vk-s4-swap2",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-65f82206c",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "step 4 build with r_swapchainImages 2",
+      "sets": {
+        "r_swapchainImages": "2"
+      }
+    },
+    {
+      "name": "jksunny-vk-s5",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-cf5aec729",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "sun port 5a+5b (scene values, sun term without shadows); sun off by default"
+    },
+    {
+      "name": "jksunny-vk-s5-sun",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-cf5aec729",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "sun port 5a+5b with the sun on as the owner's rend2 preset (r_sunlightMode 2, r_sunShadows 1; no shadow maps yet)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1"
+      }
+    },
+    {
+      "name": "jksunny-vk-s5-swap2",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-cf5aec729",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "sun port build with r_swapchainImages 2",
+      "sets": {
+        "r_swapchainImages": "2"
+      }
+    },
+    {
+      "name": "somaz-rend2-perf-noshadow",
+      "tree": ".codex-research/renderer-bench/src/somaz-prof",
+      "ref": "f26634fcb",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "perf/rend2 with r_sunShadows 0: q3gl2_sun read as a plain sun, sun term without shadow cascades (the JKSunny 5b reference)",
+      "build": "somaz-prof-f26634fcb",
+      "sets": {
+        "r_sunShadows": "0"
+      }
+    },
+    {
+      "name": "jksunny-vk-s6",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-3774a3836",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "r_presentWait (VK_KHR_present_wait), off by default"
+    },
+    {
+      "name": "jksunny-vk-s6-pw1",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-3774a3836",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "r_presentWait 1: wait for the frame just presented",
+      "sets": {
+        "r_presentWait": "1"
+      }
+    },
+    {
+      "name": "jksunny-vk-s6-pw2",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-3774a3836",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "r_presentWait 2: wait for the frame before",
+      "sets": {
+        "r_presentWait": "2"
+      }
+    },
+    {
+      "name": "jksunny-vk-dev-sun",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "uncommitted dev build of the perf/vulkan worktree (sun cascades under test), with the owner's rend2 sun preset (the dev build directory moves with the worktree; 13ed3f18f = jksunny-vk-s7)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "xenjk-vk-installed-sun",
+      "tree": ".",
+      "installed": true,
+      "family": "vulkan-pbr",
+      "exe": "xenjk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "note": "the installed xenjk client (GameData/xenjk.x86.exe + rd-vulkan_x86.dll, branch renderer/vulkan-in-xenjk), run in place: one program path for Windows Firewall, nothing copied; the owner's rend2 sun preset as jksunny-vk-dev-sun (docs/renderer-vulkan-in-xenjk.md)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096"
+      }
+    },
+    {
+      "name": "jksunny-vk-dev-sun-dbg1",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "dev build, sun cascades, r_sunShadowDebug 1 (the dev build directory moves with the worktree; 13ed3f18f = jksunny-vk-s7)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_sunShadowDebug": "1"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-dbg2",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "dev build, sun cascades, r_sunShadowDebug 2 (the dev build directory moves with the worktree; 13ed3f18f = jksunny-vk-s7)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_sunShadowDebug": "2"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-dbg3",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "dev build, sun cascades, r_sunShadowDebug 3 (the dev build directory moves with the worktree; 13ed3f18f = jksunny-vk-s7)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_sunShadowDebug": "3"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-dbg3-nomodels",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "dev build, sun cascades, r_sunShadowDebug 3 (the dev build directory moves with the worktree; 13ed3f18f = jksunny-vk-s7)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_sunShadowDebug": "3",
+        "r_sunShadowModels": "0"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-dbg4",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "dev build, sun cascades, r_sunShadowDebug 3 (the dev build directory moves with the worktree; 13ed3f18f = jksunny-vk-s7)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_sunShadowDebug": "4"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-s7",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-13ed3f18f",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "sun port through 5d (cascades + PCF), colorScale, console crash fix; sun off by default"
+    },
+    {
+      "name": "jksunny-vk-s7-sun",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-13ed3f18f",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "as s7 with the owner's rend2 sun preset",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096"
+      }
+    },
+    {
+      "name": "jksunny-vk-s7-sun-nomodels",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-13ed3f18f",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "as s7 with the owner's rend2 sun preset {\"r_sunShadowModels\": \"0\"}",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_sunShadowModels": "0"
+      }
+    },
+    {
+      "name": "jksunny-vk-s7-sun-dbg2",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-13ed3f18f",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "as s7 with the owner's rend2 sun preset {\"r_sunShadowDebug\": \"2\"}",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_sunShadowDebug": "2"
+      }
+    },
+    {
+      "name": "jksunny-vk-s8",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-8b679a8e5",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "perf/vulkan 8b679a8e5: sun port through 5e, model brightness collapse, colorScale on unlit stages, parallax port (r_parallaxMapping 0 default); sun off"
+    },
+    {
+      "name": "jksunny-vk-s8-sun",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-8b679a8e5",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "as s8 with the owner rend2 sun preset",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096"
+      }
+    },
+    {
+      "name": "jksunny-vk-s8-sun-par",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-8b679a8e5",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "as s8-sun with r_parallaxMapping 1",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1"
+      }
+    },
+    {
+      "name": "jksunny-vk-s8-sun-pardbg",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-8b679a8e5",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "as s8-sun with the parallax debug view (r_parallaxMapping 2)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "2"
+      }
+    },
+    {
+      "name": "jksunny-vk-dev-sun-par",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "dev build of the perf/vulkan worktree with the owner sun preset and rend2 parallax (r_parallaxMapping 1, r_parallaxFast default 1)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-pardbg",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "dev build with the parallax debug view (r_parallaxMapping 2: parallax surfaces green, red by the offset)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "2"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-par-info",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: dev build with r_sunShadowInfo (cascade values in the console log)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1",
+        "r_sunShadowInfo": "1"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-par-dbg2",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: dev build with r_sunShadowInfo (cascade values in the console log) and the shadow value view",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1",
+        "r_sunShadowInfo": "1",
+        "r_sunShadowDebug": "2"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-par-prof",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: dev build, SUNPROF CPU timings of the cascades",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1",
+        "r_sunShadowInfo": "2"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-par-prof-be0",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: dev build, SUNPROF, cascades cleared but not drawn (front end only)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1",
+        "r_sunShadowInfo": "2",
+        "r_sunShadowDebug": "4"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-par",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: dev build, sun off",
+      "sets": {
+        "r_sunlightMode": "0",
+        "r_sunShadows": "0",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-par-dbg5",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: dev build, lighting probe view: light before the PI scale",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1",
+        "r_sunShadowDebug": "5"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-par-dbg8",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: dev build, lighting probe view: diffuse",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1",
+        "r_sunShadowDebug": "8"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-par-dbg6",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: dev build, lighting probe view: light N.L",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1",
+        "r_sunShadowDebug": "6"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-par-dbg7",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: dev build, lighting probe view: L (deluxe or vertex light direction)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1",
+        "r_sunShadowDebug": "7"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "somaz-rend2-r4dbg",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate."
+    },
+    {
+      "name": "somaz-rend2-r4dbg5",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "5"
+      }
+    },
+    {
+      "name": "somaz-rend2-r4dbg7",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "7"
+      }
+    },
+    {
+      "name": "somaz-rend2-r4dbg8",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "8"
+      }
+    },
+    {
+      "name": "jksunny-vk-dev-sun-par-pre",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: dev build with the opaque depth prepass (r_depthPrepass 1)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1",
+        "r_depthPrepass": "1"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "somaz-rend2-r4dbg10",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "10"
+      }
+    },
+    {
+      "name": "somaz-rend2-r4dbg12",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "12"
+      }
+    },
+    {
+      "name": "somaz-rend2-r4dbg13",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "13"
+      }
+    },
+    {
+      "name": "somaz-rend2-r4dbg0",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "0"
+      }
+    },
+    {
+      "name": "somaz-rend2-r4dbg6",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "6"
+      }
+    },
+    {
+      "name": "somaz-rend2-r4dbg14",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "14"
+      }
+    },
+    {
+      "name": "somaz-rend2-r4dbg15",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "15"
+      }
+    },
+    {
+      "name": "somaz-rend2-r4dbg16",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "16"
+      }
+    },
+    {
+      "name": "jksunny-vk-dev-sun-par-dbg10",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: dev build, probe NL/NL2/NPL",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1",
+        "r_sunShadowDebug": "10"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "somaz-rend2-r4dbg14-nomerge",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "14",
+        "r_mergeLeafSurfaces": "0"
+      }
+    },
+    {
+      "name": "somaz-rend2-r4dbg0-nomerge",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "0",
+        "r_mergeLeafSurfaces": "0"
+      }
+    },
+    {
+      "name": "somaz-rend2-r4dbg17",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "17"
+      }
+    },
+    {
+      "name": "somaz-rend2-r4dbg18",
+      "tree": ".codex-research/renderer-bench/src/somaz-r4dbg",
+      "ref": "7988e8a67",
+      "family": "rend2",
+      "exe": "openjk.x86.exe",
+      "renderer": "rd-rend2",
+      "dlls": [
+        "rd-rend2_x86.dll"
+      ],
+      "note": "R4 debug only (branch debug/r4-lightviews on f26634fcb): r_r4DebugView lighting probe views. Never a measured candidate.",
+      "sets": {
+        "r_r4DebugView": "18"
+      }
+    },
+    {
+      "name": "jksunny-vk-dev-sun-par-dbg11",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: dev build probe lightmap texel",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1",
+        "r_sunShadowDebug": "11"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-dev-sun-par-dbg12",
+      "tree": ".codex-research/renderer-bench/src/jksunny-perf",
+      "build": "jksunny-perf-dev",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: dev build probe stage colour (frag_color0)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1",
+        "r_sunShadowDebug": "12"
+      },
+      "pdbs": true
+    },
+    {
+      "name": "jksunny-vk-s9",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-4b2a01cd2",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: perf/vulkan 4b2a01cd2 pinned (cascade ortho cull, r_sunStylePasses 1, r_depthPrepass 1) with the owner sun preset and parallax"
+    },
+    {
+      "name": "jksunny-vk-s9-sun-par",
+      "tree": ".codex-research/renderer-bench/src/jksunny-build",
+      "build": "jksunny-build-4b2a01cd2",
+      "family": "vulkan-pbr",
+      "exe": "eternaljk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "cgame": ".codex-research/renderer-bench/builds/jksunny-bench-cgame/RelWithDebInfo/cgamex86.dll",
+      "note": "R4: perf/vulkan 4b2a01cd2 pinned (cascade ortho cull, r_sunStylePasses 1, r_depthPrepass 1) with the owner sun preset and parallax",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_parallaxMapping": "1"
+      }
+    },
+    {
+      "name": "xenjk-vk-dev-sun",
+      "tree": ".",
+      "family": "vulkan-pbr",
+      "exe": "xenjk.x86.exe",
+      "renderer": "rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "note": "dev build of xenjk's rd-vulkan from the working tree (builds/xenjk-vk-dev, look only), copied client with networking off; the installed candidate's sun preset",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096"
+      },
+      "build": "xenjk-vk-dev"
+    },
+    {
+      "name": "xenjk-vk-devdll",
+      "tree": ".",
+      "installed": true,
+      "family": "vulkan-pbr",
+      "exe": "xenjk.x86.exe",
+      "renderer": "../../../.codex-research/renderer-bench/builds/xenjk-vk-dev/RelWithDebInfo/rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "note": "the installed client (one program path for Windows Firewall, nothing copied or written to GameData) with the working tree's rd-vulkan dev build (builds/xenjk-vk-dev) by a cl_renderer path relative to GameData; the installed candidate's sun preset; character shadows off",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_charShadows": "0"
+      }
+    },
+    {
+      "name": "xenjk-vk-devdll-cs",
+      "tree": ".",
+      "installed": true,
+      "family": "vulkan-pbr",
+      "exe": "xenjk.x86.exe",
+      "renderer": "../../../.codex-research/renderer-bench/builds/xenjk-vk-dev/RelWithDebInfo/rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "note": "the installed client (one program path for Windows Firewall, nothing copied or written to GameData) with the working tree's rd-vulkan dev build (builds/xenjk-vk-dev) by a cl_renderer path relative to GameData; the installed candidate's sun preset; character shadows on (docs/renderer-character-shadows.md)",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_charShadows": "1"
+      }
+    },
+    {
+      "name": "xenjk-vk-devdll-csdbg",
+      "tree": ".",
+      "installed": true,
+      "family": "vulkan-pbr",
+      "exe": "xenjk.x86.exe",
+      "renderer": "../../../.codex-research/renderer-bench/builds/xenjk-vk-dev/RelWithDebInfo/rd-vulkan",
+      "dlls": [
+        "rd-vulkan_x86.dll"
+      ],
+      "note": "the installed client (one program path for Windows Firewall, nothing copied or written to GameData) with the working tree's rd-vulkan dev build (builds/xenjk-vk-dev) by a cl_renderer path relative to GameData; the installed candidate's sun preset; character shadows, debug view of the light kept",
+      "sets": {
+        "r_sunlightMode": "2",
+        "r_sunShadows": "1",
+        "r_shadowMapSize": "2048",
+        "r_shadowFilter": "2",
+        "r_shadowCascadeZFar": "4096",
+        "r_charShadows": "1",
+        "r_charShadowDebug": "1"
+      }
+    }
+  ],
+  "default_run": [
+    "somaz-rend2",
+    "tayst-rend2",
+    "tayst-vulkan",
+    "jksunny-pbr"
+  ],
+  "default_run_note": "owner 2026-10-08: compare TaystJK vs SomaZ vs JKSunny PBR; our own vanilla/rend2 only with --candidates"
+}

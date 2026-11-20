@@ -1,0 +1,279 @@
+{
+  "map": "mp/ctf_kejim",
+  "map_checksum": -1301924053,
+  "qualification": ".codex-research\\strafe-m1-rejoin-qualification-20260905\\summary.json",
+  "qualification_sha256": "bf7e70f0712d96c0ff7b8232daa39d430a44441bf484b89665c3d96f8521a50a",
+  "qualification_module_sha256": "af6cad81482824c85f9b948963244aa58dbaf34fcb558549038be213e39e6622",
+  "files": [
+    {
+      "path": "guides/red_respawn_0.csv",
+      "sha256": "daab82b11c475b3691da9ae2e0a5e934e917d26ed3c9e6cdb8d68fc8d14000e5",
+      "source": ".codex-research\\strafe-m1-base-pad-catalog-20260905\\red_respawn_0.csv"
+    },
+    {
+      "path": "planned/red_respawn_0.csv",
+      "sha256": "f2d218bf6d6294cfe95f8498f2fcde11069cf85a59c8ec2dcc3535cf76c90680",
+      "source": ".codex-research\\strafe-m1-explicit-command-references-20260905\\red_respawn_0.csv"
+    },
+    {
+      "path": "guides/blue_respawn_0.csv",
+      "sha256": "12c136457e3366262f5af97a14619395182928f1862a6beaa6af65f3df55cc85",
+      "source": ".codex-research\\strafe-m1-base-pad-catalog-20260905\\blue_respawn_0.csv"
+    },
+    {
+      "path": "planned/blue_respawn_0.csv",
+      "sha256": "dda06ec9f4a0032b7f52f96ac7223a074d64ca89ffa4bb435c75fe13f3f9b1a3",
+      "source": ".codex-research\\strafe-m1-pickup-height-screen-20260905\\blue_respawn_0\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/red_respawn_1.csv",
+      "sha256": "4ba09e8c237b877936e48c950df8e1d3dc8640b9ab7aba11376e5f4cde90474d",
+      "source": ".codex-research\\strafe-m1-base-pad-catalog-20260905\\red_respawn_1.csv"
+    },
+    {
+      "path": "planned/red_respawn_1.csv",
+      "sha256": "0f42b3c871e39ff11ec3f81dfcc8719a73080dba08cebf8b1558ea58243f3d64",
+      "source": ".codex-research\\strafe-m1-explicit-command-references-20260905\\red_respawn_1.csv"
+    },
+    {
+      "path": "guides/blue_respawn_1.csv",
+      "sha256": "c6186d6a82cef75d5f6acdf161c4b5012a8846149c56aba8dc6cf3ada679df29",
+      "source": ".codex-research\\strafe-m1-base-pad-catalog-20260905\\blue_respawn_1.csv"
+    },
+    {
+      "path": "planned/blue_respawn_1.csv",
+      "sha256": "8e7170e16131d4f80b597072ea8e5bfb817c2ea62068a5fac2c6f736171b9f3d",
+      "source": ".codex-research\\strafe-m1-pickup-height-screen-20260905\\blue_respawn_1\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/red_respawn_4.csv",
+      "sha256": "7df0da402a68751f770ce7ee61360f805b212c9f64d79d6556ab0c06660bd273",
+      "source": ".codex-research\\strafe-m1-base-pad-catalog-20260905\\red_respawn_4.csv"
+    },
+    {
+      "path": "planned/red_respawn_4.csv",
+      "sha256": "3815fd4ad6612c17f74ae4f2d0c1169ce068c9111ee09a858908ba0895e2c396",
+      "source": ".codex-research\\strafe-m1-touchdown-screen-20260905\\red_respawn_4\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/blue_respawn_4.csv",
+      "sha256": "e02a2fe1fa387ab94a37952cb8be173f908d205b1f3a70b9e0a62b014e91a9fc",
+      "source": ".codex-research\\strafe-m1-base-pad-catalog-20260905\\blue_respawn_4.csv"
+    },
+    {
+      "path": "planned/blue_respawn_4.csv",
+      "sha256": "74666a838489e1b576ba304068d37898ce61d8da775672fa18e3fe694b90ce8d",
+      "source": ".codex-research\\strafe-m1-touchdown-screen-20260905\\blue_respawn_4\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/red_respawn_5.csv",
+      "sha256": "229b2c5540111e9a7441ea6788f1b3e271a31c05b12401bf13654d6bb2d00c4a",
+      "source": ".codex-research\\strafe-m1-base-pad-catalog-20260905\\red_respawn_5.csv"
+    },
+    {
+      "path": "planned/red_respawn_5.csv",
+      "sha256": "5e97e540cadac4ebfac4069935f7feb5a8cb39ac8d231ef0d6bbceafaf058446",
+      "source": ".codex-research\\strafe-m1-touchdown-screen-20260905\\red_respawn_5\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/blue_respawn_5.csv",
+      "sha256": "09a4cb78af4b1c2abb1affeaab993c0f9e9c6a0e4ab09fbfbfd801a4a5442929",
+      "source": ".codex-research\\strafe-m1-base-pad-catalog-20260905\\blue_respawn_5.csv"
+    },
+    {
+      "path": "planned/blue_respawn_5.csv",
+      "sha256": "de31032f7db7bc144f17c37785b9a23d7645f84ca7d4a79a8681d4a6b0c4d801",
+      "source": ".codex-research\\strafe-m1-touchdown-screen-20260905\\blue_respawn_5\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/red_respawn_2.csv",
+      "sha256": "26ad1f69a7a0570ae6bb324020aea1319c622a817ecd3eefd3840dbd8e5a475d",
+      "source": "tools\\fixtures\\strafe_flag\\kejim_red_i2_guide.csv"
+    },
+    {
+      "path": "planned/red_respawn_2.csv",
+      "sha256": "e79d272ba6446ba8e77c90e725decb8538c6880aad0ef3102b2c5d457cd2b80a",
+      "source": "tools\\fixtures\\strafe_flag\\kejim_red_i2_planned.csv"
+    },
+    {
+      "path": "guides/red_respawn_3.csv",
+      "sha256": "1e30f1dd7fa1d44b8e82763bd2424cba08fb13d3eac14389513de69ac09cead5",
+      "source": ".codex-research\\strafe-m1-red3-entry-candidates-20260905\\join6.csv"
+    },
+    {
+      "path": "planned/red_respawn_3.csv",
+      "sha256": "1721cf5eb27fb092f31c110d35a90c0265f1bcd9c62d1a50cffb36f2152d01ee",
+      "source": ".codex-research\\strafe-m1-red3-join6-20260905\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/blue_respawn_2.csv",
+      "sha256": "a0bdb49f6005d4064f800ec7db98c1e1acce806e5fd7a6ecae40012b59cebb20",
+      "source": ".codex-research\\strafe-m1-blue-corridor-candidates-20260905\\32\\guide.csv"
+    },
+    {
+      "path": "planned/blue_respawn_2.csv",
+      "sha256": "4b7c798cf46c8e8aad5e6ef58b6569dab1e7427abefeaec9770825f847c47dbe",
+      "source": ".codex-research\\strafe-m1-blue2-entry-candidate-20260905\\commands.csv"
+    },
+    {
+      "path": "guides/blue_respawn_3.csv",
+      "sha256": "7325c258f3f6a7e194ae93b6d2dea8da49dc497ed6a8f4719db0d171d38c3c2a",
+      "source": "tools\\fixtures\\strafe_flag\\kejim_blue_i3_guide.csv"
+    },
+    {
+      "path": "planned/blue_respawn_3.csv",
+      "sha256": "b16dfc93f60dc312b4e99e538a0a7bca092b40bda18f88a0827aca5196c70b8f",
+      "source": "tools\\fixtures\\strafe_flag\\kejim_blue_i3_planned.csv"
+    },
+    {
+      "path": "guides/red_flagstand.csv",
+      "sha256": "774540fc1d3916d3e085a122d052e35195c7062282f7736cea8a8142be7b4c96",
+      "source": ".codex-research\\strafe-m1-redstand-hop-entry-20260905\\guide.csv"
+    },
+    {
+      "path": "planned/red_flagstand.csv",
+      "sha256": "4e19ff78f049a48e12bd450c0c68646affae36eb7f93a1360a147807ba7bd8d2",
+      "source": ".codex-research\\strafe-m1-redstand-hop-entry-nominal-20260905\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/blue_flagstand.csv",
+      "sha256": "8fe6b650b69f01a952be710577c97843eb08405323eb8c0eb65ecc79db55d977",
+      "source": ".codex-research\\strafe-m1-bluestand-hop-entry-20260905\\guide.csv"
+    },
+    {
+      "path": "planned/blue_flagstand.csv",
+      "sha256": "6a88a42dd5bca9d789f97142930052934516d958d6419fd5b74e2d2474dc0721",
+      "source": ".codex-research\\strafe-m1-flagstands-hop-qualification-20260905\\blue_flagstand\\phase0\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/blue_initial_0.csv",
+      "sha256": "674a4f079ebeba20d9bc00a6fa5a6f701a1381a3d722bffd15e527f329c05a25",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\guides\\blue_initial_0\\low_hop.csv"
+    },
+    {
+      "path": "planned/blue_initial_0.csv",
+      "sha256": "d295371165c0d7b4cf54ae791338b7eef2d433d0ef656a90c049a8614abfb988",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\runs\\blue_initial_0\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/blue_initial_1.csv",
+      "sha256": "e1ad3d9b75bf1df3edbcb98c590d973f75cb465366cc50a9f905f5a2db9d3531",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\guides\\blue_initial_1\\low_hop.csv"
+    },
+    {
+      "path": "planned/blue_initial_1.csv",
+      "sha256": "d04271d117991e492116f222f1f4ab26b29f66b3e4d169963489714c08a38217",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\runs\\blue_initial_1\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/blue_initial_2.csv",
+      "sha256": "c5240b1e4f24eb529bf629b662ed7c0f15a2865bdbd7bf087a4f581f63a4030f",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\guides\\blue_initial_2\\low_hop.csv"
+    },
+    {
+      "path": "planned/blue_initial_2.csv",
+      "sha256": "31c6f18c791a1c0f387429424085f4e5997fb92401423e4a78d27c54821fcb1e",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\runs\\blue_initial_2\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/blue_initial_3.csv",
+      "sha256": "922e1e2ef68d1c4b8da94fcdde7aeecc2f0750bb45fd0cabe4f2847fbeba7240",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\guides\\blue_initial_3\\low_hop.csv"
+    },
+    {
+      "path": "planned/blue_initial_3.csv",
+      "sha256": "c1c3f2d4a38db30c1e07e1b5a70438007fc180c73dba16ba14dc090612db5e85",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\runs\\blue_initial_3\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/blue_initial_4.csv",
+      "sha256": "9855aafb0913857684aceb6c74b9db6438f8b3b7cd71c344f39200766cf3c7fc",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\guides\\blue_initial_4\\low_hop.csv"
+    },
+    {
+      "path": "planned/blue_initial_4.csv",
+      "sha256": "b8736b874c161c184d07ec7eee16b5c836b40e150d00c711b60cf81231d7c416",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\runs\\blue_initial_4\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/blue_initial_5.csv",
+      "sha256": "a1b7f3210f6be1367bf4294fdff746ce7aea9fce0fefa077f3d490add808943a",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\guides\\blue_initial_5\\low_hop.csv"
+    },
+    {
+      "path": "planned/blue_initial_5.csv",
+      "sha256": "8ac4c21c4d6f64ceb2eb30f56ae9203aafdbc2d37f4aa77360e20425458ab1d0",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\runs\\blue_initial_5\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/red_initial_0.csv",
+      "sha256": "b5649f4071191a645ab279487befe06fde3e411f0f9db47b3a061279abfc35dd",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\guides\\red_initial_0\\low_hop.csv"
+    },
+    {
+      "path": "planned/red_initial_0.csv",
+      "sha256": "faffbfc01807e883c5d7131e7ee0bc8db1ddebf233d395002fcd2c4c572f21f0",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\runs\\red_initial_0\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/red_initial_1.csv",
+      "sha256": "b449dd7906e06ccd8959538608c14987899233f837984552482d28b6655eeaee",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\guides\\red_initial_1\\low_hop.csv"
+    },
+    {
+      "path": "planned/red_initial_1.csv",
+      "sha256": "5d861586b017fd7225adaffb21c5dd489140b0095a853bfa1d6672ab4dd9e651",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\runs\\red_initial_1\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/red_initial_2.csv",
+      "sha256": "85622dd0ec090297ed0d215b5ad044d4f78b0888dc7be3a6f3e2afb53b226f33",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\guides\\red_initial_2\\low_hop.csv"
+    },
+    {
+      "path": "planned/red_initial_2.csv",
+      "sha256": "f21bc8ac9c87405920f5bae7f32b5036bff474503c67669e0ac7c5dd0e9c9dc8",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\runs\\red_initial_2\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/red_initial_3.csv",
+      "sha256": "3e6cd17e4a870b3c083f9f584ae2cbcd398124d86efbe91e142c6127a3b88bed",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\guides\\red_initial_3\\low_hop.csv"
+    },
+    {
+      "path": "planned/red_initial_3.csv",
+      "sha256": "b640219a92dd3c9aeee28de08c79737533cf35b24747f86931282a5c0dbe7e56",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\runs\\red_initial_3\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/red_initial_4.csv",
+      "sha256": "dfd5250bdd9dc5b5dbe61e4e6e4ed600ace179350601bab48a7aebf8fbf1d719",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\guides\\red_initial_4\\low_hop.csv"
+    },
+    {
+      "path": "planned/red_initial_4.csv",
+      "sha256": "1da1ad83d3280ace141c34d932bab90904fc1043e58c639d638c9444b69b6a76",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\runs\\red_initial_4\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "guides/red_initial_5.csv",
+      "sha256": "10d8d96a37b8538561287c98e200c53d7366801d176ff9b4b938b9515602fd09",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\guides\\red_initial_5\\low_hop.csv"
+    },
+    {
+      "path": "planned/red_initial_5.csv",
+      "sha256": "dc98087055ce9590ee949288300d3f1c7451d2161ae90a02c05ad51782cfc880",
+      "source": ".codex-research\\strafe-m1-initial-entry-screen-20260905\\runs\\red_initial_5\\home\\base\\flag_live.csv"
+    },
+    {
+      "path": "catalog.txt",
+      "sha256": "5be10703472254ccae23ce36ea9dc40e229e82948b12701386709136971671b1",
+      "source": ".codex-research\\strafe-m1-blue-corridor-candidates-20260905\\32\\catalog.txt"
+    },
+    {
+      "path": "inventory.json",
+      "sha256": "9ad8487cbe92e824326de8b0e7b3364a2718081d739bbc1ab50224131080e93a",
+      "source": ".codex-research\\strafe-flagstand-baseline-20260904\\inventory.json"
+    }
+  ]
+}

@@ -1,0 +1,1448 @@
+{
+ "format": "MOVEBENCH1",
+ "map": "mp/ctf_kejim",
+ "bsp_sha256": "76537a48e7d7273e2be6c033f281f8e0dfa49fcc8d550c334e4a8b0a42682e37",
+ "declared": "2026-09-15",
+ "cases": [
+  {
+   "name": "red_out_L1_stand",
+   "team": "red",
+   "leg": "outbound",
+   "level": 1,
+   "start": {
+    "name": "red_flagstand",
+    "origin": [
+     152.0,
+     -1160.0,
+     1924.125
+    ],
+    "yaw": 90.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 180000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_out_L1_respawn5",
+   "team": "red",
+   "leg": "outbound",
+   "level": 1,
+   "start": {
+    "name": "red_respawn_5",
+    "origin": [
+     -320.0,
+     2624.0,
+     1368.125
+    ],
+    "yaw": 0.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 180000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_out_L1_respawn4",
+   "team": "red",
+   "leg": "outbound",
+   "level": 1,
+   "start": {
+    "name": "red_respawn_4",
+    "origin": [
+     -640.0,
+     1696.0,
+     1808.125
+    ],
+    "yaw": 0.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 180000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_out_L2_stand",
+   "team": "red",
+   "leg": "outbound",
+   "level": 2,
+   "start": {
+    "name": "red_flagstand",
+    "origin": [
+     152.0,
+     -1160.0,
+     1924.125
+    ],
+    "yaw": 90.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_out_L2_respawn5",
+   "team": "red",
+   "leg": "outbound",
+   "level": 2,
+   "start": {
+    "name": "red_respawn_5",
+    "origin": [
+     -320.0,
+     2624.0,
+     1368.125
+    ],
+    "yaw": 0.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_out_L2_respawn4",
+   "team": "red",
+   "leg": "outbound",
+   "level": 2,
+   "start": {
+    "name": "red_respawn_4",
+    "origin": [
+     -640.0,
+     1696.0,
+     1808.125
+    ],
+    "yaw": 0.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_out_L3_stand",
+   "team": "red",
+   "leg": "outbound",
+   "level": 3,
+   "start": {
+    "name": "red_flagstand",
+    "origin": [
+     152.0,
+     -1160.0,
+     1924.125
+    ],
+    "yaw": 90.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 100,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed",
+     "hold"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_out_L3_respawn5",
+   "team": "red",
+   "leg": "outbound",
+   "level": 3,
+   "start": {
+    "name": "red_respawn_5",
+    "origin": [
+     -320.0,
+     2624.0,
+     1368.125
+    ],
+    "yaw": 0.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 100,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed",
+     "hold"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_out_L3_respawn4",
+   "team": "red",
+   "leg": "outbound",
+   "level": 3,
+   "start": {
+    "name": "red_respawn_4",
+    "origin": [
+     -640.0,
+     1696.0,
+     1808.125
+    ],
+    "yaw": 0.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 100,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed",
+     "hold"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_ret_L1_stand",
+   "team": "red",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "blue_flagstand",
+    "origin": [
+     2464.0,
+     5312.0,
+     1924.125
+    ],
+    "yaw": 270.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 180000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_ret_L1_respawn5",
+   "team": "red",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "blue_respawn_5",
+    "origin": [
+     2944.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 180000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_ret_L1_respawn4",
+   "team": "red",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "blue_respawn_4",
+    "origin": [
+     3264.0,
+     2464.0,
+     1808.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 180000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_ret_L2_stand",
+   "team": "red",
+   "leg": "return",
+   "level": 2,
+   "start": {
+    "name": "blue_flagstand",
+    "origin": [
+     2464.0,
+     5312.0,
+     1924.125
+    ],
+    "yaw": 270.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_ret_L2_respawn5",
+   "team": "red",
+   "leg": "return",
+   "level": 2,
+   "start": {
+    "name": "blue_respawn_5",
+    "origin": [
+     2944.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_ret_L2_respawn4",
+   "team": "red",
+   "leg": "return",
+   "level": 2,
+   "start": {
+    "name": "blue_respawn_4",
+    "origin": [
+     3264.0,
+     2464.0,
+     1808.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_ret_L3_stand",
+   "team": "red",
+   "leg": "return",
+   "level": 3,
+   "start": {
+    "name": "blue_flagstand",
+    "origin": [
+     2464.0,
+     5312.0,
+     1924.125
+    ],
+    "yaw": 270.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 100,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed",
+     "hold"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_ret_L3_respawn5",
+   "team": "red",
+   "leg": "return",
+   "level": 3,
+   "start": {
+    "name": "blue_respawn_5",
+    "origin": [
+     2944.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 100,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed",
+     "hold"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "red_ret_L3_respawn4",
+   "team": "red",
+   "leg": "return",
+   "level": 3,
+   "start": {
+    "name": "blue_respawn_4",
+    "origin": [
+     3264.0,
+     2464.0,
+     1808.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 100,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed",
+     "hold"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_out_L1_stand",
+   "team": "blue",
+   "leg": "outbound",
+   "level": 1,
+   "start": {
+    "name": "blue_flagstand",
+    "origin": [
+     2464.0,
+     5312.0,
+     1924.125
+    ],
+    "yaw": 270.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 180000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_out_L1_respawn5",
+   "team": "blue",
+   "leg": "outbound",
+   "level": 1,
+   "start": {
+    "name": "blue_respawn_5",
+    "origin": [
+     2944.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 180000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_out_L1_respawn4",
+   "team": "blue",
+   "leg": "outbound",
+   "level": 1,
+   "start": {
+    "name": "blue_respawn_4",
+    "origin": [
+     3264.0,
+     2464.0,
+     1808.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 180000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_out_L2_stand",
+   "team": "blue",
+   "leg": "outbound",
+   "level": 2,
+   "start": {
+    "name": "blue_flagstand",
+    "origin": [
+     2464.0,
+     5312.0,
+     1924.125
+    ],
+    "yaw": 270.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_out_L2_respawn5",
+   "team": "blue",
+   "leg": "outbound",
+   "level": 2,
+   "start": {
+    "name": "blue_respawn_5",
+    "origin": [
+     2944.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_out_L2_respawn4",
+   "team": "blue",
+   "leg": "outbound",
+   "level": 2,
+   "start": {
+    "name": "blue_respawn_4",
+    "origin": [
+     3264.0,
+     2464.0,
+     1808.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_out_L3_stand",
+   "team": "blue",
+   "leg": "outbound",
+   "level": 3,
+   "start": {
+    "name": "blue_flagstand",
+    "origin": [
+     2464.0,
+     5312.0,
+     1924.125
+    ],
+    "yaw": 270.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 100,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed",
+     "hold"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_out_L3_respawn5",
+   "team": "blue",
+   "leg": "outbound",
+   "level": 3,
+   "start": {
+    "name": "blue_respawn_5",
+    "origin": [
+     2944.0,
+     1536.0,
+     1368.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 100,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed",
+     "hold"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_out_L3_respawn4",
+   "team": "blue",
+   "leg": "outbound",
+   "level": 3,
+   "start": {
+    "name": "blue_respawn_4",
+    "origin": [
+     3264.0,
+     2464.0,
+     1808.125
+    ],
+    "yaw": 180.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 0
+   },
+   "resources": {
+    "force": 100,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed",
+     "hold"
+    ]
+   },
+   "goal": "enemy_flag",
+   "pass_condition": {
+    "condition": "pickup",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_ret_L1_stand",
+   "team": "blue",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "red_flagstand",
+    "origin": [
+     152.0,
+     -1160.0,
+     1924.125
+    ],
+    "yaw": 90.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 180000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_ret_L1_respawn5",
+   "team": "blue",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "red_respawn_5",
+    "origin": [
+     -320.0,
+     2624.0,
+     1368.125
+    ],
+    "yaw": 0.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 180000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_ret_L1_respawn4",
+   "team": "blue",
+   "leg": "return",
+   "level": 1,
+   "start": {
+    "name": "red_respawn_4",
+    "origin": [
+     -640.0,
+     1696.0,
+     1808.125
+    ],
+    "yaw": 0.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 0,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 180000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_ret_L2_stand",
+   "team": "blue",
+   "leg": "return",
+   "level": 2,
+   "start": {
+    "name": "red_flagstand",
+    "origin": [
+     152.0,
+     -1160.0,
+     1924.125
+    ],
+    "yaw": 90.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_ret_L2_respawn5",
+   "team": "blue",
+   "leg": "return",
+   "level": 2,
+   "start": {
+    "name": "red_respawn_5",
+    "origin": [
+     -320.0,
+     2624.0,
+     1368.125
+    ],
+    "yaw": 0.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_ret_L2_respawn4",
+   "team": "blue",
+   "leg": "return",
+   "level": 2,
+   "start": {
+    "name": "red_respawn_4",
+    "origin": [
+     -640.0,
+     1696.0,
+     1808.125
+    ],
+    "yaw": 0.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 50,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_ret_L3_stand",
+   "team": "blue",
+   "leg": "return",
+   "level": 3,
+   "start": {
+    "name": "red_flagstand",
+    "origin": [
+     152.0,
+     -1160.0,
+     1924.125
+    ],
+    "yaw": 90.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 100,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed",
+     "hold"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_ret_L3_respawn5",
+   "team": "blue",
+   "leg": "return",
+   "level": 3,
+   "start": {
+    "name": "red_respawn_5",
+    "origin": [
+     -320.0,
+     2624.0,
+     1368.125
+    ],
+    "yaw": 0.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 100,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed",
+     "hold"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  },
+  {
+   "name": "blue_ret_L3_respawn4",
+   "team": "blue",
+   "leg": "return",
+   "level": 3,
+   "start": {
+    "name": "red_respawn_4",
+    "origin": [
+     -640.0,
+     1696.0,
+     1808.125
+    ],
+    "yaw": 0.0,
+    "velocity": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "carrying": 1
+   },
+   "resources": {
+    "force": 100,
+    "speed_ms": 0
+   },
+   "spend": {
+    "templates": [
+     "walk",
+     "corner",
+     "hop",
+     "tap",
+     "speed",
+     "hold"
+    ]
+   },
+   "goal": "home_flag",
+   "pass_condition": {
+    "condition": "capture",
+    "bound_ms": 120000,
+    "no_death": true
+   }
+  }
+ ]
+}

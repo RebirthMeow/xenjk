@@ -1,0 +1,335 @@
+#version 450
+// Render scenes (vk_scene.cpp): screen-space reflections, traced and settled over frames. Runs after
+// scene_capture.comp, on this frame's half-size history (rgb the shown colour, a the view depth). Per texel: the
+// surface rebuilt from depth (position, and the normal from its neighbours' depths), wet where it faces up; its
+// reflected ray marched through the same history (a start and a glossy spread that change every frame); then the
+// result blended into last frame's, reprojected with that frame's camera and kept only where the surface matches.
+// Characters (negative depth in the history) are neither hit nor mirrored from: a ray passes through them.
+// Out: rgb the light the surface mirrors (linear, before exposure, before Fresnel), a its view depth (0: not wet).
+// scene.frag reads it the next frame and applies its own wetness and Fresnel.
+// Also, when opts2.z > 0 (r_sceneAO): ambient occlusion on every texel, from the same depths: opts2.z samples in the
+// hemisphere about the rebuilt normal, out to opts2.y units, settled over frames like the reflections. Out (aoImg): r the
+// share of the ambient light that reaches the surface, g its view depth (0: none). scene.frag reads it the next frame and
+// multiplies its ambient light (not the sun's or the lamps') by it.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D historyTex;		// this frame (scene_capture.comp)
+layout(set = 0, binding = 4) uniform sampler2D historyDepthTex;	// its depth alone (r16f: a quarter of the bytes per step)
+layout(constant_id = 0) const int kDepthChannel = 0;	// 0: the r16f copy; 3: the history itself (no r16f storage)
+layout(set = 0, binding = 1) uniform sampler2D prevAccumTex;	// last frame's result
+layout(set = 0, binding = 2, rgba16f) uniform writeonly image2D accumImg;
+layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D aoImg;	// the occlusion (r_sceneAO)
+layout(set = 0, binding = 6) uniform sampler2D prevAoTex;				// last frame's
+layout(std140, set = 0, binding = 3) uniform Params {
+	mat4 viewProj;		// this frame's camera (Vulkan clip space)
+	mat4 prevViewProj;	// the camera prevAccumTex was made with
+	vec4 eye;			// w: frame number
+	vec4 fwd;			// w: tan(fovX / 2)
+	vec4 left;			// w: tan(fovY / 2)
+	vec4 up;			// w: the farthest ray (units)
+	vec4 prevEye;		// w: steps
+	vec4 prevFwd;		// w: 1 when prevAccumTex holds last frame's result
+	vec4 sky;			// rgb: the haze's colour as linear light (misses); w: the share of a new frame in the blend
+	vec4 wet;			// x: wetness on (0 off), y: puddle share, z: exposure, w: tone curve (0 exponential, 1 filmic)
+	vec4 opts;			// x: rays a texel with history (r_sceneSsrRays, 1 or 2); y, z: the water's band (its surfaces' lowest and
+					// highest z, units); w: 1 when the scene has water
+	vec4 opts2;			// x: the up-facing cosine past which the surface counts as level ground (r_sceneSsrFlat; 2: never);
+					// y: the occlusion's reach (units), z: its samples (0: off), w: the share of a new frame in its blend
+} p;
+
+const float UNITS_PER_METRE = 37.5;
+const float WET_ROUGH = 0.2;	// scene.frag's
+const float WATER_ROUGH = 0.05;	// the water's gloss here (scene.frag's roughness is the material's)
+
+// scene.frag's fromDisplay: the frame's encoding back to linear light (before exposure), the headroom past TONE_TOP
+// included
+const float TONE_TOP = 0.999, TONE_LOG = 0.1;
+vec3 toneInverse( vec3 y )
+{
+	y = pow( clamp( y, 0.0, TONE_TOP ), vec3( 2.2 ) );
+	if ( p.wet.w > 0.5 ) {
+		const vec3 a = 2.51 - 2.43 * y, b = 0.03 - 0.59 * y, c = -0.14 * y;
+		return ( -b + sqrt( b * b - 4.0 * a * c ) ) / ( 2.0 * a );
+	}
+	return -log( 1.0 - y );
+}
+vec3 fromDisplay( const vec3 y )
+{
+	const float top = toneInverse( vec3( TONE_TOP ) ).x;
+	return mix( toneInverse( y ), top * exp( ( y - TONE_TOP ) / TONE_LOG ), greaterThan( y, vec3( TONE_TOP ) ) ) / p.wet.z;
+}
+
+// the world point a history texel shows (view depth d along this frame's rays)
+vec3 position( const vec2 uv, const float d )
+{
+	return p.eye.xyz + d * ( p.fwd.xyz + ( 1.0 - 2.0 * uv.x ) * p.fwd.w * p.left.xyz + ( 1.0 - 2.0 * uv.y ) * p.left.w * p.up.xyz );
+}
+
+// gradient noise for the puddles, as scene.frag lays them
+float hash( const vec2 q ) { return fract( sin( dot( q, vec2( 127.1, 311.7 ) ) ) * 43758.5453 ); }
+vec2 gradient( const vec2 i ) { const float a = hash( i ) * 6.2831853; return vec2( cos( a ), sin( a ) ); }
+float gradientNoise( const vec2 q )
+{
+	const vec2 i = floor( q ), f = fract( q ), u = f * f * f * ( f * ( f * 6.0 - 15.0 ) + 10.0 );
+	const float a = dot( gradient( i ), f ), b = dot( gradient( i + vec2( 1.0, 0.0 ) ), f - vec2( 1.0, 0.0 ) );
+	const float c = dot( gradient( i + vec2( 0.0, 1.0 ) ), f - vec2( 0.0, 1.0 ) ), d = dot( gradient( i + 1.0 ), f - 1.0 );
+	return 0.5 + 0.75 * mix( mix( a, b, u.x ), mix( c, d, u.x ), u.y );
+}
+
+// interleaved gradient noise, moved on every frame
+float ign( const vec2 px, const float frame ) { return fract( 52.9829189 * fract( dot( px + 5.588238 * frame, vec2( 0.06711056, 0.00583715 ) ) ) ); }
+
+// whether the surface a history texel shows faces up (its normal from the neighbours' depths, as for the reflecting
+// surface): a reflected ray rises, so it cannot meet the top of a deck; it passed under it
+bool facesUp( const vec2 uv, const float d )
+{
+	const vec2 texel = 1.0 / vec2( textureSize( historyTex, 0 ) );
+	const float dr = abs( textureLod( historyDepthTex, uv + vec2( texel.x, 0.0 ), 0.0 )[kDepthChannel] );
+	const float dd = abs( textureLod( historyDepthTex, uv + vec2( 0.0, texel.y ), 0.0 )[kDepthChannel] );
+	if ( dr <= 0.0 || dd <= 0.0 || abs( dr - d ) > 0.1 * d || abs( dd - d ) > 0.1 * d )
+		return false;
+	const vec3 P = position( uv, d );
+	const vec3 n = normalize( cross( position( uv + vec2( 0.0, texel.y ), dd ) - P, position( uv + vec2( texel.x, 0.0 ), dr ) - P ) );
+	return abs( n.z ) > 0.7 && dot( n * sign( n.z ), normalize( p.eye.xyz - P ) ) > 0.0;
+}
+
+// the reflected ray through the history: linear light and its weight (0 missed); a miss takes `sky` of the haze
+// (0.5 out of the top of the view, else 0.25: the city's sky is mostly buildings). Under a deck, the ray's hit on the
+// deck's visible top is the deck's dark underside instead: no light, full weight.
+vec4 trace( const vec3 P, const vec3 R, const float jitter, const float cone, out float sky )
+{
+	sky = 0.5;
+	// the hit's colour from the history level as wide as the glossy cone where it lands (cone: its full angle), so a
+	// thin bright thing (a saber blade) mirrors as a streak, not as beads where single steps landed on it
+	const vec4 c0 = p.viewProj * vec4( P, 1.0 );
+	const vec2 uv0 = c0.xy / max( c0.w, 1e-3 ) * 0.5 + 0.5;
+	const vec2 texels = vec2( textureSize( historyTex, 0 ) );
+	const float maxLod = float( textureQueryLevels( historyTex ) - 1 );
+	const int steps = int( p.prevEye.w );
+	const float growth = pow( p.up.w / 8.0, 1.0 / float( steps - 1 ) );
+	float tPrev = 0.0, t = 8.0 * ( 0.5 + jitter );
+	float fPrev = 1.0;	// the depth difference at tPrev (negative: in front of the surface there; 1: unknown)
+	for ( int i = 0; i < steps; i++ ) {
+		const vec3 Q = P + R * t;
+		const vec4 c = p.viewProj * vec4( Q, 1.0 );
+		if ( c.w <= 1.0 )
+			break;
+		const vec2 uv = c.xy / c.w * 0.5 + 0.5;
+		if ( any( lessThan( uv, vec2( 0.0 ) ) ) || any( greaterThan( uv, vec2( 1.0 ) ) ) ) {
+			sky = uv.y < 0.0 ? 0.5 : 0.25;
+			return vec4( 0.0 );
+		}
+		const float zq = dot( Q - p.eye.xyz, p.fwd.xyz );
+		const float d = textureLod( historyDepthTex, uv, 0.0 )[kDepthChannel];
+		if ( d > 0.0 && zq > d ) {
+			if ( zq - d > max( 37.5, 0.06 * zq ) + ( t - tPrev ) ) {
+				// behind something thick: not a hit; the ray goes on and may come out past it
+				tPrev = t;
+				fPrev = 1.0;
+				t *= growth;
+				continue;
+			}
+			// halved four times, then placed between the bracket's depth differences (in front at lo, behind at hi):
+			// the halving alone snapped the hit to 16 points a step, so rows of ground texels shared one and a
+			// reflected upright showed as horizontal stair-steps
+			float lo = tPrev, hi = t, flo = fPrev, fhi = zq - d;
+			vec2 hitUv = uv;
+			for ( int k = 0; k < 4; k++ ) {
+				const float m = 0.5 * ( lo + hi );
+				const vec3 Qm = P + R * m;
+				const vec4 cm = p.viewProj * vec4( Qm, 1.0 );
+				const vec2 um = cm.xy / cm.w * 0.5 + 0.5;
+				const float dm = textureLod( historyDepthTex, um, 0.0 )[kDepthChannel];
+				const float zm = dot( Qm - p.eye.xyz, p.fwd.xyz );
+				if ( dm > 0.0 && zm > dm ) {
+					hi = m;
+					fhi = zm - dm;
+					hitUv = um;
+				} else {
+					lo = m;
+					flo = dm > 0.0 ? zm - dm : 1.0;
+				}
+			}
+			if ( flo < 0.0 && fhi > 0.0 ) {
+				const vec4 cs = p.viewProj * vec4( P + R * mix( lo, hi, flo / ( flo - fhi ) ), 1.0 );
+				hitUv = cs.xy / cs.w * 0.5 + 0.5;
+			}
+			const vec2 e = smoothstep( vec2( 0.0 ), vec2( 0.08 ), hitUv ) * smoothstep( vec2( 0.0 ), vec2( 0.08 ), 1.0 - hitUv );
+			const float w = e.x * e.y * ( 1.0 - smoothstep( 0.6, 1.0, t / p.up.w ) );
+			const vec4 h = textureLod( historyTex, hitUv, 0.0 );
+			if ( R.z > 0.2 && facesUp( hitUv, h.a ) ) {
+				// a rising ray behind an up-facing surface: under a deck when it is below that surface (its dark underside),
+				// else it passed over a thin top (a kiosk's, a sign's, the ground at an upright's foot) and goes on; every
+				// such step was black, so the reflection of an upright had black rows along its top and bottom edges
+				if ( ( P + R * hi ).z < position( hitUv, abs( h.a ) ).z )
+					return vec4( 0.0, 0.0, 0.0, w );
+				tPrev = t;
+				fPrev = 1.0;
+				t *= growth;
+				continue;
+			}
+			const float lod = clamp( log2( max( length( ( hitUv - uv0 ) * texels ) * cone, 1.0 ) ), 0.0, maxLod );
+			return vec4( fromDisplay( lod > 0.0 ? textureLod( historyTex, hitUv, lod ).rgb : h.rgb ), w );
+		}
+		tPrev = t;
+		fPrev = d > 0.0 ? zq - d : 1.0;
+		t *= growth;
+	}
+	sky = 0.25;
+	return vec4( 0.0 );
+}
+
+// the share of the ambient light reaching P (normal Ng, view depth d): cosine-weighted directions about the normal, each
+// to a distance within the reach; a sample counts as hidden where the history shows something in front of it, by less
+// than the reach farther from P's own depth (a far wall behind an edge does not darken it)
+float occlusion( const vec3 P, const vec3 Ng, const float d, const ivec2 id )
+{
+	const int n = int( p.opts2.z );
+	const float reach = p.opts2.y;
+	const vec3 T = normalize( cross( Ng, abs( Ng.z ) < 0.9 ? vec3( 0.0, 0.0, 1.0 ) : vec3( 1.0, 0.0, 0.0 ) ) );
+	const vec3 B = cross( Ng, T );
+	const float j1 = ign( vec2( id ) + 11.0, p.eye.w ), j2 = ign( vec2( id.yx ) + 47.0, p.eye.w + 7.0 );
+	const vec3 O = P + Ng * max( 1.0, 0.002 * d );
+	float hidden = 0.0;
+	for ( int k = 0; k < n; k++ ) {
+		const float u = ( float( k ) + j1 ) / float( n );
+		const float phi = 6.2831853 * fract( float( k ) * 0.618034 + j2 );
+		const float r = sqrt( u );
+		const vec3 dir = T * ( r * cos( phi ) ) + B * ( r * sin( phi ) ) + Ng * sqrt( max( 1.0 - u, 0.0 ) );
+		const float s = fract( j2 * 3.7 + float( k ) * 0.381966 );
+		const vec3 Q = O + dir * ( reach * mix( 0.08, 1.0, s * s ) );
+		const vec4 c = p.viewProj * vec4( Q, 1.0 );
+		if ( c.w <= 1.0 )
+			continue;
+		const vec2 uv = c.xy / c.w * 0.5 + 0.5;
+		if ( any( lessThan( uv, vec2( 0.0 ) ) ) || any( greaterThan( uv, vec2( 1.0 ) ) ) )
+			continue;
+		const float zq = dot( Q - p.eye.xyz, p.fwd.xyz );
+		const float ds = abs( textureLod( historyDepthTex, uv, 0.0 )[kDepthChannel] );	// (a character occludes too)
+		if ( ds > 0.0 && ds < zq - max( 1.0, 0.003 * zq ) )
+			hidden += smoothstep( 0.0, 1.0, reach / max( abs( d - ds ), 1e-3 ) );
+	}
+	return 1.0 - hidden / float( max( n, 1 ) );
+}
+
+// the occlusion at this texel (normal Ng, or none where valid is false), settled with last frame's where the same
+// surface was
+void storeOcclusion( const ivec2 id, const vec3 P, const vec3 Ng, const float d, const bool valid )
+{
+	if ( !valid ) {
+		imageStore( aoImg, id, vec4( 1.0, 0.0, 0.0, 0.0 ) );
+		return;
+	}
+	float ao = occlusion( P, Ng, d, id );
+	if ( p.prevFwd.w > 0.5 ) {
+		const vec4 c = p.prevViewProj * vec4( P, 1.0 );
+		if ( c.w > 1.0 ) {
+			const vec2 pu = c.xy / c.w * 0.5 + 0.5;
+			if ( all( greaterThanEqual( pu, vec2( 0.0 ) ) ) && all( lessThanEqual( pu, vec2( 1.0 ) ) ) ) {
+				const vec4 h = textureLod( prevAoTex, pu, 0.0 );
+				const float zp = dot( P - p.prevEye.xyz, p.prevFwd.xyz );
+				if ( h.g > 0.0 && abs( h.g - zp ) < 0.05 * zp + 8.0 )
+					ao = mix( h.r, ao, p.opts2.w );
+			}
+		}
+	}
+	imageStore( aoImg, id, vec4( ao, d, 0.0, 0.0 ) );
+}
+
+void main()
+{
+	const ivec2 id = ivec2( gl_GlobalInvocationID.xy );
+	const ivec2 size = imageSize( accumImg );
+	if ( any( greaterThanEqual( id, size ) ) )
+		return;
+	const vec2 texel = 1.0 / vec2( size );
+	const vec2 uv = ( vec2( id ) + 0.5 ) * texel;
+	const float d = texelFetch( historyDepthTex, id, 0 )[kDepthChannel];
+	const vec3 P = position( uv, d );
+	if ( d <= 0.0 ) {
+		imageStore( accumImg, id, vec4( 0.0 ) );
+		if ( p.opts2.z > 0.5 )
+			storeOcclusion( id, P, vec3( 0.0, 0.0, 1.0 ), d, false );
+		return;
+	}
+
+	// the normal from the neighbours' depths: on each axis the side nearer in depth (not across an edge)
+	// (a character's depth is stored negative: its depth still shapes the normal, as before the marks)
+	const float dl = abs( texelFetch( historyDepthTex, clamp( id - ivec2( 1, 0 ), ivec2( 0 ), size - 1 ), 0 )[kDepthChannel] );
+	const float dr = abs( texelFetch( historyDepthTex, clamp( id + ivec2( 1, 0 ), ivec2( 0 ), size - 1 ), 0 )[kDepthChannel] );
+	const float du = abs( texelFetch( historyDepthTex, clamp( id - ivec2( 0, 1 ), ivec2( 0 ), size - 1 ), 0 )[kDepthChannel] );
+	const float dd = abs( texelFetch( historyDepthTex, clamp( id + ivec2( 0, 1 ), ivec2( 0 ), size - 1 ), 0 )[kDepthChannel] );
+	const vec3 px = abs( dr - d ) < abs( dl - d ) && dr > 0.0 ? position( uv + vec2( texel.x, 0.0 ), dr ) - P : P - position( uv - vec2( texel.x, 0.0 ), dl );
+	const vec3 py = abs( dd - d ) < abs( du - d ) && dd > 0.0 ? position( uv + vec2( 0.0, texel.y ), dd ) - P : P - position( uv - vec2( 0.0, texel.y ), du );
+	vec3 Ng = normalize( cross( py, px ) );
+	const vec3 V = normalize( p.eye.xyz - P );
+	if ( dot( Ng, V ) < 0.0 )
+		Ng = -Ng;
+	if ( p.opts2.z > 0.5 )
+		storeOcclusion( id, P, Ng, d, true );
+	// wet ground, and the water's band (a texel there may be water: scene.frag decides, by its material)
+	const bool water = p.opts.w > 0.5 && P.z >= p.opts.y && P.z <= p.opts.z;
+	if ( p.wet.x <= 0.0 && !water ) {
+		imageStore( accumImg, id, vec4( 0.0 ) );
+		return;
+	}
+	if ( Ng.z < 0.5 ) {
+		imageStore( accumImg, id, vec4( 0.0 ) );
+		return;
+	}
+	// level ground: the half-size r16f depths round in steps, and a normal from neighbours' differences tilts row by row,
+	// so the reflected rays fanned out per row and an upright mirrored as strips shifted sideways in stair-steps; past opts2.x it is taken as level
+	if ( Ng.z > p.opts2.x )
+		Ng = vec3( 0.0, 0.0, 1.0 );
+
+	// glossy spread: wet ground at scene.frag's cap (WET_ROUGH: most pavement is rougher, so the cap is its roughness),
+	// puddles 0.05, sampled a little differently every frame
+	const vec2 q = P.xy / UNITS_PER_METRE;
+	const vec2 rq = mat2( 0.8, 0.6, -0.6, 0.8 ) * q;
+	const float n = gradientNoise( q / 4.0 ) * 0.6 + gradientNoise( rq / 1.5 + 17.0 ) * 0.3 + gradientNoise( q / 0.5 + 5.0 ) * 0.1;
+	const float t = 1.0 - p.wet.y;
+	const float wetRough = mix( WET_ROUGH, 0.05, p.wet.y > 0.0 ? smoothstep( t - 0.05, t + 0.05, n ) : 0.0 );
+	const float rough = water ? WATER_ROUGH : wetRough;
+	const float j1 = ign( vec2( id ), p.eye.w ), j2 = ign( vec2( id.yx ) + 31.0, p.eye.w ), j3 = ign( vec2( id ) + 67.0, p.eye.w + 13.0 );
+	// last frame's result where the same surface was (its depth within 8%: grazing ground runs far in depth from one
+	// texel to the next)
+	vec4 hist = vec4( 0.0 );
+	if ( p.prevFwd.w > 0.5 ) {
+		const vec4 c = p.prevViewProj * vec4( P, 1.0 );
+		if ( c.w > 1.0 ) {
+			const vec2 pu = c.xy / c.w * 0.5 + 0.5;
+			if ( all( greaterThanEqual( pu, vec2( 0.0 ) ) ) && all( lessThanEqual( pu, vec2( 1.0 ) ) ) ) {
+				const vec4 h = textureLod( prevAccumTex, pu, 0.0 );
+				const float zp = dot( P - p.prevEye.xyz, p.prevFwd.xyz );
+				if ( h.a > 0.0 && abs( h.a - zp ) < 0.08 * zp + 16.0 )
+					hist = vec4( h.rgb, 1.0 );
+			}
+		}
+	}
+
+	// a surface with no history yet (just revealed, or the view moved fast) takes two rays: one alone showed as blotches;
+	// with history r_sceneSsrRays (2 by default: one settled at 15% showed as a dither on the wet ground)
+	vec3 cur = vec3( 0.0 );
+	const int rays = hist.a > 0.5 ? int( p.opts.x ) : 2;
+	for ( int k = 0; k < rays; k++ ) {
+		const vec3 jit = k == 0 ? vec3( j1, j2, j3 ) : fract( vec3( j1, j2, j3 ) + vec3( 0.5, 0.618, 0.382 ) );
+		const vec3 spread = ( vec3( jit.y, jit.z, fract( jit.y + jit.z ) ) - 0.5 ) * ( rough * rough * 4.0 );
+		const vec3 R = normalize( reflect( -V, Ng ) + spread );
+		if ( R.z > 0.0 ) {
+			float sky;
+			const vec4 hit = trace( P + Ng * 2.0, R, jit.x, rough * rough * 4.0, sky );
+			cur += hit.rgb * hit.a + p.sky.rgb * ( sky * ( 1.0 - hit.a ) );
+		}
+	}
+	cur /= float( rays );
+
+	// settle over frames, each side weighted down by its brightness (Karis 2014): a bright thin thing moving through the
+	// mirror (a saber's blade) no longer sparkles in half-size blocks
+	if ( hist.a > 0.5 ) {
+		const vec3 lum = vec3( 0.2126, 0.7152, 0.0722 ) * p.wet.z;
+		const float wc = p.sky.w / ( 1.0 + dot( cur, lum ) ), wh = ( 1.0 - p.sky.w ) / ( 1.0 + dot( hist.rgb, lum ) );
+		cur = ( hist.rgb * wh + cur * wc ) / ( wh + wc );
+	}
+	imageStore( accumImg, id, vec4( cur, d ) );
+}

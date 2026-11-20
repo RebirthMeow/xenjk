@@ -1,0 +1,184 @@
+[
+  {
+    "name": "blue_respawn_1",
+    "passed": true,
+    "reference_ms": 12225,
+    "nominal_ms": 12000,
+    "worst_phase_ms": 12875
+  },
+  {
+    "name": "red_respawn_1",
+    "passed": true,
+    "reference_ms": 11875,
+    "nominal_ms": 11875,
+    "worst_phase_ms": 12700
+  },
+  {
+    "name": "blue_respawn_0",
+    "passed": true,
+    "reference_ms": 11875,
+    "nominal_ms": 11875,
+    "worst_phase_ms": 12025
+  },
+  {
+    "name": "red_respawn_0",
+    "passed": true,
+    "reference_ms": 12000,
+    "nominal_ms": 12000,
+    "worst_phase_ms": 12875
+  },
+  {
+    "name": "red_respawn_4",
+    "passed": true,
+    "reference_ms": 7925,
+    "nominal_ms": 7875,
+    "worst_phase_ms": 8675
+  },
+  {
+    "name": "blue_respawn_4",
+    "passed": true,
+    "reference_ms": 7925,
+    "nominal_ms": 8075,
+    "worst_phase_ms": 8325
+  },
+  {
+    "name": "red_respawn_5",
+    "passed": true,
+    "reference_ms": 9950,
+    "nominal_ms": 9975,
+    "worst_phase_ms": 10100
+  },
+  {
+    "name": "blue_respawn_5",
+    "passed": true,
+    "reference_ms": 10100,
+    "nominal_ms": 10225,
+    "worst_phase_ms": 10325
+  },
+  {
+    "name": "red_respawn_2",
+    "passed": true,
+    "reference_ms": 6600,
+    "nominal_ms": 6700,
+    "worst_phase_ms": 7100
+  },
+  {
+    "name": "red_respawn_3",
+    "passed": true,
+    "reference_ms": 6925,
+    "nominal_ms": 7050,
+    "worst_phase_ms": 7050
+  },
+  {
+    "name": "blue_respawn_2",
+    "passed": true,
+    "reference_ms": 6925,
+    "nominal_ms": 6925,
+    "worst_phase_ms": 7050
+  },
+  {
+    "name": "blue_respawn_3",
+    "passed": true,
+    "reference_ms": 6600,
+    "nominal_ms": 6900,
+    "worst_phase_ms": 6900
+  },
+  {
+    "name": "red_flagstand",
+    "passed": true,
+    "reference_ms": 9425,
+    "nominal_ms": 9450,
+    "worst_phase_ms": 10475
+  },
+  {
+    "name": "blue_flagstand",
+    "passed": true,
+    "reference_ms": 9525,
+    "nominal_ms": 9425,
+    "worst_phase_ms": 9600
+  },
+  {
+    "name": "blue_initial_0",
+    "passed": true,
+    "reference_ms": 9050,
+    "nominal_ms": 8925,
+    "worst_phase_ms": 9925
+  },
+  {
+    "name": "blue_initial_1",
+    "passed": true,
+    "reference_ms": 8950,
+    "nominal_ms": 8875,
+    "worst_phase_ms": 10000
+  },
+  {
+    "name": "blue_initial_2",
+    "passed": true,
+    "reference_ms": 8975,
+    "nominal_ms": 8975,
+    "worst_phase_ms": 10050
+  },
+  {
+    "name": "blue_initial_3",
+    "passed": true,
+    "reference_ms": 9025,
+    "nominal_ms": 8950,
+    "worst_phase_ms": 9200
+  },
+  {
+    "name": "blue_initial_4",
+    "passed": true,
+    "reference_ms": 9125,
+    "nominal_ms": 9025,
+    "worst_phase_ms": 10050
+  },
+  {
+    "name": "blue_initial_5",
+    "passed": true,
+    "reference_ms": 9000,
+    "nominal_ms": 9000,
+    "worst_phase_ms": 9850
+  },
+  {
+    "name": "red_initial_0",
+    "passed": true,
+    "reference_ms": 9000,
+    "nominal_ms": 8875,
+    "worst_phase_ms": 10075
+  },
+  {
+    "name": "red_initial_1",
+    "passed": true,
+    "reference_ms": 9025,
+    "nominal_ms": 8925,
+    "worst_phase_ms": 9200
+  },
+  {
+    "name": "red_initial_2",
+    "passed": true,
+    "reference_ms": 9100,
+    "nominal_ms": 9025,
+    "worst_phase_ms": 9175
+  },
+  {
+    "name": "red_initial_3",
+    "passed": true,
+    "reference_ms": 8925,
+    "nominal_ms": 8900,
+    "worst_phase_ms": 9000
+  },
+  {
+    "name": "red_initial_5",
+    "passed": true,
+    "reference_ms": 8975,
+    "nominal_ms": 9000,
+    "worst_phase_ms": 9000
+  },
+  {
+    "name": "red_initial_4",
+    "passed": true,
+    "reference_ms": 9050,
+    "nominal_ms": 8900,
+    "worst_phase_ms": 9875
+  }
+]

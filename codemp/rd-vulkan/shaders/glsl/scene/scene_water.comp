@@ -1,0 +1,74 @@
+#version 450
+// Render scenes (vk_scene.cpp, r_sceneWaterWaves): the water's waves, simulated every frame (Tessendorf, "Simulating
+// ocean water", 2001). Each of three cascades, a square patch of N x N wave numbers of its own size, holds the spectrum
+// H0(k) the CPU drew once at load (Scene_WaveSpectrum: a Phillips spectrum in a band of the wave numbers, the cascades'
+// bands apart). Each frame H(k, t) = H0(k) e^(i w t) + conj(H0(-k)) e^(-i w t), w = sqrt(g |k|) (quantised to the
+// time loop's base frequency, so t can be the clock modulo the loop), and its slopes i kx H + i (i ky H) transformed back
+// to the patch (two real fields in one complex transform: the real part the slope along x, the imaginary along y).
+// Pass 0: per cascade and row ky, the spectrum along kx, transformed along x into the rows buffer; pass 1: per cascade
+// and column x, transformed along y into the image (scene.frag waterNormal reads it). One workgroup a row or column,
+// a 256-point radix-2 transform in shared memory (bit-reversed load, 8 butterfly stages).
+
+layout(local_size_x = 256) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Spectrum { vec2 h0[]; };	// per cascade N x N, rows ky, columns kx
+layout(std430, set = 0, binding = 1) buffer Rows { vec2 rows[]; };				// per cascade N x N: transformed along x
+layout(set = 0, binding = 2, rgba16f) uniform writeonly image2DArray waves;		// per cascade: x, y the height's slopes
+
+layout(push_constant) uniform Push {
+	vec4 size;		// xyz: each cascade's patch (m); w: the pass (0 rows, 1 columns)
+	vec4 time;		// x: the clock modulo the loop (s), y: the loop's base frequency (rad/s)
+} pc;
+
+const uint N = 256u, LOG2N = 8u;
+const float PI = 3.14159265, G = 9.81;
+
+shared vec2 buf[2][256];
+
+vec2 cmul( const vec2 a, const vec2 b ) { return vec2( a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x ); }
+
+// the inverse transform of buf[0] (bit-reversed in), in place; returns this thread's element
+vec2 transform( const uint i )
+{
+	uint src = 0u;
+	for ( uint s = 0u; s < LOG2N; s++ ) {
+		const uint m = 1u << s, j = i & ( 2u * m - 1u ), base = i - j, jj = j < m ? j : j - m;
+		const float a = PI * float( jj ) / float( m );
+		const vec2 w = vec2( cos( a ), sin( a ) );
+		const vec2 p = buf[src][base + jj], q = cmul( w, buf[src][base + jj + m] );
+		buf[1u - src][i] = j < m ? p + q : p - q;
+		barrier();
+		src = 1u - src;
+	}
+	return buf[src][i];
+}
+
+// a wave number index as signed (0..N/2-1, then -N/2..-1)
+float signedIndex( const uint i ) { return float( int( i ) - ( i >= N / 2u ? int( N ) : 0 ) ); }
+
+void main()
+{
+	const uint i = gl_LocalInvocationID.x, line = gl_WorkGroupID.x, c = gl_WorkGroupID.y;
+	const uint layer = c * N * N;
+	const uint rev = bitfieldReverse( i ) >> ( 32u - LOG2N );
+	if ( pc.size.w < 0.5 ) {
+		// the spectrum at (kx index i, ky index line), evolved, as slopes
+		const float L = pc.size[c];
+		const vec2 k = 2.0 * PI / L * vec2( signedIndex( i ), signedIndex( line ) );
+		const float w = floor( sqrt( G * length( k ) ) / pc.time.y ) * pc.time.y;
+		const float ph = w * pc.time.x;
+		const vec2 e = vec2( cos( ph ), sin( ph ) );
+		const vec2 a = h0[layer + line * N + i];
+		const vec2 b = h0[layer + ( ( N - line ) % N ) * N + ( N - i ) % N];
+		const vec2 H = cmul( a, e ) + cmul( vec2( b.x, -b.y ), vec2( e.x, -e.y ) );
+		// i kx H + i (i ky H) = i kx H - ky H
+		buf[0][rev] = vec2( -k.x * H.y, k.x * H.x ) - k.y * H;
+		barrier();
+		rows[layer + line * N + i] = transform( i );
+	} else {
+		buf[0][rev] = rows[layer + i * N + line];
+		barrier();
+		const vec2 s = transform( i );
+		imageStore( waves, ivec3( int( line ), int( i ), int( c ) ), vec4( s, 0.0, 0.0 ) );
+	}
+}

@@ -1,0 +1,223 @@
+#version 450
+// Render scenes (vk_scene.cpp): the eye view's light clusters (r_sceneClusters). The view's frustum is cut into
+// CLUSTER_X x CLUSTER_Y tiles (as the haze's volume maps it: along the eye's left and up axes over z) and CLUSTER_Z
+// slices, exponential in view depth from the near distance (the last open to infinity). Each workgroup takes one tile:
+// its threads test every light against the tile's four sides and depth span (sphere; a spot's cone; an interior
+// light's box) into shared lists kept in light order (each subgroup a contiguous run of the lights, no barriers), then one thread per slice keeps the lights reaching its
+// froxel (the froxel's box against the sphere, its bounding sphere against the cone and box). scene.frag loops over
+// its fragment's cluster instead of the light grid's cell; lights that only light the haze are left out. The second
+// z of the dispatch builds the haze's (scene_fog.comp): the lights it scatters (a share in the haze above 0).
+// With r_sceneClusterCull the tiles walk a list of the lights live and in the frustum, made once a frame by this shader's
+// modes 1 and 2 (BuildViewLights), in light order, instead of every light: the same clusters, ~0.9 ms less on Watson.
+
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+
+layout(local_size_x = 64) in;
+
+const uint CLUSTER_X = 40, CLUSTER_Y = 24, CLUSTER_Z = 32;	// SCENE_CLUSTER_X, _Y, _Z
+const uint CLUSTER_MAX = 126;								// lights per cluster (SCENE_CLUSTER_MAX; scene.frag's stride)
+const uint CLUSTER_STRIDE = 1u + CLUSTER_MAX;				// uints per cluster: its count, then a 32-bit light index each
+const uint CLUSTER_FULL = 0x80000000u;	// in the count: more lights reach it than it holds (scene.frag uses the grid cell)
+const uint SUB_MAX = 4, SUB_LIGHTS = 512;	// the tile's lights: a list per subgroup (64 threads: 2 of 32 here)
+
+struct Light { vec4 posRadius; vec4 colorPower; vec4 dirCosOuter; vec4 cosInnerType; };	// as scene.frag's
+struct LightBox { vec4 r0, r1, r2, pad, shape; };	// (shape: a tube's, scene.frag)
+layout(std430, set = 0, binding = 0) readonly buffer Lights { Light lights[]; };
+layout(std430, set = 0, binding = 1) readonly buffer LightBoxes { LightBox boxes[]; };
+layout(std430, set = 0, binding = 2) writeonly buffer Clusters { uint clusters[]; } outs[2];	// the surfaces', the haze's
+// r_sceneClusterStats (slices.y 1): the tiles and clusters that fell back to the light grid's cells (CLUSTER_FULL),
+// counted in scene_cull.comp's Occ block's last two counters (the host reads them two frames later)
+layout(std430, set = 0, binding = 3) buffer Stats { uint pad[90]; uint fullTiles; uint fullClusters; } stats;
+// the tile test's inputs, 20 bytes a light instead of its 64-byte record (built at load from the same values): the
+// light's sphere, and its kind (bit 0 it lights surfaces: not haze-only; bit 1 it scatters in the haze)
+layout(std430, set = 0, binding = 4) readonly buffer LightBounds { vec4 lightBounds[]; };
+layout(std430, set = 0, binding = 5) readonly buffer LightKinds { uint lightKinds[]; };
+// r_sceneClusterCull (slices.z bit 0): the lights live and in the frustum, once a frame in ascending order (modes 1-2 of
+// this shader, before the tiles), which the tiles walk instead of every light; and its per-workgroup counts
+layout(std430, set = 0, binding = 6) buffer ViewLights { uint viewCount; uint viewPad[3]; uint viewIds[]; };
+layout(std430, set = 0, binding = 7) buffer ViewCounts { uint viewGroupCount[]; };
+
+layout(push_constant) uniform Push {
+	vec4 eye;		// xyz the eye; w: lights
+	vec4 fwd;		// the eye's forward axis; w: the first slice's near distance (units)
+	vec4 left;		// w: tan(fovX / 2)
+	vec4 up;		// w: tan(fovY / 2)
+	vec4 slices;	// x: log(far / near) / CLUSTER_Z (a slice's depth ratio, as a log); y: 1 to count the fallbacks; z: 1
+					// the tiles walk the view's list (r_sceneClusterCull); w: the mode (0 the clusters; 1, 2 the view
+					// list's count and write passes)
+} pc;
+
+shared uint tileLights[SUB_MAX][SUB_LIGHTS];
+shared uint tileKept[SUB_MAX];	// each run's kept lights (its list holds SUB_LIGHTS of them at most); each subgroup writes its own
+shared uint viewRank[64];		// the view list's inclusive sums of the kept flags over the threads
+shared uint viewBase;			// the view list's offset for this workgroup
+
+float sliceNear( const uint s ) { return pc.fwd.w * exp( pc.slices.x * float( s ) ); }
+
+// a light's sphere against a froxel's bounds in view space (x along left, y along up, z forward): the distance from its
+// centre to the box. A cone (a spot) against the froxel's bounding sphere, an interior box against it too.
+bool reaches( const Light L, const uint li, const vec3 Lv, const vec3 lo, const vec3 hi )
+{
+	const vec3 d = max( max( lo - Lv, Lv - hi ), vec3( 0.0 ) );
+	if ( dot( d, d ) > L.posRadius.w * L.posRadius.w )
+		return false;
+	const vec3 c = 0.5 * ( lo + hi );
+	const float r = 0.5 * length( hi - lo );
+	const int type = int( L.cosInnerType.y );
+	const vec4 S = boxes[li].shape;	// a tube's cone is taken from its segment's point nearest the receiver: not tested here
+	if ( ( type & 1 ) != 0 && L.dirCosOuter.w < L.cosInnerType.x && S.x == 0.0 && S.y == 0.0 && S.z == 0.0 ) {	// (reversed edges: smoothstep is undefined, kept)
+		// the cone (Wronski, "Cull that cone"): the light's axis in view space. scene.frag lights where
+		// dot(direction, the way to P) passes cosOuter, and the scene's directions are not all unit length (0.1 to 2
+		// in Kabuki's): the cone it draws is cos(angle) = cosOuter / |direction|
+		const float dirLen = max( length( L.dirCosOuter.xyz ), 1e-6 );
+		const vec3 axis = vec3( dot( L.dirCosOuter.xyz, pc.left.xyz ), dot( L.dirCosOuter.xyz, pc.up.xyz ), dot( L.dirCosOuter.xyz, pc.fwd.xyz ) ) / dirLen;
+		const vec3 V = c - Lv;
+		const float vlen2 = dot( V, V ), v1 = dot( V, axis );
+		const float cosA = clamp( L.dirCosOuter.w / dirLen, -1.0, 1.0 ), sinA = sqrt( max( 1.0 - cosA * cosA, 0.0 ) );
+		const float closest = cosA * sqrt( max( vlen2 - v1 * v1, 0.0 ) ) - v1 * sinA;
+		// (behind the light only for a cone narrower than a half sphere; a wider one reaches back past its plane)
+		if ( closest > r || v1 > r + L.posRadius.w || ( cosA > 0.0 && v1 < -r ) )
+			return false;
+	}
+	if ( L.cosInnerType.z > 0.5 ) {
+		// the froxel's sphere in the light's box (scene space): outside it on any axis, with the sphere's reach there
+		const vec3 cw = pc.eye.xyz + c.x * pc.left.xyz + c.y * pc.up.xyz + c.z * pc.fwd.xyz;
+		const LightBox B = boxes[li];
+		const vec4 p = vec4( cw, 1.0 );
+		if ( abs( dot( B.r0, p ) ) > 1.0 + r * length( B.r0.xyz ) || abs( dot( B.r1, p ) ) > 1.0 + r * length( B.r1.xyz )
+			|| abs( dot( B.r2, p ) ) > 1.0 + r * length( B.r2.xyz ) )
+			return false;
+	}
+	return true;
+}
+
+/*
+The view's lights (r_sceneClusterCull): a light whose kind is live (scene_lightfade.comp masks the lights off) and whose
+sphere may reach the frustum: the outer tiles' own side tests with a margin and the eye's plane, so every light a tile
+keeps is in it. Two passes over workgroups of 64 (the dispatch's x): the count of each, then each kept index at its
+workgroup's offset plus its rank in it (a scan over the local index), so the list is in ascending order.
+*/
+void BuildViewLights( const uint mode )
+{
+	const uint t = gl_LocalInvocationIndex, g = gl_WorkGroupID.x, li = g * 64u + t;
+	bool keep = false;
+	if ( li < uint( pc.eye.w ) && ( lightKinds[li] & 3u ) != 0u ) {
+		const vec4 S = lightBounds[li];
+		const vec3 rel = S.xyz - pc.eye.xyz;
+		const vec3 Lv = vec3( dot( rel, pc.left.xyz ), dot( rel, pc.up.xyz ), dot( rel, pc.fwd.xyz ) );
+		const float r = S.w * 1.001 + 1.0 + 1e-4 * ( abs( Lv.x ) + abs( Lv.y ) + abs( Lv.z ) );
+		keep = Lv.z + r > 0.0 && dot( normalize( vec3( 1.0, 0.0, pc.left.w ) ), Lv ) > -r && dot( normalize( vec3( -1.0, 0.0, pc.left.w ) ), Lv ) > -r
+			&& dot( normalize( vec3( 0.0, 1.0, pc.up.w ) ), Lv ) > -r && dot( normalize( vec3( 0.0, -1.0, pc.up.w ) ), Lv ) > -r;
+	}
+	viewRank[t] = keep ? 1u : 0u;
+	barrier();
+	for ( uint off = 1u; off < 64u; off <<= 1u ) {
+		const uint add = t >= off ? viewRank[t - off] : 0u;
+		barrier();
+		viewRank[t] += add;
+		barrier();
+	}
+	if ( mode == 1u ) {
+		if ( t == 63u )
+			viewGroupCount[g] = viewRank[63];
+		return;
+	}
+	if ( t == 0u ) {	// the earlier workgroups' kept lights (a few hundred counts), then the list's length from the last
+		uint before = 0u;
+		for ( uint k = 0u; k < g; k++ )
+			before += viewGroupCount[k];
+		viewBase = before;
+		if ( g == gl_NumWorkGroups.x - 1u )
+			viewCount = before + viewRank[63];
+	}
+	barrier();
+	if ( keep )
+		viewIds[viewBase + viewRank[t] - 1u] = li;
+}
+
+void main()
+{
+	if ( pc.slices.w > 0.5 ) {
+		BuildViewLights( uint( pc.slices.w ) );
+		return;
+	}
+	const bool useList = pc.slices.z > 0.5;
+	const uint tx = gl_WorkGroupID.x, ty = gl_WorkGroupID.y;
+	const bool haze = gl_WorkGroupID.z == 1u;
+	const uint t = gl_LocalInvocationIndex;
+	const uint numLights = useList ? viewCount : uint( pc.eye.w );	// (the list's entries or every light)
+	// the tile's sides as slopes over view depth: x / z in [ax0, ax1], y / z in [ay0, ay1] (u, v grow toward -left, -up)
+	const float ax0 = ( 1.0 - 2.0 * float( tx + 1u ) / float( CLUSTER_X ) ) * pc.left.w, ax1 = ( 1.0 - 2.0 * float( tx ) / float( CLUSTER_X ) ) * pc.left.w;
+	const float ay0 = ( 1.0 - 2.0 * float( ty + 1u ) / float( CLUSTER_Y ) ) * pc.up.w, ay1 = ( 1.0 - 2.0 * float( ty ) / float( CLUSTER_Y ) ) * pc.up.w;
+	// the planes through the eye bounding the tile, inward normals in view space
+	const vec3 nx0 = normalize( vec3( 1.0, 0.0, -ax0 ) ), nx1 = normalize( vec3( -1.0, 0.0, ax1 ) );
+	const vec3 ny0 = normalize( vec3( 0.0, 1.0, -ay0 ) ), ny1 = normalize( vec3( 0.0, -1.0, ay1 ) );
+
+	// every light against the tile's sides: subgroup s takes the s-th run of them, in order (a ballot per step)
+	const uint sg = gl_SubgroupID, lanes = gl_SubgroupSize;
+	const uint run = ( ( numLights + gl_NumSubgroups - 1u ) / gl_NumSubgroups + lanes - 1u ) / lanes * lanes;
+	const uint runEnd = min( ( sg + 1u ) * run, numLights );
+	uint kept = 0u;
+	for ( uint base = sg * run; base < runEnd; base += lanes ) {
+		const uint pos = base + gl_SubgroupInvocationID;
+		const uint li = pos < runEnd ? ( useList ? viewIds[pos] : pos ) : 0u;
+		bool keep = false;
+		if ( pos < runEnd ) {
+			if ( ( lightKinds[li] & ( haze ? 2u : 1u ) ) != 0u ) {
+				const vec4 S = lightBounds[li];
+				const vec3 rel = S.xyz - pc.eye.xyz;
+				const vec3 Lv = vec3( dot( rel, pc.left.xyz ), dot( rel, pc.up.xyz ), dot( rel, pc.fwd.xyz ) );
+				const float r = S.w;
+				keep = Lv.z + r > 0.0 && dot( nx0, Lv ) > -r && dot( nx1, Lv ) > -r && dot( ny0, Lv ) > -r && dot( ny1, Lv ) > -r;
+			}
+		}
+		const uvec4 ballot = subgroupBallot( keep );
+		const uint at = kept + subgroupBallotExclusiveBitCount( ballot );
+		if ( keep && at < SUB_LIGHTS )
+			tileLights[sg][at] = li;
+		kept += subgroupBallotBitCount( ballot );
+	}
+	if ( subgroupElect() )
+		tileKept[sg] = kept;
+	barrier();
+	// a run had more lights than its list: every slice falls back (CLUSTER_FULL)
+	bool tileFull = false;
+	for ( uint k = 0u; k < gl_NumSubgroups; k++ )
+		tileFull = tileFull || tileKept[k] > SUB_LIGHTS;
+	if ( pc.slices.y > 0.5 && t == 0u && tileFull )
+		atomicAdd( stats.fullTiles, 1u );
+
+	// one thread per slice: the tile's lights reaching its froxel
+	for ( uint s = t; s < CLUSTER_Z; s += 64u ) {
+		const float z0 = s == 0u ? 0.0 : sliceNear( s ), z1 = s + 1u == CLUSTER_Z ? 1e9 : sliceNear( s + 1u );
+		const vec3 lo = vec3( min( ax0 * z0, ax0 * z1 ), min( ay0 * z0, ay0 * z1 ), z0 );
+		const vec3 hi = vec3( max( ax1 * z0, ax1 * z1 ), max( ay1 * z0, ay1 * z1 ), z1 );
+		const uint cluster = ( s * CLUSTER_Y + ty ) * CLUSTER_X + tx;
+		const uint at = cluster * CLUSTER_STRIDE;
+		uint count = 0u;
+		bool full = tileFull;
+		for ( uint k = 0u, i = 0u; k < gl_NumSubgroups && !full; ) {
+			if ( i >= min( tileKept[k], SUB_LIGHTS ) ) {
+				k++;
+				i = 0u;
+				continue;
+			}
+			const uint li = tileLights[k][i++];
+			const Light L = lights[li];
+			const vec3 rel = L.posRadius.xyz - pc.eye.xyz;
+			const vec3 Lv = vec3( dot( rel, pc.left.xyz ), dot( rel, pc.up.xyz ), dot( rel, pc.fwd.xyz ) );
+			if ( !reaches( L, li, Lv, lo, hi ) )
+				continue;
+			if ( count == CLUSTER_MAX ) {
+				full = true;
+				break;
+			}
+			outs[gl_WorkGroupID.z].clusters[at + 1u + count] = li;
+			count++;
+		}
+		outs[gl_WorkGroupID.z].clusters[at] = full ? CLUSTER_FULL : count;
+		if ( pc.slices.y > 0.5 && full )
+			atomicAdd( stats.fullClusters, 1u );
+	}
+}

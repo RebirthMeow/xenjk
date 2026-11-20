@@ -1,0 +1,42 @@
+--- a/tools/quake3/q3map2/bsp.cpp
++++ b/tools/quake3/q3map2/bsp.cpp
+@@ -254,9 +254,27 @@
+    creates a full bsp + surfaces for the worldspawn entity
+  */
+ 
++/* xenjk 2026-11-07, -brushcook: the world's brushes only, as the map load made them (planes, windings, bevels, bad
++   brushes dropped), and one empty leaf: no tree, portals, flood, draw surfaces or vis. For collision maps whose tree is
++   rebuilt elsewhere (tools/levelport/colmerge.py); the brush, side, plane and shader output is -bsp's. */
++bool brushCook = false;
++
+ static void ProcessWorldModel( entity_t& e ){
+ 	const char  *value;
+ 
++	if ( brushCook ) {
++		BeginModel( e );
++		e.firstDrawSurf = 0;
++		EmitBrushes( e );
++		node_t *leaf = AllocNode();
++		leaf->planenum = PLANENUM_LEAF;
++		leaf->opaque = true;
++		leaf->cluster = -1;
++		EndModel( e, leaf );
++		delete leaf;
++		return;
++	}
++
+ 	/* sets integer blockSize from worldspawn "_blocksize" key if it exists */
+ 	if( e.read_keyvalue( value, "_blocksize", "blocksize", "chopsize" ) ) {  /* "chopsize" : sof2 */
+ 		/* scan 3 numbers */
+@@ -733,6 +751,11 @@
+ 			writeXplanes = true;
+ 			Sys_Printf( "Writing each brush's planes in double beside the BSP (.xplanes)\n" );
+ 		}
++		while ( args.takeArg( "-brushcook" ) ) {
++			extern bool brushCook;
++			brushCook = true;
++			Sys_Printf( "Brushes only: no tree, portals, surfaces or vis (-brushcook)\n" );
++		}
+ 		while ( args.takeArg( "-pointgrid" ) ) {
+ 			extern double pointGrid;
+ 			pointGrid = atof( args.takeNext() );

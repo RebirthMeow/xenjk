@@ -1,0 +1,2059 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+#include "global.h"
+
+#if defined (USE_FOG)
+	layout(set = VK_DESC_UNIFORM, binding = VK_DESC_UNIFORM_MAIN_BINDING) uniform UBO {
+		// light/env/material parameters:
+		vec4 eyePos;
+		vec4 lightPos;
+		vec4 lightColor;
+		vec4 lightVector;
+	//#ifdef USE_FOG	
+		// fog parameters:
+		vec4 fogDistanceVector;
+		vec4 fogDepthVector;
+		vec4 fogEyeT;
+		vec4 fogColor;
+	//#endif
+	};
+
+	layout(set = VK_DESC_UNIFORM, binding = VK_DESC_UNIFORM_FOGS_BINDING) uniform Fog {
+		vkUniformFog_t u_fogs;
+	};
+#endif
+
+#if defined (USE_FOG) || defined(PER_PIXEL_LIGHTING) || defined(USE_LIGHT_VECTOR)
+	layout(set = VK_DESC_UNIFORM, binding = VK_DESC_UNIFORM_CAMERA_BINDING) uniform Camera {
+		vkUniformCamera_t u_camera;
+	};
+#endif
+
+#if defined(PER_PIXEL_LIGHTING) || defined(USE_LIGHT_VECTOR)
+	layout(set = VK_DESC_UNIFORM, binding = VK_DESC_UNIFORM_LIGHT_BINDING) uniform Light {
+		vkUniformLight_t u_lights;
+	};
+
+	layout(set = VK_DESC_UNIFORM, binding = VK_DESC_UNIFORM_ENTITY_BINDING) uniform Entity {
+		vkUniformEntity_t u_entity;
+	};
+
+	layout(set = VK_DESC_UNIFORM, binding = VK_DESC_UNIFORM_GLOBAL_BINDING) uniform Global {
+		vkUniformGlobal_t u_global;
+	};	
+#endif
+
+layout(set = VK_DESC_TEXTURE0, binding = 0) uniform sampler2D texture0;
+#ifdef USE_TX1
+layout(set = VK_DESC_TEXTURE1, binding = 0) uniform sampler2D texture1;
+#endif
+#ifdef USE_TX2
+layout(set = VK_DESC_TEXTURE2, binding = 0) uniform sampler2D texture2;
+#endif
+#ifdef USE_FOG
+layout(set = VK_DESC_FOG_COLLAPSE, binding = 0) uniform sampler2D fog_texture;
+#endif
+
+#ifdef USE_CL0_IDENT
+// use fixed color from spec.constant.8
+#else
+layout(location = 0) in vec4 frag_color0;
+#endif
+
+#ifdef USE_CL1
+layout(location = 5) in vec4 frag_color1;
+#endif
+#ifdef USE_CL2
+layout(location = 6) in vec4 frag_color2;
+#endif
+
+layout(location = 1) centroid in vec2 frag_tex_coord0;
+#ifdef USE_TX1
+layout(location = 2) centroid in vec2 frag_tex_coord1;
+#endif
+#ifdef USE_TX2
+layout(location = 3) centroid in vec2 frag_tex_coord2;
+#endif
+#ifdef USE_FOG
+layout(location = 4) in vec3 fog_tex_coord;
+#endif
+
+#ifdef USE_DF
+layout(depth_less) out float gl_FragDepth;
+#else
+layout(location = 0) out vec4 out_color;
+#endif
+
+#ifdef USE_ATEST
+layout (constant_id = 0) const int alpha_test_func = 0;
+layout (constant_id = 1) const float alpha_test_value = 0.0;
+#ifdef USE_DF
+layout (constant_id = 2) const float depth_fragment = 0.85;
+#endif
+#endif
+
+layout (constant_id = 3) const int alpha_to_coverage = 0;
+layout (constant_id = 4) const int color_mode = 0; // > 0: unlit output scaled by color_mode / 1000 (rend2 colorScale)
+layout (constant_id = 5) const int hw_fog = 0;
+//layout (constant_id = 6) const int abs_light = 0;
+#if defined (USE_TX1) || defined(USE_TX2)
+layout (constant_id = 7) const int tex_mode = 0; // modulate, add (identity), add(non-identity) etc
+#endif
+layout (constant_id = 8) const int discard_mode = 0;
+layout (constant_id = 28) const int char_occluder = 0;	// 1: r_charOccHair, write the fragment's linear depth after the alpha test;
+														// 2: a character casting into a shadow map (hashed alpha test, depth only)
+#ifdef USE_CL0_IDENT
+layout (constant_id = 9) const float identity_color = 1.0;
+#endif
+
+// 1 compiles the debug views in (r_charSelfShadowDebug, r_charOcclusionDebug, r_charShadowDebug,
+// r_sunShadowDebug, r_cubeMapDebug: vk.debugViews); 0, every production pipeline, folds them away
+layout (constant_id = 31) const int debug_views = 0;
+
+#define SHADER_FRAG
+#include "common/utils.glsl"
+#include "common/fog.glsl"
+#include "common/color.glsl"
+
+#if defined(PER_PIXEL_LIGHTING)
+	// shading switches in the camera's charReviewFix bits (global.h lists them)
+	bool ReviewFix( in uint bit ) { return ( uint( u_camera.charReviewFix ) & bit ) != 0u; }
+	// the debug views' selectors, 0 unless the pipeline was built with debug_views
+	float DebugSelfShadow() { return debug_views != 0 ? u_camera.selfShadowParams.w : 0.0; }	// r_charSelfShadowDebug
+	float DebugOcclusion() { return debug_views != 0 ? u_camera.charOccInfo.x : 0.0; }		// r_charOcclusionDebug
+	float DebugCharShadow() { return debug_views != 0 ? u_camera.charShadowParams.w : 0.0; }	// r_charShadowDebug
+	float DebugSun() { return debug_views != 0 ? u_camera.sunCol.w : 0.0; }					// r_sunShadowDebug
+	float DebugCubeMap() { return debug_views != 0 ? u_global.cubeParams.y : 0.0; }			// r_cubeMapDebug
+	// the values packed into floats, one decoder each
+	// u_entity.directedLight.w: the grid light's contact-shadow screen-mask channel (0 none)
+	int GridContactChannel() { return int( u_entity.directedLight.w + 0.5 ); }
+	// u_entity.localViewOrigin.w: 1 + the character's self-shadow tile (-1 here: none)
+	int SelfShadowSlot() { return int( u_entity.localViewOrigin.w + 0.5 ) - 1; }
+	// a dynamic light's origin.w: 1 + its mask channel (0 none) + 4 x the light's size in degrees
+	int DlightContactChannel( in float originW ) { return int( mod( originW + 0.5, 4.0 ) ); }
+	float DlightSize( in float originW ) { return radians( floor( ( originW + 0.5 ) / 4.0 ) ); }
+	// selfShadowParams.x: r_charSelfShadowRays + 32 x r_charSelfShadowSteps
+	int SelfShadowRays( in bool strand ) { return clamp( ( int( u_camera.selfShadowParams.x + 0.5 ) % 32 ) / ( strand ? 2 : 1 ), 1, 16 ); }
+	int SelfShadowSteps() { return clamp( int( u_camera.selfShadowParams.x + 0.5 ) / 32, 2, 12 ); }
+	bool g_backFace = false;	// this fragment is a two-sided surface's back
+	layout (constant_id = 10) const int normal_texture_set = 0; // -1 none, 0 normal map, 1 parallax (fast), 2 parallax (16+8)
+	layout (constant_id = 11) const int physical_texture_set = 0;
+	layout (constant_id = 12) const int env_texture_set = 0;
+	layout (constant_id = 13) const int deluxe_mapping = -1; // -1: deluxemapping off, 0: on, 1: on + bound
+	layout (constant_id = 14) const float deluxe_specular_scale = 1.0;
+	// r_pbrMaterials stage features (21, 22; 15..20 are the surface sprite constants)
+	layout (constant_id = 21) const int detail_normal_set = -1;	// -1 none, 0 detailNormalMap
+	layout (constant_id = 22) const int material_mode = 0;		// bits: 1 subsurface, 2 hair anisotropy, 4 sheen, 8 eye, 16 toon
+	layout (constant_id = 23) const int mask_set = -1;			// -1 none, 0 materialMask
+	layout (constant_id = 24) const int detail_map_set = -1;	// -1 none, 0 detailMap
+	layout (constant_id = 25) const int emissive_set = -1;		// -1 none, 0 emissiveMap
+	layout (constant_id = 26) const int tint_set = -1;			// -1 none, 0 tintMask
+	layout (constant_id = 27) const int layer_count = 0;		// layered material: 0 none, 1..4 layers
+
+	// two-sided (cull none) surfaces: 1 = back faces take the reversed normal, 2 = the same in a mirror view (winding reversed);
+	// 0 = one-sided, unchanged. Without it the inside of a two-sided dress or coat was lit with the outside's normal.
+	layout (constant_id = 29) const int two_sided = 0;
+
+	// roughnessEncoding (stage keyword): how the stage's roughness maps store roughness. 0 perceptual (the shading
+	// convention, common/pbr.glsl), 1 GGX alpha (r = sqrt(stored)), 2 metalpow (stored = r^(2 - metal), metal from
+	// the same stage). Decoded once, after the maps, layers and detailMap are combined; 0 compiles the decode out.
+	layout (constant_id = 30) const int roughness_encoding = 0;
+
+	layout (location = 10) in vec4 var_NormalIn;
+	vec4 var_Normal;	// var_NormalIn, reversed on the back face of a two-sided surface (set at the top of main)
+	layout (location = 11) in vec4 var_LightDir;
+	layout (location = 12) in vec4 var_ViewDir;
+	layout (location = 13) in flat int Var_RenderMode;
+	layout (location = 14) in vec4 var_Tangent;
+
+	layout (set = VK_DESC_MATERIAL,	binding = VK_MAT_BRDFLUT) uniform sampler2D brdflut_texture;
+	layout (set = VK_DESC_MATERIAL,	binding = VK_MAT_NORMAL) uniform sampler2D normal_texture;
+	layout (set = VK_DESC_MATERIAL,	binding = VK_MAT_PHYSICAL) uniform sampler2D physical_texture;
+	layout (set = VK_DESC_PROBES,	binding = 0) uniform samplerCube env_texture[VK_CUBEMAP_BLEND_PROBES];	// reflection probes
+	layout (set = VK_DESC_MATERIAL,	binding = VK_MAT_DELUXE) uniform sampler2D deluxe_texture;
+	layout (set = VK_DESC_MATERIAL,	binding = VK_MAT_DETAIL) uniform sampler2D detail_normal_texture;
+	layout (set = VK_DESC_MATERIAL,		binding = VK_MAT_MASK) uniform sampler2D mask_texture;
+	layout (set = VK_DESC_MATERIAL, binding = VK_MAT_DETAILMAP) uniform sampler2D detail_map_texture;
+	layout (set = VK_DESC_MATERIAL,	binding = VK_MAT_EMISSIVE) uniform sampler2D emissive_texture;
+	layout (set = VK_DESC_MATERIAL,		binding = VK_MAT_TINT) uniform sampler2D tint_texture;
+	layout (set = VK_DESC_MATERIAL, binding = VK_MAT_LAYERMASK) uniform sampler2D layer_mask_texture;
+	layout (set = VK_DESC_MATERIAL, binding = VK_MAT_LAYERALBEDO) uniform sampler2DArray layer_albedo_texture;	// albedo rgb, roughness a
+	layout (set = VK_DESC_MATERIAL, binding = VK_MAT_LAYERNORMAL) uniform sampler2DArray layer_normal_texture;	// normal x y, metalness b
+
+	layout (set = VK_DESC_PROBES,	binding = 1) uniform samplerCube irradiance_texture[VK_CUBEMAP_BLEND_PROBES];	// their diffuse irradiance
+	#include "common/pbr.glsl"
+
+	// Stage material features (material_mode bits, any combination). MaterialLight returns the light's reflectance
+	// times its cosine term, replacing ( Fd + Fs ) * NL. The masks are the materialMask channels (R subsurface, G sheen,
+	// B hair shift, A detail weight), or without one the stage normal map's blue in each (1 without a normal map).
+
+	// skin: per-channel wrap diffuse, the scatter colour widening the terminator (red reaches furthest)
+	// r_charSkinSoftNormals (test, camera skinSoftNormals): each channel's cosine moved toward the vertex normal's, red
+	// furthest, so the stage normal map's pores and fine relief fade as light diffusing under the skin blurs them
+	vec3 SubsurfaceDiffuse( in float NLraw, in vec3 L, in vec3 Fd, in float mask )
+	{
+		const vec3 w = u_global.subsurfaceParams.rgb * ( u_global.subsurfaceParams.w * mask );
+		vec3 NLc = vec3( NLraw );
+		if ( u_camera.skinSoftNormals > 0.0 )
+			NLc = mix( NLc, vec3( dot( normalize( var_Normal.xyz ), L ) ), clamp( u_camera.skinSoftNormals * mask * vec3( 1.0, 0.5, 0.25 ), 0.0, 1.0 ) );
+		// ( NL + w ) / ( 1 + w ) integrates to pi ( 1 + w ); / ( 1 + w )^2 keeps the albedo's energy
+		const vec3 NLd = clamp( ( NLc + w ) / ( ( vec3( 1.0 ) + w ) * ( vec3( 1.0 ) + w ) ), 0.0, 1.0 );
+		return Fd * NLd;
+	}
+
+	// Charlie sheen distribution (Estevez and Kulla 2017) with Neubelt's visibility
+	vec3 SheenLobe( in float NH, in float NL, in float NE, in float mask )
+	{
+		const float a = max( u_global.sheenParams.w * u_global.sheenParams.w, 0.0049 );
+		const float invA = 1.0 / a;
+		const float sin2h = max( 1.0 - NH * NH, 0.0078125 );
+		const float D = ( 2.0 + invA ) * pow( sin2h, invA * 0.5 ) / ( 2.0 * M_PI );
+		const float V = 1.0 / ( 4.0 * ( NL + NE - NL * NE ) + 1e-4 );
+		return u_global.sheenParams.rgb * ( mask * D * V );
+	}
+
+	// eye: the cornea's reflectance at normal incidence, from its index of refraction, times its strength
+	float CorneaF0()
+	{
+		const float r = ( u_global.eyeCorneaParams.x - 1.0 ) / ( u_global.eyeCorneaParams.x + 1.0 );
+		return r * r * u_global.eyeCorneaParams.z;
+	}
+
+	// eye: the cornea's perceptual roughness (at least 0.02). With a roughnessEncoding other than perceptual, the
+	// eye keyword's corneaRoughness is read as GGX alpha like the stage's maps (metalpow: not metallic, so the same)
+	float CorneaRoughness()
+	{
+		const float r = max( u_global.eyeCorneaParams.y, 0.02 );
+		return roughness_encoding != 0 ? sqrt( r ) : r;
+	}
+
+	// eye: the smooth wet cornea over the whole eye, a GGX highlight on the geometric normal (the iris and sclera
+	// detail under it keep the stage normal map), with its own cosine term
+	vec3 CorneaSpecular( in vec3 L, in vec3 E )
+	{
+		const vec3 Ng = normalize( var_Normal.xyz );
+		const vec3 H = normalize( L + E );
+		const float NL = clamp( dot( Ng, L ), 0.0, 1.0 );
+		const float NE = abs( dot( Ng, E ) ) + 1e-5;
+		const float NH = clamp( dot( Ng, H ), 0.0, 1.0 );
+		const float VH = clamp( dot( E, H ), 0.0, 1.0 );
+		return CalcSpecular( vec3( CorneaF0() ), NH, NL, NE, 0.0, VH, CorneaRoughness() ) * NL;
+	}
+
+	// eye: where the iris (within eyeParams.x of the centre eyeParams.zw in texture space) is seen through the
+	// cornea. The cornea's dome stands eyeParams.y (texture units) over the iris centre, falling to the limbus; the view
+	// ray bends into it (ior eyeCorneaParams.x) and reaches the iris further along. Same tangent frame as parallax.
+	vec2 EyeIrisOffset( in vec2 uv )
+	{
+		const float radius = max( u_global.eyeParams.x, 1e-4 );
+		const float r = length( uv - u_global.eyeParams.zw );
+		const float iris = 1.0 - smoothstep( radius - u_global.eyeCorneaParams.w, radius + u_global.eyeCorneaParams.w, r );
+		const float height = u_global.eyeParams.y * max( 1.0 - ( r * r ) / ( radius * radius ), 0.0 );
+
+		const vec3 T = var_Tangent.xyz;
+		const vec3 Nv = var_Normal.xyz;
+		const vec3 B = cross( Nv, T ) * var_Tangent.w;
+		const vec3 V = normalize( vec3( dot( var_ViewDir.xyz, T ), dot( var_ViewDir.xyz, B ), dot( var_ViewDir.xyz, Nv ) ) );
+		const vec3 R = refract( -V, vec3( 0.0, 0.0, 1.0 ), 1.0 / max( u_global.eyeCorneaParams.x, 1.0 ) );
+		return R.xy / max( -R.z, 0.1 ) * ( height * iris );
+	}
+
+	// Kajiya-Kay strand highlights (Scheuermann 2004): a white primary lobe and an albedo-tinted secondary one,
+	// along tangents shifted toward the normal; the per-pixel shift is mask - 0.5
+	float StrandSpecular( in vec3 T, in vec3 H, in float exponent )
+	{
+		const float TH = dot( T, H );
+		const float sinTH = sqrt( max( 1.0 - TH * TH, 0.0 ) );
+		return smoothstep( -1.0, 0.0, TH ) * pow( sinTH, exponent );
+	}
+
+	vec3 HairSpecular( in vec3 N, in vec3 H, in vec3 albedo, in vec3 specular, in float mask )
+	{
+		vec3 T = u_global.hairParams.x < 0.5 ? var_Tangent.xyz : var_Tangent.w * cross( var_Normal.xyz, var_Tangent.xyz );
+		T = normalize( T - N * dot( N, T ) + vec3( 1e-6 ) );
+		const float shift = u_global.hairParams.y + ( mask - 0.5 );
+		const vec3 T1 = normalize( T + N * ( shift - 0.05 ) );
+		const vec3 T2 = normalize( T + N * ( shift + 0.1 ) );
+		const float e1 = u_global.hairParams.z, e2 = u_global.hairParams.w;
+		return specular * ( StrandSpecular( T1, H, e1 ) * ( e1 + 2.0 ) / ( 2.0 * M_PI ) )
+			+ albedo * ( specular.g * StrandSpecular( T2, H, e2 ) * ( e2 + 2.0 ) / ( 2.0 * M_PI ) );
+	}
+
+	// toon (material_mode 16, r_toon): the main light (the grid's directed and ambient light together, toonMain)
+	// moves the albedo from the shade colour to the lit one where its half-Lambert term, times its shadow
+	// (toonShadow), crosses toonParams.x (toonParams.y either side); it keeps its colour and strength on both sides,
+	// so the shade side is the shade colour in that light, not its absence. Every other light (dynamic lights, the
+	// sun on top of the grid, the character fill and rim) adds the lit albedo on its own lit side only, by the same
+	// step. toonShade / toonSkinShade are sRGB multipliers (toonLinear: lit in linear space).
+	float toonShadow = 1.0;
+	vec3 toonShadeTex = vec3( -1.0 );	// toonShadeMap's texel (toonLight.w 1; bound in the detailMap set), -1 none
+	bool toonMain = false;
+	bool toonLinear = false;
+
+	// toon: a light's colour at toonLight.x share, the rest its luminance in grey (plain stages: unchanged)
+	vec3 ToonLightColor( in vec3 c )
+	{
+		if ( ( material_mode & 16 ) == 0 )
+			return c;
+		return mix( vec3( dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ) ), c, u_global.toonLight.x );
+	}
+
+	// toon: the stage's whole light (every light and reflection, as the colour's luminance over the albedo's) softly
+	// compressed past toonLight.y, rising at most toonLight.z more: a cel character keeps its palette under the grid's
+	// overbright light instead of washing out to white
+	vec3 ToonExposure( in vec3 color, in vec3 albedo )
+	{
+		const vec3 lumW = vec3( 0.2126, 0.7152, 0.0722 );
+		const float level = dot( color, lumW ) / max( dot( albedo, lumW ), 0.02 );
+		const float knee = u_global.toonLight.y, over = level - knee;
+		if ( over <= 0.0 )
+			return color;
+		return color * ( ( knee + over / ( 1.0 + over / max( u_global.toonLight.z, 1e-3 ) ) ) / level );
+	}
+
+	float ToonStep( in float NLraw )
+	{
+		const float x = ( NLraw * 0.5 + 0.5 ) * toonShadow;
+		return smoothstep( u_global.toonParams.x - u_global.toonParams.y, u_global.toonParams.x + u_global.toonParams.y, x );
+	}
+
+	vec3 ToonShade( in vec3 albedo, in float skin )
+	{
+		if ( toonShadeTex.x >= 0.0 )
+			return toonShadeTex;
+		const vec3 m = mix( u_global.toonShade.rgb, u_global.toonSkinShade.rgb, clamp( skin, 0.0, 1.0 ) );
+		return albedo * ( toonLinear ? pow( m, vec3( 2.2 ) ) : m );
+	}
+
+	// the stepped highlight on the lit side (t), where N.H passes 1 - size (toonShade.w soft): white on dielectrics,
+	// the metal's own colour on metals (specular is F0), up to the strength at F0 0.04 and above
+	vec3 ToonSpecular( in float NH, in float t, in vec3 specular )
+	{
+		if ( u_global.toonParams.z <= 0.0 )
+			return vec3( 0.0 );
+		const float m = max( specular.r, max( specular.g, specular.b ) );
+		const float edge = 1.0 - u_global.toonParams.z;
+		const float s = smoothstep( edge - u_global.toonShade.w, edge + u_global.toonShade.w, NH ) * t;
+		return specular / max( m, 1e-4 ) * ( s * u_global.toonParams.w * clamp( m / 0.04, 0.0, 1.0 ) );
+	}
+
+	// r_charTerms test bits (characters lit in linear space): ambientLight.w = mode + 10 x bits
+	int CharTerms()
+	{
+		return int( u_entity.ambientLight.w * 0.1 + 0.05 );
+	}
+
+	vec3 MaterialLight( in vec3 N, in vec3 L, in vec3 E, in float NE, in vec3 Fd, in vec3 Fs,
+		in vec3 albedo, in vec3 specular, in vec4 masks )
+	{
+		const float NLraw = dot( N, L );
+		const float NL = clamp( NLraw, 0.0, 1.0 );
+		const vec3 H = normalize( L + E );
+		const float NH = clamp( dot( N, H ), 0.0, 1.0 );
+
+		const int terms = CharTerms();
+		// toon: shade to lit by the step (the PI the caller's light carries divided out), a stepped highlight (strands
+		// for hair, on the lit side); sheen and the cornea add as below
+		if ( ( material_mode & 16 ) != 0 ) {
+			const float t = ToonStep( NLraw );
+			vec3 toon = ( toonMain ? mix( ToonShade( albedo, masks.r ), albedo, t ) : albedo * t ) * ( 1.0 / M_PI );
+			if ( ( terms & 1 ) != 0 )
+				return toon;
+			if ( ( material_mode & 2 ) != 0 )
+				toon += HairSpecular( N, H, albedo, specular, masks.b ) * ( NL * t );
+			else
+				toon += ToonSpecular( NH, t, specular ) * ( 1.0 / M_PI );
+			if ( ( material_mode & 4 ) != 0 )
+				toon += SheenLobe( NH, NL, NE, masks.g ) * NL;
+			if ( ( material_mode & 8 ) != 0 )
+				toon += CorneaSpecular( L, E );
+			return toon;
+		}
+
+		// diffuse: wrapped for skin; specular: strands replace the GGX lobe for hair, sheen adds to either
+		const vec3 diffuseLight = ( material_mode & 1 ) != 0 && ( terms & 4 ) == 0 ? SubsurfaceDiffuse( NLraw, L, Fd, masks.r ) : Fd * NL;
+		if ( ( terms & 1 ) != 0 )
+			return diffuseLight;
+		vec3 specularLight = ( material_mode & 2 ) != 0 ? HairSpecular( N, H, albedo, specular, masks.b ) : Fs;
+		if ( ( material_mode & 4 ) != 0 )
+			specularLight += SheenLobe( NH, NL, NE, masks.g );
+		vec3 result = diffuseLight + specularLight * NL;
+		if ( ( material_mode & 8 ) != 0 )
+			result += CorneaSpecular( L, E );
+		return result;
+	}
+
+	// r_charFast (camera charFastBits) bits: look work skipped where it cannot change the image; off in the debug views
+	int CharFast()
+	{
+		return ( DebugSelfShadow() > 0.5 || DebugOcclusion() > 0.5 ) ? 0 : int( u_camera.charFastBits + 0.5 );
+	}
+
+	// no light from L reaches the stage: MaterialLight's terms and the plain lit path all scale by the clamped N.L, except
+	// skin's wrap (its widest channel past the terminator, on N or the vertex normal, r_charSkinSoftNormals) and the eye's
+	// cornea (the vertex normal). Shadows toward L need not be looked up there.
+	bool CharLightAway( in vec3 N, in vec3 L )
+	{
+		float reach = dot( N, L );
+		if ( ( material_mode & 9 ) != 0 ) {
+			const float g = dot( normalize( var_Normal.xyz ), L );
+			if ( ( material_mode & 8 ) != 0 && g > 0.0 )
+				return false;
+			if ( ( material_mode & 1 ) != 0 ) {
+				const vec3 w = u_global.subsurfaceParams.rgb * u_global.subsurfaceParams.w;
+				if ( min( w.r, min( w.g, w.b ) ) < 0.0 )
+					return false;
+				reach = max( reach, g ) + max( w.r, max( w.g, w.b ) );
+			}
+		}
+		return reach <= 0.0;
+	}
+
+	// r_charFill / r_charRim (models lit by the light grid): one extra directional light toward Lx, through the stage's
+	// material model as the grid's own light (plain stages: albedo + GGX); the caller scales it by its colour x PI
+	vec3 CharGridExtra( in vec3 Lx, in vec3 N, in vec3 E, in float NE, in vec3 albedo, in vec3 specular, in float roughness,
+		in vec4 masks )
+	{
+		const vec3 H = normalize( Lx + E );
+		const float NL = clamp( dot( N, Lx ), 0.0, 1.0 );
+		const float LH = clamp( dot( Lx, H ), 0.0, 1.0 );
+		const float NH = clamp( dot( N, H ), 0.0, 1.0 );
+		const float VH = clamp( dot( E, H ), 0.0, 1.0 );
+		const vec3 Fd = CalcDiffuse( albedo, NE, NL, LH, roughness );
+		const vec3 Fs = CalcSpecular( specular, NH, NL, NE, LH, VH, roughness );
+		if ( material_mode != 0 )
+			return MaterialLight( N, Lx, E, NE, Fd, Fs, albedo, specular, masks );
+		return ( Fd + ( ( CharTerms() & 1 ) != 0 ? vec3( 0.0 ) : Fs ) ) * NL;
+	}
+
+	// r_charLinear (characters: u_entity.ambientLight.w 1 linear, 2 linear + PBR Neutral): textures and baked light are
+	// sRGB-encoded; light them in linear space as the research Cycles renders do, then encode back
+	vec3 SRGBToLinear( in vec3 c )
+	{
+		return mix( c / 12.92, pow( ( c + 0.055 ) / 1.055, vec3( 2.4 ) ), step( vec3( 0.04045 ), c ) );
+	}
+
+	vec3 LinearToSRGB( in vec3 c )
+	{
+		return mix( c * 12.92, 1.055 * pow( c, vec3( 1.0 / 2.4 ) ) - 0.055, step( vec3( 0.0031308 ), c ) );
+	}
+
+	#include "common/fma.glsl"
+
+	// Khronos PBR Neutral tone mapping (Blender's "Khronos PBR Neutral" view)
+	vec3 PBRNeutral( in vec3 color )
+	{
+		const float startCompression = 0.8 - 0.04;
+		const float desaturation = 0.15;
+		const float x = min( color.r, min( color.g, color.b ) );
+		const float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
+		color -= offset;
+		const float peak = max( color.r, max( color.g, color.b ) );
+		if ( peak < startCompression )
+			return color;
+		const float d = 1.0 - startCompression;
+		const float newPeak = 1.0 - d * d / ( peak + d - startCompression );
+		color *= newPeak / peak;
+		const float g = 1.0 - 1.0 / ( desaturation * ( peak - newPeak ) + 1.0 );
+		return mix( color, vec3( newPeak ), g );
+	}
+
+	// character occlusion (r_charAO, r_charContactShadows; vk_charocc.cpp RB_CharOcclusion): the opaque depth prepass's
+	// ambient occlusion and linear depth, screen-sized; white when the view did not compute them (charOccParams 0)
+	layout (set = VK_DESC_MATERIAL,	binding = VK_MAT_SCREEN_AO) uniform sampler2D screen_ao_texture;
+	layout (set = VK_DESC_MATERIAL,	binding = VK_MAT_SCREEN_DEPTH) uniform sampler2D screen_depth_texture;
+
+	float dbgContactDlight = 1.0;	// r_charOcclusionDebug 3: the first dynamic light's contact shadow
+
+	// r: AO; g, b, a: r_charContactShadows' blurred masks for the lights given channels 1..3
+	vec4 ScreenOcclusion()
+	{
+		return textureLod( screen_ao_texture, gl_FragCoord.xy / vec2( textureSize( screen_depth_texture, 0 ) ), 0.0 );
+	}
+
+	float ScreenAO()
+	{
+		return ScreenOcclusion().r;
+	}
+
+	// eye-space point to the prepass depth's uv (projection x/y rows; the framebuffer's y runs down)
+	vec2 ScreenUV( in vec3 Q )
+	{
+		const vec2 ndc = vec2( Q.x * u_camera.charOccProj.x + Q.z * u_camera.charOccProj.z + u_camera.charOccInfo.y,
+			Q.y * u_camera.charOccProj.y + Q.z * u_camera.charOccProj.w + u_camera.charOccInfo.z ) / -Q.z;
+		return vec2( 0.5 + 0.5 * ndc.x, 0.5 - 0.5 * ndc.y );
+	}
+
+	// screen-space contact shadow toward L (world, normalised) from the world point P: charOccParams.w steps along a
+	// ray of charOccParams.y units, each looked up in the prepass's linear depth; a step behind the stored surface by
+	// more than a small bias and less than the assumed thickness (z) is blocked. Soft ramps on both depth edges, faded
+	// along the ray, interleaved-gradient jitter between steps. 1 = lit.
+	// hair and lashes (alpha-tested stages) receive from full-resolution rays that also meet the other strands (the
+	// depth's g, partly opaque); the half-resolution masks cannot see between strands
+#ifdef USE_ATEST
+	const bool stageAlphaTested = alpha_test_func != 0;
+#else
+	const bool stageAlphaTested = false;
+#endif
+
+	// simulated garment cloth (marked by vk_cloth.cpp, passed in var_Normal.w): fabric, not strands. It takes no
+	// character self-shadow (a short-range term for faces and hair: on big folds it left hard-edged pieces of shadow)
+	// and, where alpha-tested (lace edges), no contact shadow either: such stages are not in the depth
+	// prepass, so the depth they would trace is the body behind them
+#if defined(USE_LIGHT_VECTOR)
+	bool SimCloth()
+	{
+		return var_Normal.w > 0.5;
+	}
+#else
+	#define SimCloth() false
+#endif
+
+	// hairReach: how far along the ray strands count (u; 0 = not at all)
+	float ContactShadowRay( in vec3 P, in vec3 L, in float len, in float size, in float hairReach )
+	{
+		const float hairOpacity = hairReach > 0.0 ? u_camera.charOccHairOpacity : 0.0;
+		const int steps = int( u_camera.charOccParams.w );
+		const float thick = u_camera.charOccParams.z;
+		const vec3 Ng = normalize( var_Normal.xyz );
+		// light grazing the surface: little of it to block, and the ray meets the surface's own facets; fade it out
+		const float nlFade = smoothstep( 0.02, 0.15, dot( Ng, L ) );
+		const vec3 Pv = ( u_camera.viewMatrix * vec4( P + Ng * 0.05, 1.0 ) ).xyz;
+		const float jitter = fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
+		// a light of charOccInfo.w radians across: the ray leans within that cone (a second noise, rotated per pixel)
+		vec3 Lw = L;
+		if ( size > 0.0 ) {
+			const float a = 6.2831853 * fract( jitter * 1.618034 + 0.5 * fract( 0.7548777 * gl_FragCoord.y + 0.5698403 * gl_FragCoord.x ) );
+			const vec3 t = normalize( cross( L, abs( L.z ) < 0.9 ? vec3( 0.0, 0.0, 1.0 ) : vec3( 1.0, 0.0, 0.0 ) ) );
+			const vec3 b = cross( L, t );
+			const float r = tan( 0.5 * size ) * sqrt( fract( jitter + 0.381966 ) );
+			Lw = normalize( L + ( t * cos( a ) + b * sin( a ) ) * r );
+		}
+		const vec3 Lv = mat3( u_camera.viewMatrix ) * Lw;
+		float shadow = 0.0;
+		for ( int i = 0; i < steps; i++ ) {
+			const float t = ( float( i ) + jitter ) / float( steps );
+			const vec3 Q = Pv + Lv * ( t * len );
+			if ( Q.z > -0.1 )
+				break;
+			const vec2 uv = ScreenUV( Q );
+			if ( any( lessThan( uv, vec2( 0.0 ) ) ) || any( greaterThan( uv, vec2( 1.0 ) ) ) )
+				break;
+			vec2 sd = textureLod( screen_depth_texture, uv, 0.0 ).rg;
+			// g holds every strand (drawn without a depth test): those behind the opaque surface are hidden
+			if ( sd.x != 0.0 && sd.y >= abs( sd.x ) - 0.05 )
+				sd.y = 1e9;
+			const vec2 delta = vec2( -Q.z ) - vec2( abs( sd.x ), sd.y );
+			const float fade = 1.0 - t * t;
+			if ( sd.x != 0.0 )
+				shadow = max( shadow, smoothstep( 0.02, 0.15, delta.x ) * ( 1.0 - smoothstep( thick * 0.5, thick, delta.x ) ) * fade );
+			if ( hairOpacity > 0.0 && sd.y < 1e8 && t * len <= hairReach )
+				shadow = max( shadow, hairOpacity * smoothstep( 0.02, 0.15, delta.y ) * ( 1.0 - smoothstep( thick * 0.5, thick, delta.y ) ) * fade );
+		}
+		// (hair cards' normals say little about the strands: no fade there)
+		return 1.0 - shadow * ( stageAlphaTested ? 1.0 : nlFade );
+	}
+
+	// the 2x2 quad's mean of v (fine derivatives: each pixel reads its row and column neighbour); call in uniform
+	// control flow
+	float QuadMean( in float v )
+	{
+		const vec2 side = vec2( ( int( gl_FragCoord.x ) & 1 ) == 0 ? 1.0 : -1.0, ( int( gl_FragCoord.y ) & 1 ) == 0 ? 1.0 : -1.0 );
+		const float row = 0.5 * ( v + v + dFdxFine( v ) * side.x );
+		return 0.5 * ( row + row + dFdyFine( row ) * side.y );
+	}
+
+	// contact shadow toward L: the screen mask's channel (1..3) when the light has one, else traced here and averaged
+	// over the pixel quad (the per-pixel jitter is decorrelated within it); call in uniform control flow
+	float ContactShadow( in vec3 P, in vec3 L, in int channel, in float size )
+	{
+		if ( u_camera.charOccParams.y <= 0.0 )
+			return 1.0;
+		const float s = size > 0.0 ? size : u_camera.charOccInfo.w;
+		// alpha-tested simulated cloth: none (a quad all of cloth leaves now; a mixed quad still traces, for QuadMean)
+#if defined(USE_LIGHT_VECTOR)
+		const float simQuad = stageAlphaTested ? QuadMean( SimCloth() ? 1.0 : 0.0 ) : 0.0;
+		if ( simQuad > 0.99 )
+			return 1.0;
+#endif
+		if ( channel > 0 && !stageAlphaTested ) {
+			const float mask = ScreenOcclusion()[channel];
+			// the short fine ray also meets lashes and strands lying on the skin (within 0.75 u, full resolution)
+			return u_camera.charOccFine > 0.0 ? min( mask, QuadMean( ContactShadowRay( P, L, u_camera.charOccFine, s, 0.75 ) ) ) : mask;
+		}
+#if defined(USE_LIGHT_VECTOR)
+		const float traced = QuadMean( ContactShadowRay( P, L, u_camera.charOccParams.y, s, stageAlphaTested ? u_camera.charOccParams.y : 0.0 ) );
+		return stageAlphaTested && SimCloth() ? 1.0 : traced;
+#else
+		return QuadMean( ContactShadowRay( P, L, u_camera.charOccParams.y, s, stageAlphaTested ? u_camera.charOccParams.y : 0.0 ) );
+#endif
+	}
+
+#ifdef VK_DLIGHT_GPU
+	// dynamic lights on a material stage: the stage's features (skin wrap, hair strands, sheen, cornea) as for the
+	// light grid's light, with its PI scale (CalcDynamicLightContribution adds plain albedo + GGX)
+	vec3 CalcDynamicLightMaterial( in float roughness, in vec3 N, in vec3 E, in vec3 position, in float NE,
+		in vec3 albedo, in vec3 specular, in vec4 masks )
+	{
+		vec3 outColor = vec3( 0.0 );
+		for ( int i = 0; i < u_lights.num_lights; i++ ) {
+			const vkUniformLightEntry_t light = u_lights.light[i];
+			vec3 L = light.origin.xyz - position;
+			const float sqrLightDist = dot( L, L );
+			// r_charContactShadows: blocked by the prepass depth toward this light (before the range tests: the quad
+			// mean needs every pixel of the quad here)
+			// origin.w: 1 + mask channel (0 none) + 4 x the light's size in degrees
+			const vec3 Ln = L * inversesqrt( max( sqrLightDist, 1e-6 ) );
+			// r_charFast 1: no pixel of the quad takes this light (out of range, faded out or facing away), so none of the
+			// quad's rays counts; the vote keeps the branch uniform over the quad
+			bool skipContact = false;
+			if ( ( CharFast() & 1 ) != 0 ) {
+				const bool lit = sqrLightDist <= light.radius * light.radius
+					&& CalcLightAttenuation( light.radius * light.radius / sqrLightDist ) >= 0.001 && !CharLightAway( N, Ln );
+				skipContact = QuadMean( lit ? 1.0 : 0.0 ) == 0.0;
+			}
+			float contact = 1.0;
+			if ( !skipContact )
+				contact = ContactShadow( position, Ln, DlightContactChannel( light.origin.w ), DlightSize( light.origin.w ) );
+			if ( i == 0 )
+				dbgContactDlight = contact;
+			if ( sqrLightDist > light.radius * light.radius )
+				continue;
+			const float attenuation = CalcLightAttenuation( light.radius * light.radius / sqrLightDist );
+			if ( attenuation < 0.001 )
+				continue;
+			L /= sqrt( sqrLightDist );
+			const vec3 H = normalize( L + E );
+			const float NL = clamp( dot( N, L ), 0.0, 1.0 );
+			const float LH = clamp( dot( L, H ), 0.0, 1.0 );
+			const float NH = clamp( dot( N, H ), 0.0, 1.0 );
+			const float VH = clamp( dot( E, H ), 0.0, 1.0 );
+			outColor += ToonLightColor( light.color ) * ( M_PI * attenuation * contact ) * MaterialLight( N, L, E, NE, CalcDiffuse( albedo, NE, NL, LH, roughness ),
+				CalcSpecular( specular, NH, NL, NE, LH, VH, roughness ), albedo, specular, masks );
+		}
+		return outColor;
+	}
+#endif
+
+	// rend2's sun shadow lookup (lightall.glsl PCF/sunShadow): three cascades, hardware comparison with linear
+	// filtering, rotated taps. The cascade matrices are the ones the cascades were drawn with (Vulkan clip space:
+	// depth already 0..1, y already flipped), so only x/y are remapped to texture space.
+	layout (set = VK_DESC_MATERIAL, binding = VK_MAT_SUN_SHADOW) uniform sampler2DArrayShadow sun_shadow_texture;
+	// r_charSelfShadowHairMap (vk_sunshadow.cpp): the first self-shadow tile's hair, r = optical depth, g, b = its depth
+	// moments (world units about the tile's centre), a = nearest strand; black when there is none
+	layout (set = VK_DESC_MATERIAL, binding = VK_MAT_HAIR_MAP) uniform sampler2D hair_map_texture;
+
+	float sunRandom( const vec2 p )
+	{
+		const vec2 r = vec2( 23.1406926327792690, 2.6651441426902251 );
+		return fract( cos( mod( 123456789.0, 1e-7 + 256.0 * dot( p, r ) ) ) );
+	}
+
+	float sunPCF( const float layer, const vec2 st, const float dist, float PCFScale )
+	{
+		float mult;
+		float scale = PCFScale / u_camera.sunShadowParams.y;
+		float r = sunRandom( gl_FragCoord.xy ) * 6.2831853;	// a full turn, as the character shadow lookups
+		float sinr = sin( r );
+		float cosr = cos( r );
+		mat2 rmat = mat2( cosr, sinr, -sinr, cosr ) * scale;
+		const int filterMode = int( u_camera.sunShadowParams.w );
+
+		if ( filterMode >= 1 ) {
+			mult =  texture( sun_shadow_texture, vec4( st + rmat * vec2( -0.7055767, 0.196515 ), layer, dist ) );
+			mult += texture( sun_shadow_texture, vec4( st + rmat * vec2( 0.3524343, -0.7791386 ), layer, dist ) );
+			mult += texture( sun_shadow_texture, vec4( st + rmat * vec2( 0.2391056, 0.9189604 ), layer, dist ) );
+			if ( filterMode >= 2 ) {
+				mult += texture( sun_shadow_texture, vec4( st + rmat * vec2( -0.07580382, -0.09224417 ), layer, dist ) );
+				mult += texture( sun_shadow_texture, vec4( st + rmat * vec2( 0.5784913, -0.002528916 ), layer, dist ) );
+				mult += texture( sun_shadow_texture, vec4( st + rmat * vec2( 0.192888, 0.4064181 ), layer, dist ) );
+				mult += texture( sun_shadow_texture, vec4( st + rmat * vec2( -0.6335801, -0.5247476 ), layer, dist ) );
+				mult += texture( sun_shadow_texture, vec4( st + rmat * vec2( -0.5579782, 0.7491854 ), layer, dist ) );
+				mult += texture( sun_shadow_texture, vec4( st + rmat * vec2( 0.7320465, 0.6317794 ), layer, dist ) );
+				mult *= 0.11111;
+			} else {
+				mult *= 0.33333;
+			}
+		} else {
+			const vec2 poissonDisk[16] = vec2[16](
+				vec2( -0.94201624, -0.39906216 ), vec2( 0.94558609, -0.76890725 ),
+				vec2( -0.094184101, -0.92938870 ), vec2( 0.34495938, 0.29387760 ),
+				vec2( -0.91588581, 0.45771432 ), vec2( -0.81544232, -0.87912464 ),
+				vec2( -0.38277543, 0.27676845 ), vec2( 0.97484398, 0.75648379 ),
+				vec2( 0.44323325, -0.97511554 ), vec2( 0.53742981, -0.47373420 ),
+				vec2( -0.26496911, -0.41893023 ), vec2( 0.79197514, 0.19090188 ),
+				vec2( -0.24188840, 0.99706507 ), vec2( -0.81409955, 0.91437590 ),
+				vec2( 0.19984126, 0.78641367 ), vec2( 0.14383161, -0.14100790 ) );
+			mult = texture( sun_shadow_texture, vec4( st, layer, dist ) );
+			for ( int i = 0; i < 16; i++ )
+				mult += texture( sun_shadow_texture, vec4( st + rmat * poissonDisk[i], layer, dist ) );
+			mult *= 1.0 / 17.0;
+		}
+		return mult;
+	}
+
+	vec3 sunShadowCoord( const mat4 m, const vec4 pos )
+	{
+		vec4 c = m * pos;
+		c.xyz /= c.w;
+		return vec3( c.xy * 0.5 + 0.5, c.z );
+	}
+
+	// rend2's parallax (lightall.glsl RayIntersectDisplaceMap / GetParallaxOffset, perf/rend2 r_parallaxFast). The
+	// normal-height texture's view puts the height (alpha) in .r; rend2 flips it to depth at upload
+	// (tr_image.cpp:3070), here the lookup flips it.
+	float parallaxDepthAt( const vec2 uv, const vec2 dx, const vec2 dy )
+	{
+		return 1.0 - textureGrad( normal_texture, uv, dx, dy ).r;
+	}
+
+	float RayIntersectDisplaceMap( in vec2 inDp, in vec2 ds, in float parallaxBias,
+		in vec2 dx, in vec2 dy, in int linearSearchSteps, in int binarySearchSteps )
+	{
+		vec2 dp = fract( inDp - parallaxBias * ds );
+
+		// current size of search window
+		float size = 1.0 / float( linearSearchSteps );
+
+		// current depth position
+		float depth = 0.0;
+
+		// best match found (starts with last position 1.0)
+		float bestDepth = 1.0;
+
+		// try sampling at least one border pixel
+		vec2 tMin = ( vec2( 0.0 ) - dp ) / ds;
+		vec2 tMax = ( vec2( 1.0 ) - dp ) / ds;
+		vec2 t = max( tMin, tMax );
+		float tExit = min( t.x, t.y );
+		float stepFraction = fract( tExit / size ) * size;
+		depth -= size - stepFraction;
+
+		// search front to back for first point inside object
+		for ( int i = 0; i < linearSearchSteps; ++i )
+		{
+			depth += size;
+			if ( depth >= parallaxDepthAt( dp + ds * depth, dx, dy ) )
+			{
+				bestDepth = depth;	// store best depth
+				break;
+			}
+		}
+
+		depth = bestDepth;
+
+		// recurse around first point (depth) for closest match
+		for ( int i = 0; i < binarySearchSteps; ++i )
+		{
+			size *= 0.5;
+			if ( depth >= parallaxDepthAt( dp + ds * depth, dx, dy ) )
+			{
+				bestDepth = depth;
+				depth -= 2.0 * size;
+			}
+			depth += size;
+		}
+
+		float beforeDepth = parallaxDepthAt( dp + ds * ( depth - size ), dx, dy ) - depth + size;
+		float afterDepth  = parallaxDepthAt( dp + ds * depth, dx, dy ) - depth;
+		float deltaDepth = beforeDepth - afterDepth;
+		float weight = deltaDepth > 0.0 ? beforeDepth / deltaDepth : 0.0;
+		bestDepth += weight * size;
+
+		return bestDepth - parallaxBias;
+	}
+
+	vec2 GetParallaxOffset( in vec2 texCoords )
+	{
+		// tangent-space view direction (rend2 computes it per vertex), with rend2's correction for non-square maps
+		vec3 T = var_Tangent.xyz;
+		vec3 Nv = var_Normal.xyz;
+		vec3 B = cross( Nv, T ) * var_Tangent.w;
+		vec3 tangentDir = vec3( dot( var_ViewDir.xyz, T ), dot( var_ViewDir.xyz, B ), dot( var_ViewDir.xyz, Nv ) );
+		vec2 normalSize = vec2( textureSize( normal_texture, 0 ) );
+		float normalMapAspect = normalSize.y / normalSize.x;
+		tangentDir *= vec3( max( 1.0, normalMapAspect ), max( 1.0, 1.0 / normalMapAspect ), 1.0 );
+
+		vec3 offsetDir = normalize( tangentDir );
+		offsetDir.xy *= -u_global.normalScale.a / offsetDir.z;
+		// gradients before any branch: derivatives are undefined in divergent control flow
+		vec2 dx = dFdx( texCoords );
+		vec2 dy = dFdy( texCoords );
+
+		if ( normal_texture_set == 1 || normal_texture_set == 3 ) {
+			// r_parallaxFast: the deepest point shifts the texture by length(offsetDir.xy) in UV. Below about one
+			// screen pixel parallax cannot show: fade it out there and skip the search. Where it shows, about one
+			// linear step per two pixels of shift.
+			float uvPerPixel = max( length( dx ), length( dy ) );
+			float shiftPx = length( offsetDir.xy ) / max( uvPerPixel, 1e-9 );
+			float fade = smoothstep( 0.5, 1.5, shiftPx );
+			if ( fade <= 0.0 )
+				return vec2( 0.0 );
+			int linearSteps = int( clamp( ceil( shiftPx * 0.5 ), 4.0, 16.0 ) );
+			return fade * offsetDir.xy * RayIntersectDisplaceMap( texCoords, offsetDir.xy, u_global.parallaxBias,
+				dx, dy, linearSteps, 5 );
+		}
+		return offsetDir.xy * RayIntersectDisplaceMap( texCoords, offsetDir.xy, u_global.parallaxBias, dx, dy, 16, 8 );
+	}
+
+	float sunShadow( in vec3 viewOrigin, in vec3 viewDir, in vec3 biasOffset )
+	{
+		vec4 biasPos = vec4( viewOrigin - viewDir + biasOffset, 1.0 );
+		float cameraDistance = length( viewDir );
+		const float PCFScale = 1.5;
+		const float edgeBias = 0.5 - ( 4.0 * PCFScale / u_camera.sunShadowParams.y );
+		float edgefactor = 0.0;
+		float result = 1.0;
+
+		vec3 shadowpos = sunShadowCoord( u_camera.sunShadowMvp0, biasPos );
+		if ( all( lessThanEqual( abs( shadowpos - vec3( 0.5 ) ), vec3( edgeBias ) ) ) )
+		{
+			vec3 dCoords = smoothstep( 0.3, 0.45, abs( shadowpos - vec3( 0.5 ) ) );
+			edgefactor = 2.0 * PCFScale * clamp( dCoords.x + dCoords.y + dCoords.z, 0.0, 1.0 );
+			result = sunPCF( 0.0, shadowpos.xy, shadowpos.z, PCFScale + edgefactor );
+		}
+		else
+		{
+			shadowpos = sunShadowCoord( u_camera.sunShadowMvp1, biasPos + vec4( biasOffset, 0.0 ) );
+			if ( all( lessThanEqual( abs( shadowpos - vec3( 0.5 ) ), vec3( edgeBias ) ) ) )
+			{
+				vec3 dCoords = smoothstep( 0.3, 0.45, abs( shadowpos - vec3( 0.5 ) ) );
+				edgefactor = 0.5 * PCFScale * clamp( dCoords.x + dCoords.y + dCoords.z, 0.0, 1.0 );
+				result = sunPCF( 1.0, shadowpos.xy, shadowpos.z, PCFScale + edgefactor );
+			}
+			else
+			{
+				shadowpos = sunShadowCoord( u_camera.sunShadowMvp2, biasPos + vec4( biasOffset, 0.0 ) );
+				// inside the layer only (rend2 accepted -0.5..1.5 and read clamped edge texels); the last cascade's
+				// box encloses its whole view slice, so nothing in range falls outside
+				if ( all( lessThanEqual( abs( shadowpos - vec3( 0.5 ) ), vec3( 0.5 ) ) ) )
+				{
+					result = sunPCF( 2.0, shadowpos.xy, shadowpos.z, PCFScale );
+					float fade = clamp( cameraDistance / u_camera.sunShadowParams.z * 10.0 - 9.0, 0.0, 1.0 );
+					result = mix( result, 1.0, fade );
+				}
+			}
+		}
+		return result;
+	}
+
+	// character shadows (tr_charshadow.cpp R_SetupCharShadows): the share of the baked light kept at P. Each caster's tile
+	// in layer 3 holds its depth along its light; a receiver behind it loses occlusion x NL / ( ambient / directed + NL )
+	// of its light, NL its facing to that light. Fades out over the last 40% of the reach behind the caster.
+	// Contact hardening (r_charShadowLightSize): 8 taps find the blockers over the widest penumbra the receiver can
+	// have, each blocker's depth found by bisection with the comparison sampler (the layer has no raw-depth view);
+	// the filter's radius is then the mean blocker's distance x tan( size / 2 ), at least r_charShadowSoftness texels.
+	const vec2 charDisk8[8] = vec2[8](
+		vec2( 0.2, 0.0 ), vec2( 0.0, 0.45 ), vec2( -0.65, 0.0 ), vec2( 0.0, -0.8 ),
+		vec2( 0.7, 0.7 ), vec2( -0.5, 0.5 ), vec2( -0.35, -0.35 ), vec2( 0.6, -0.6 ) );
+	const vec2 charDisk16[16] = vec2[16](
+		vec2( -0.94201624, -0.39906216 ), vec2( 0.94558609, -0.76890725 ),
+		vec2( -0.094184101, -0.92938870 ), vec2( 0.34495938, 0.29387760 ),
+		vec2( -0.91588581, 0.45771432 ), vec2( -0.81544232, -0.87912464 ),
+		vec2( -0.38277543, 0.27676845 ), vec2( 0.97484398, 0.75648379 ),
+		vec2( 0.44323325, -0.97511554 ), vec2( 0.53742981, -0.47373420 ),
+		vec2( -0.26496911, -0.41893023 ), vec2( 0.79197514, 0.19090188 ),
+		vec2( -0.24188840, 0.99706507 ), vec2( -0.81409955, 0.91437590 ),
+		vec2( 0.19984126, 0.78641367 ), vec2( 0.14383161, -0.14100790 ) );
+	// r_charShadowDebug 3 / 4: tiles covering the pixel and the deepest centre-tap occlusion; the stored depth
+	// of the first covering tile, bracketed (r/g/b = stored >= 0.1 / 0.4 / 0.7)
+	float charDbgCover = 0.0, charDbgOcclusion = 0.0, charDbgDistance = -1.0;
+	vec3 charDbgStored = vec3( 1.0, 0.0, 1.0 );
+
+	float charShadowKeep( in vec3 P, in vec3 Ng )
+	{
+		const int count = int( u_camera.charShadowParams.x );
+		const float radius = u_camera.charShadowParams.y;
+		float keep = 1.0;
+
+		for ( int i = 0; i < count; i++ )
+		{
+			const vec4 light = u_camera.charShadowLight[i];
+			const float NL = dot( Ng, light.xyz );
+			if ( NL <= 0.0 )
+				continue;
+			vec4 c = u_camera.charShadowMvp[i] * vec4( P + Ng * 1.5, 1.0 );
+			const vec4 rect = u_camera.charShadowRect[i];
+			if ( any( lessThan( c.xy, max( rect.xy, vec2( -1.0 ) ) ) ) || any( greaterThan( c.xy, min( rect.zw, vec2( 1.0 ) ) ) ) || c.z <= 0.0 || c.z >= 1.0 )
+				continue;
+			const vec4 tile = u_camera.charShadowTile[i];
+			const vec4 scale = u_camera.charShadowScale[i];
+			// taps stay inside the tile (casters never reach its edge)
+			const vec2 tileMin = tile.xy + vec2( radius ), tileMax = tile.xy + vec2( tile.z - radius );
+			const vec2 st = clamp( tile.xy + ( c.xy * 0.5 + 0.5 ) * tile.z, tileMin, tileMax );
+			const float dref = c.z - scale.z;	// 2 u of this caster's depth range
+			if ( DebugCharShadow() > 2.5 ) {
+				const vec2 st0 = tile.xy + ( c.xy * 0.5 + 0.5 ) * tile.z;
+				if ( charDbgCover < 0.5 )
+					charDbgStored = vec3( texture( sun_shadow_texture, vec4( st0, 3.0, 0.1 ) ),
+						texture( sun_shadow_texture, vec4( st0, 3.0, 0.4 ) ), texture( sun_shadow_texture, vec4( st0, 3.0, 0.7 ) ) );
+				charDbgCover += 1.0;
+				charDbgOcclusion = max( charDbgOcclusion, 1.0 - texture( sun_shadow_texture, vec4( st0, 3.0, dref ) ) );
+			}
+			const float r = sunRandom( gl_FragCoord.xy ) * 6.2831853;
+			const mat2 rot = mat2( cos( r ), sin( r ), -sin( r ), cos( r ) );
+			const float tanHalf = u_camera.charShadowInfo.y;
+			float filterRadius = radius;
+			bool umbra = false;
+			if ( tanHalf > 0.0 ) {
+				const float search = max( dref * scale.y * tanHalf * scale.x, radius );
+				// most receivers in the box are lit: four taps on the search ring first
+				float ring = 0.0;
+				for ( int k = 0; k < 4; k++ )
+					ring += texture( sun_shadow_texture, vec4( clamp( st + rot * charDisk8[k + 4] * search, tileMin, tileMax ), 3.0, dref ) );
+				if ( ring > 3.99 && texture( sun_shadow_texture, vec4( st, 3.0, dref ) ) > 0.99 )
+					continue;
+				float blockerSum = 0.0, blockers = 0.0;
+				for ( int k = 0; k < 8; k++ ) {
+					const vec2 s = clamp( st + rot * charDisk8[k] * search, tileMin, tileMax );
+					if ( texture( sun_shadow_texture, vec4( s, 3.0, dref ) ) < 0.5 ) {
+						float lo = 0.0, hi = dref;
+						for ( int b = 0; b < 3; b++ ) {
+							const float mid = 0.5 * ( lo + hi );
+							if ( texture( sun_shadow_texture, vec4( s, 3.0, mid ) ) < 0.5 )
+								hi = mid;
+							else
+								lo = mid;
+						}
+						blockerSum += 0.5 * ( lo + hi );
+						blockers += 1.0;
+					}
+				}
+				if ( blockers < 0.5 )
+					continue;	// nothing blocks this receiver's light within its widest penumbra
+				// receiver to the mean blocker, along the light, in world units
+				const float distance = ( dref - blockerSum / blockers ) * scale.y;
+				filterRadius = max( distance * tanHalf * scale.x, radius );
+				// every search tap blocked over a disc at least as wide as the filter's: inside the umbra
+				umbra = blockers > 7.5;
+				if ( charDbgDistance < 0.0 )
+					charDbgDistance = distance;
+			}
+			// taps by the filter's size in texels: the comparison sampler's bilinear 2x2 smooths small radii already
+			float occlusion = 1.0;
+			if ( !umbra ) {
+				const float texels = filterRadius / u_camera.charShadowInfo.z;
+				const int taps = texels < 3.0 ? 4 : texels < 8.0 ? 8 : 16;
+				float lit = 0.0;
+				for ( int k = 0; k < taps; k++ )
+					lit += texture( sun_shadow_texture, vec4( clamp( st + rot * ( taps == 16 ? charDisk16[k] : charDisk8[k * 8 / taps + ( taps == 4 ? 1 : 0 )] ) * filterRadius, tileMin, tileMax ), 3.0, dref ) );
+				occlusion = 1.0 - lit / float( taps );
+			}
+			const float fade = 1.0 - smoothstep( 0.6, 1.0, c.z );
+			keep *= 1.0 - occlusion * fade * tile.w * NL / ( light.w + NL );
+		}
+		return keep;
+	}
+
+	// r_charSelfShadow (tr_charshadow.cpp R_SetupCharSelfShadows): a character's shadow on itself from its own grid light L.
+	// Its tile in layer 3 holds the depth of the character alone along L (alpha-tested hair included, hashed). The light
+	// is a disc tan( size / 2 ) wide: rays toward points spread over it march through the tile at geometric distances
+	// (0.06 u to about 15 u), each blocked where the stored depth lies in front of the ray, so a nose a few units away
+	// casts a sharp shadow and hair further off a soft one (a single filter radius from the mean blocker blurred both).
+	// 1 = lit.
+	vec3 selfDbgColor = vec3( -1.0 );
+	float charSelfShadow( in vec3 P, in vec3 Ng, in vec3 L, in int slot, in bool strand )
+	{
+		const vec4 tile = u_camera.selfShadowTile[slot];
+		const vec4 scale = u_camera.selfShadowScale[slot];
+		const float edge = u_camera.selfShadowParams.y;
+		const float tanHalf = u_camera.selfShadowParams.z;
+		// the receiver moved off its surface along the normal, more as the light grazes it
+		const float NL = clamp( dot( Ng, L ), 0.0, 1.0 );
+		// r_charSelfShadowSlopeBias (selfShadowSlopeBias, layer uv): texels in world units, then a normal offset growing as the
+		// light grazes and a depth bias by the receiver's slope in the tile (tan of light to normal, at most 4)
+		const float slopeTexel = u_camera.selfShadowSlopeBias / scale.x;
+		const float slopeTan = min( sqrt( max( 1.0 - NL * NL, 0.0 ) ) / max( NL, 0.05 ), 4.0 );
+		const vec4 c = u_camera.selfShadowMvp[slot] * vec4( P + Ng * ( scale.w * ( 3.0 - 2.0 * NL ) + slopeTexel * ( 1.0 - NL ) ), 1.0 );
+		if ( any( greaterThan( abs( c.xy ), vec2( 1.0 ) ) ) || c.z <= 0.0 || c.z >= 1.0 )
+			return 1.0;
+		const vec2 tileMin = tile.xy + vec2( edge ), tileMax = tile.xy + vec2( tile.z - edge );
+		const vec2 st = tile.xy + ( c.xy * 0.5 + 0.5 ) * tile.z;
+		const float dref = c.z - scale.z - slopeTexel * slopeTan / scale.y;
+		// r_charSelfShadowDebug 4: the centre tap alone; 5: r = the receiver's depth, g = the stored depth found by bisection
+		if ( DebugSelfShadow() > 3.5 && DebugSelfShadow() < 4.5 )
+			return texture( sun_shadow_texture, vec4( clamp( st, tileMin, tileMax ), 3.0, dref ) );
+		if ( DebugSelfShadow() > 4.5 ) {
+			float lo = 0.0, hi = 1.0;
+			for ( int b = 0; b < 12; b++ ) { const float mid = 0.5 * ( lo + hi ); if ( texture( sun_shadow_texture, vec4( st, 3.0, mid ) ) < 0.5 ) hi = mid; else lo = mid; }
+			selfDbgColor = vec3( c.z, 0.5 * ( lo + hi ), 0.0 );
+		}
+		const float r = sunRandom( gl_FragCoord.xy ) * 6.2831853;
+		const mat2 rot = mat2( cos( r ), sin( r ), -sin( r ), cos( r ) );
+		const float jitter = sunRandom( gl_FragCoord.yx + 17.0 );
+		// r_charSelfShadowRays (selfShadowParams.x) rays over the light, half on alpha-tested stages (stacked hair layers
+		// each pay for their own); r_charSelfShadowSteps distances each, 0.06 u growing to about 12 u
+		const int rays = SelfShadowRays( strand );
+		const int steps = SelfShadowSteps();
+		const float grow = pow( 200.0, 1.0 / float( steps - 1 ) );
+		float occluded = 0.0;
+		for ( int d = 0; d < 16; d++ ) {
+			if ( d >= rays )
+				break;
+			const vec2 lean = rot * charDisk16[d * 16 / rays] * tanHalf;	// lateral uv per unit of distance toward the light, / scale.x
+			float blocked = 0.0;
+			for ( int k = 0; k < 12; k++ ) {
+				if ( k >= steps )
+					break;
+				const float t = 0.06 * pow( grow, float( k ) + jitter );	// world units toward the light
+				const vec2 s = clamp( st + lean * ( t * scale.x ), tileMin, tileMax );
+				blocked = max( blocked, 1.0 - texture( sun_shadow_texture, vec4( s, 3.0, dref - t / scale.y ) ) );
+				if ( blocked > 0.99 )
+					break;
+			}
+			occluded += blocked;
+		}
+		return 1.0 - ( occluded / float( rays ) ) * tile.w;
+	}
+
+	// r_charSelfShadowHairMap (hairMapTexel = 1 / map size): the share of the first tile's grid light its hair lets
+	// through to P: the share of the column's optical depth nearer the light than P, from the depth moments (the
+	// column's hair spread normally, at least 0.25 u, none nearer than its nearest strand; a strand does not shadow
+	// itself within 0.25 u, skin takes strands resting on it).
+	// Eight taps over the light's disc widen with the receiver's distance below the hair (the penumbra).
+	float hairDbg = -1.0;	// r_charSelfShadowDebug 7
+	float charHairTransmittance( in vec3 P, in bool strand )
+	{
+		const vec4 c = u_camera.selfShadowMvp[0] * vec4( P, 1.0 );
+		if ( any( greaterThan( abs( c.xy ), vec2( 1.0 ) ) ) || c.z <= 0.0 || c.z >= 1.0 )
+			return 1.0;
+		const float range = u_camera.selfShadowScale[0].y;	// world units across the tile's depth (and its width)
+		const vec2 uv = c.xy * 0.5 + 0.5;
+		const float d = ( c.z - 0.5 ) * range;
+		vec4 m = textureLod( hair_map_texture, uv, 0.0 );
+		float nearest = m.a;
+		// the RGBA16F map holds depth as -1..1 of the range (back to world units here)
+		const float du = ReviewFix( 64u ) ? 0.5 * range : 1.0;
+		const float below = m.r > 1e-4 ? max( d - du * m.g / m.r, 0.0 ) : 0.0;
+		const float radius = max( below * u_camera.selfShadowParams.z / range, 0.75 * u_camera.hairMapTexel );
+		const float a = sunRandom( gl_FragCoord.xy ) * 6.2831853;
+		const mat2 rot = mat2( cos( a ), sin( a ), -sin( a ), cos( a ) );
+		for ( int k = 0; k < 8; k++ ) {
+			const vec4 t = textureLod( hair_map_texture, uv + rot * charDisk8[k] * radius, 0.0 );
+			m.rgb += t.rgb;
+			nearest = min( nearest, t.a );
+		}
+		m.rgb /= 9.0;
+		m.g *= du;
+		m.b *= du * du;
+		nearest *= du;
+		const float R = m.r * u_camera.hairMapDensity;
+		if ( R < 1e-4 )
+			return 1.0;
+		// only the hair nearer the light than P, skin included: the depth tile the strands were cut against
+		// holds the body's far side (shadow views flip culling, r_charShadowCull 0), so lengths lying on her back passed
+		// as "in front" and, counted whole, streaked her chest and stomach. Skin keeps strands up to 0.25 u behind it
+		// (hair resting on it); a strand drops those within 0.25 u of itself (r_charSelfShadowHairStrandDepth, -0.25)
+		const float mu = m.g / m.r;
+		const float sigma = sqrt( max( m.b / m.r - mu * mu, 0.0625 ) );
+		const float ds = d + ( strand ? u_camera.hairStrandDepth : 0.25 );
+		const float share = clamp( ( ds - nearest ) / 0.5, 0.0, 1.0 ) / ( 1.0 + exp( -1.702 * ( ds - mu ) / sigma ) );
+		return exp( -R * share );
+	}
+#endif
+
+void main() {
+	vec4 diffuse;
+	float attenuation;
+	vec3 viewDir, lightColor, ambientColor;
+	vec3 L, N, E;
+
+#if defined(PER_PIXEL_LIGHTING)
+	var_Normal = var_NormalIn;
+	if ( two_sided != 0 && gl_FrontFacing == ( two_sided == 2 ) ) {
+		var_Normal.xyz = -var_Normal.xyz;
+		g_backFace = true;
+	}
+#endif
+
+	vec2 texCoord0 = frag_tex_coord0;
+#if defined(PER_PIXEL_LIGHTING)
+	// r_stylePassSimple (normalScale.z 0.25): a lightmap style pass without parallax, normal map or specular
+	const bool simpleStylePass = u_global.normalScale.z > 0.125 && u_global.normalScale.z < 0.5;
+	vec2 parallaxOffset = vec2( 0.0 );
+	if ( normal_texture_set > 0 && !simpleStylePass ) {
+		parallaxOffset = GetParallaxOffset( texCoord0 );
+		texCoord0 += parallaxOffset;
+	}
+	// eye: the iris seen through the cornea (every map of the stage follows the refracted coordinates)
+	if ( ( material_mode & 8 ) != 0 )
+		texCoord0 += EyeIrisOffset( texCoord0 );
+#endif
+
+	vec4 tex0 = texture(texture0, texCoord0);
+#if defined(PER_PIXEL_LIGHTING)
+	// r_charSkinSoftAlbedo (test, camera skinSoftAlbedo): skin albedo read from blurrier mips per channel, red by the
+	// value, green by half, so pores and freckles soften the way light scattering under the skin blurs them
+	if ( ( material_mode & 1 ) != 0 && u_camera.skinSoftAlbedo > 0.0 )
+		tex0.rg = vec2( texture( texture0, texCoord0, u_camera.skinSoftAlbedo ).r, texture( texture0, texCoord0, 0.5 * u_camera.skinSoftAlbedo ).g );
+#endif
+#ifdef USE_CL0_IDENT
+	vec4 color0 = tex0 * vec4( identity_color );
+#else
+	vec4 color0 = tex0 * frag_color0;
+#endif
+
+	vec4 base;
+
+#if defined (USE_TX2)
+#ifdef USE_CL2
+	// soecial blend modes for non-identity colors
+	if ( tex_mode == 1 || tex_mode == 2 )
+	{
+		// add
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		vec4 color2 = texture(texture2, frag_tex_coord2) * frag_color2;
+
+		base = vec4( color0.rgb + color1.rgb + color2.rgb, color0.a * color1.a * color2.a );
+	}
+	else if ( tex_mode == 3 )
+	{
+		// modulate by alpha
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		vec4 color2 = texture(texture2, frag_tex_coord2) * frag_color2;
+
+		color0 *= color0.a;
+		color1 *= color1.a;
+		color2 *= color2.a;
+		base = vec4( color0.rgb + color1.rgb + color2.rgb, color0.a * color1.a * color2.a );
+	}
+	else if ( tex_mode == 4 )
+	{
+		// modulate by 1.0-alpha
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		vec4 color2 = texture(texture2, frag_tex_coord2) * frag_color2;
+
+		color0 *= 1.0-color0.a;
+		color1 *= 1.0-color1.a;
+		color2 *= 1.0-color2.a;
+		base = vec4( color0.rgb + color1.rgb + color2.rgb, color0.a * color1.a * color2.a );
+	}
+	else if ( tex_mode == 5 )
+	{
+		// mix by src alpha
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		vec4 color2 = texture(texture2, frag_tex_coord2) * frag_color2;
+
+		//base = mix( color0, color1, color1.a );
+		//base = mix( base, color2, color2.a );
+		base = mix( mix( color0, color1, color1.a ), color2, color2.a );
+	}
+	else if ( tex_mode == 6 )
+	{
+		// mix by 1-src alpha
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		vec4 color2 = texture(texture2, frag_tex_coord2) * frag_color2;
+
+		//base = mix( color1, color0, color1.a );
+		//base = mix( color2, base, color2.a );
+		base = mix( color2, mix( color1, color0, color1.a ), color2.a );
+	}
+	else if ( tex_mode == 7 ) // 0 + 2x GLS_DSTBLEND_SRC_ALPHA | GLS_SRCBLEND_DST_COLOR
+	{
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		vec4 color2 = texture(texture2, frag_tex_coord2) * frag_color2;
+
+		base = (color2 + color2.a) * (color1 + color1.a) * color0;
+	}
+	else
+	{
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		vec4 color2 = texture(texture2, frag_tex_coord2) * frag_color2;
+		base = color0 * color1 * color2;
+	}
+#else
+	// triple-texture blending
+	if ( tex_mode == 1 )
+	{
+		// add (identity)
+		vec4 color1 = texture(texture1, frag_tex_coord1);
+		vec4 color2 = texture(texture2, frag_tex_coord2);
+		base = vec4(color0.rgb + color1.rgb + color2.rgb, color0.a * color1.a * color2.a);
+	}
+	else if ( tex_mode == 2 )
+	{
+		// add
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color0;
+		vec4 color2 = texture(texture2, frag_tex_coord2) * frag_color0;
+		base = vec4(color0.rgb + color1.rgb + color2.rgb, color0.a * color1.a * color2.a);
+	}
+	else 
+	{
+		// default case, modulate
+		vec4 color1 = texture(texture1, frag_tex_coord1);
+		vec4 color2 = texture(texture2, frag_tex_coord2);
+		base = color0 * color1 * color2;
+	}
+#endif // !USE_TX2
+#elif defined(USE_TX1)
+#ifdef USE_CL1
+	// soecial blend modes for non-identity colors
+	if ( tex_mode == 1 || tex_mode == 2 )
+	{
+		// add
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		base = vec4( color0.rgb + color1.rgb, color0.a * color1.a );
+	}
+	else if ( tex_mode == 3 ) // 2x GLS_DSTBLEND_ONE | GLS_SRCBLEND_SRC_ALPHA
+	{
+		// modulate by alpha
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		color0 *= color0.a;
+		color1 *= color1.a;
+		base = vec4( color0.rgb + color1.rgb, color0.a * color1.a );
+	}
+	else if ( tex_mode == 4 ) // 2x GLS_DSTBLEND_ONE | GLS_SRCBLEND_ONE_MINUS_SRC_ALPHA
+	{
+		// modulate by 1.0-alpha
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		color0 *= 1.0-color0.a;
+		color1 *= 1.0-color1.a;
+		base = vec4( color0.rgb + color1.rgb, color0.a * color1.a );
+	}
+	else if ( tex_mode == 5 ) // 0 + GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_SRCBLEND_SRC_ALPHA
+	{
+		// mix by src alpha
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		base = mix( color0, color1, color1.a );
+	}
+	else if ( tex_mode == 6 ) // 0 + GLS_DSTBLEND_SRC_ALPHA | GLS_SRCBLEND_ONE_MINUS_SRC_ALPHA
+	{
+		// mix by 1-src alpha
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		base = mix( color1, color0, color1.a );
+	}
+	else if ( tex_mode == 7 ) // 0 + GLS_DSTBLEND_SRC_ALPHA | GLS_SRCBLEND_DST_COLOR
+	{
+		// modulate color1 by color0
+		// moduleta color0 by color1.alpha
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		base = (color1 + color1.a) * color0;
+	}
+	else
+	{
+		// default case, modulate
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color1;
+		base = color0 * color1;
+	}
+#else
+	// double-texture blending
+	if ( tex_mode == 1 )
+	{
+		// add (identity)
+		vec4 color1 = texture(texture1, frag_tex_coord1);
+		base = vec4(color0.rgb + color1.rgb, color0.a * color1.a);
+	}
+	else if ( tex_mode == 2 )
+	{
+		// add
+		vec4 color1 = texture(texture1, frag_tex_coord1) * frag_color0;
+		base = vec4(color0.rgb + color1.rgb, color0.a * color1.a);
+	}
+	else // default case
+	{
+		// modulate
+		vec4 color1 = texture(texture1, frag_tex_coord1);
+		base = color0 * color1;
+	}
+#endif // !USE_CL1
+#endif // !USE_TX1
+
+#if !defined(USE_TX1) && !defined(USE_TX2)
+	// set before the alpha test, whose coverage branch writes base.a
+	base = color0;
+#endif
+
+#if defined(PER_PIXEL_LIGHTING)
+	// FMA diffuse alpha carries rim/SSS data, not opacity. Opaque stages retain the
+	// stage/entity alpha (including native fades); explicit alphaFunc stages keep
+	// their original alpha test, shadow coverage and sample-mask behavior below.
+	if ( ( material_mode & 96 ) != 0
+#ifdef USE_ATEST
+		&& alpha_test_func == 0
+#endif
+	) {
+#ifdef USE_CL0_IDENT
+		color0.a = identity_color;
+#else
+		color0.a = frag_color0.a;
+#endif
+		base.a = color0.a;
+	}
+#endif
+
+#ifdef USE_ATEST
+	// r_charSelfShadowHairMap (char_occluder 3): a strand adds its optical depth -ln(1 - alpha) and the depth moments
+	// where it lies in front of the opaque body in the first self-shadow tile (whose depth view left the hair out);
+	// alpha as filtered at the map's footprint, so coverage averages instead of hashing into a sparse pattern
+	if ( char_occluder == 3 ) {
+	#if defined(PER_PIXEL_LIGHTING)
+		const vec4 tile = u_camera.selfShadowTile[0];
+		const vec2 st = tile.xy + gl_FragCoord.xy * u_camera.hairMapTexel * tile.z;
+		const float front = texture( sun_shadow_texture, vec4( st, 3.0, gl_FragCoord.z - 2e-4 ) );
+		const float alpha = clamp( color0.a, 0.0, 0.98 ) * front;
+		if ( alpha < 0.002 )
+			discard;
+		const float tau = -log( 1.0 - alpha );
+		// on the RGBA16F map -1..1 of the tile's depth range (world-unit moments overflow half floats)
+		const float d = ( gl_FragCoord.z - 0.5 ) * ( ReviewFix( 64u ) ? 2.0 : u_camera.selfShadowScale[0].y );
+		out_color = vec4( tau, tau * d, tau * d * d, d );
+		return;
+	#else
+		discard;
+	#endif
+	}
+	// characters casting shadows (char_occluder 2): a hashed alpha test, so a strand blocks its alpha's share of the
+	// light once the lookup filters it (the dithered alpha of the reference renders); a hash per texel and depth keeps
+	// stacked strands independent
+	if ( char_occluder == 2 && alpha_test_func == 3 ) {
+	#if defined (USE_FOG) || defined(PER_PIXEL_LIGHTING) || defined(USE_LIGHT_VECTOR)
+		if ( u_camera.hairMapDepthView > 0.5 )
+			discard;	// r_charSelfShadowHairMap: the first tile's hair goes to the map only
+	#endif
+		uvec3 h = uvec3( uvec2( gl_FragCoord.xy ), floatBitsToUint( gl_FragCoord.z ) ) * 1664525u + 1013904223u;
+		h.x += h.y * h.z; h.y += h.z * h.x; h.z += h.x * h.y;
+		h ^= h >> 16u;
+		h.x += h.y * h.z; h.y += h.z * h.x; h.z += h.x * h.y;
+		// test switches: selfShadowHairGain scales the alpha, selfShadowHairLod0 = 1 reads it from the full-size texture
+	#if defined (USE_FOG) || defined(PER_PIXEL_LIGHTING) || defined(USE_LIGHT_VECTOR)
+		const float castAlpha = ( u_camera.selfShadowHairLod0 > 0.5 ? textureLod( texture0, texCoord0, 0.0 ).a * color0.a / max( tex0.a, 1e-4 ) : color0.a ) * u_camera.selfShadowHairGain;
+	#else
+		const float castAlpha = color0.a;
+	#endif
+		if ( castAlpha <= float( h.x ) * ( 1.0 / 4294967296.0 ) ) discard;
+	} else
+	if (alpha_to_coverage != 0) {
+#ifdef USE_SAMPLE_MASK
+		// r_g2SampleShading 2 (vk_pipelines.cpp: MSAA, Ghoul2, coverage spec 2, hardware alpha-to-coverage off): the
+		// coverage that per-sample shading gives, worked out here and written as the sample mask, so the rest of the
+		// shader (the lighting) runs once per pixel instead of once per sample. Per-sample shading put each sample
+		// through CoverageAlpha's one-pixel ramp and alpha-to-coverage, which keeps a sample when its ramp value passes
+		// that sample's dither threshold; so here: the ramp at each sample's texture coordinates (interpolateAtSample,
+		// shifted like texCoord0: parallax, iris) against a threshold per sample index, spread over (0, 1) by the golden
+		// ratio for any sample count. A single hard threshold instead broke the faintest strands into dots. The mip,
+		// its boost (a quarter per level) and the ramp's width are the pixel's.
+		// Strands thinner than a pixel (the map minified: mip above 0) cover the pixel by their filtered alpha, which
+		// the ramp alone dropped whole below the test value (Tifa's brows vanished at every stage size); so a sample is
+		// also kept by that alpha, fully from mip 1. The thresholds are offset per fragment (a hash of its depth), so
+		// stacked strand layers cover independent samples and add up instead of all keeping the same ones
+		{
+			const vec2 gx = dFdx( texCoord0 ), gy = dFdy( texCoord0 );
+			const float lod = max( textureQueryLod( texture0, texCoord0 ).x, 0.0 );
+			const float boost = 1.0 + lod * 0.25;
+			const float unresolved = clamp( lod, 0.0, 1.0 );
+			const float layer = float( floatBitsToUint( gl_FragCoord.z ) * 2654435761u ) * ( 1.0 / 4294967296.0 );
+			const float rampAlpha = ( alpha_test_func == 2 ? 1.0 - base.a : base.a ) * boost;
+			const float rampScale = 1.0 / max( fwidth( rampAlpha ), 1e-4 );
+			const float rampAt = alpha_test_func == 2 ? 1.0 - alpha_test_value : alpha_test_value;
+			const vec2 tcShift = texCoord0 - frag_tex_coord0;
+			int inMask = gl_SampleMaskIn[0], mask = 0;
+			while ( inMask != 0 ) {
+				const int s = findLSB( inMask );
+				inMask &= inMask - 1;
+				const float a = textureGrad( texture0, interpolateAtSample( frag_tex_coord0, s ) + tcShift, gx, gy ).a * frag_color0.a;
+				bool keep;
+				if ( alpha_test_func == 1 )
+					keep = a > 0.0;
+				else {
+					const float oa = alpha_test_func == 2 ? 1.0 - a : a;
+					keep = max( ( oa * boost - rampAt ) * rampScale + 0.5, oa * unresolved ) > fract( ( float( s ) + 0.5 ) * 0.6180340 + layer );
+				}
+				if ( keep )
+					mask |= 1 << s;
+			}
+			if ( mask == 0 )
+				discard;
+			gl_SampleMask[0] = mask;
+			base.a = 1.0;
+		}
+#else
+#if !defined(USE_TX1) && !defined(USE_TX2)
+		if ( alpha_to_coverage == 1 ) {
+			// the old coverage of single-texture stages: base used to be set only after this block, so A2C took the
+			// raw alpha; world foliage was tuned against that soft look and keeps it
+		} else
+#endif
+		if (alpha_test_func == 1) {
+			base.a =  base.a > 0.0 ? 1.0 : 0.0;
+		} else if (alpha_test_func == 2) {
+			base.a = alpha_to_coverage != 2 ? CorrectAlpha(alpha_test_value, 1.0 - base.a, texCoord0)
+				: CoverageAlpha(1.0 - alpha_test_value, 1.0 - base.a, texCoord0);
+		} else if (alpha_test_func == 3) {
+			base.a = CoverageAlpha(alpha_test_value, base.a, texCoord0);
+		}
+	#if !defined(USE_FOG) && !( defined(PER_PIXEL_LIGHTING) && defined(USE_LIGHTMAP) && defined(USE_TX1) ) && ( defined(USE_LIGHT_VECTOR) || ( defined(PER_PIXEL_LIGHTING) && defined(USE_LIGHT_VERTEX) ) )
+		// r_a2cDiscard (a2cDiscard): alpha-to-coverage clamps the output alpha and covers no sample at 0, so such a
+		// fragment writes neither colour nor depth; stop it here instead of lighting it (hair cards: most of a card is
+		// transparent). Only where the output alpha is this base.a: not the lightmap path's color0.a, not after a fog mix
+		if ( base.a <= 0.0 && u_camera.a2cDiscard > 0.5 )
+			discard;
+	#endif
+#endif // USE_SAMPLE_MASK
+	} else
+	// specialization: alpha-test function
+	if (alpha_test_func == 1) {
+		if (color0.a == alpha_test_value) discard;
+	} else if (alpha_test_func == 2) {
+		if (color0.a >= alpha_test_value) discard;
+	} else if (alpha_test_func == 3) {
+		if (color0.a < alpha_test_value) discard;
+	}
+#endif
+
+	if ( discard_mode == 1 ) {
+		if ( base.a == 0.0 ) {
+			discard;
+		}
+	} else if ( discard_mode == 2 ) {
+		if ( dot( base.rgb, base.rgb ) == 0.0 ) {
+			discard;
+		}
+	}
+
+#ifdef USE_DF
+	if ( base.a < depth_fragment )
+		discard;
+
+	gl_FragDepth = gl_FragCoord.z;
+#else
+
+	// r_charOccHair (vk_charocc.cpp RB_CharOcclusion): alpha-tested character stages write their linear depth into the
+	// depth extract's g (MIN blend), so hair and lashes cast partial contact shadows; without a world position, none
+	if ( char_occluder == 2 )
+		return;	// depth only
+	if ( char_occluder == 1 ) {
+	#if defined(PER_PIXEL_LIGHTING)
+		out_color = vec4( 1e9, -( u_camera.viewMatrix * vec4( u_camera.viewOrigin.xyz - var_ViewDir.xyz, 1.0 ) ).z, 1e9, 1e9 );
+	#else
+		out_color = vec4( 1e9 );
+	#endif
+		return;
+	}
+	
+	#if defined(PER_PIXEL_LIGHTING)
+		viewDir = var_ViewDir.xyz;
+		E = normalize(viewDir);
+
+		L = var_LightDir.xyz;
+
+		#if defined(USE_LIGHTMAP) && defined(USE_TX1)
+			if ( deluxe_mapping > 0 )
+				L = ( texture(deluxe_texture, frag_tex_coord1).rgb - vec3(0.5) );
+		#endif
+
+		float sqrLightDist = dot(L, L);
+		L /= sqrt(sqrLightDist);
+		
+		#if defined(USE_LIGHTMAP) && defined(USE_TX1)
+			vec3 lightmapColor = texture(texture1, frag_tex_coord1).rgb;
+			lightColor = lightmapColor * frag_color0.rgb;
+			// rend2: the stage colour carries light only (lightColor), the diffuse is the texture
+			diffuse = vec4( tex0.rgb, color0.a );
+			ambientColor = vec3 (0.0);
+			attenuation = 1.0;
+		#elif defined(USE_LIGHT_VECTOR)
+			lightColor = u_entity.directedLight.rgb;
+			ambientColor = u_entity.ambientLight.rgb;
+			diffuse = base;
+			attenuation = 1.0;
+		#elif defined(USE_LIGHT_VERTEX)
+			#ifdef USE_CL0_IDENT
+				lightColor = vec3(identity_color);
+			#else
+				lightColor = frag_color0.rgb;
+			#endif
+			// rend2: the vertex colour is the light (lightColor), the diffuse is the texture
+			#if !defined(USE_TX1) && !defined(USE_TX2)
+				diffuse = vec4( tex0.rgb, base.a );
+			#else
+				diffuse = base;
+			#endif
+			ambientColor = vec3 (0.0);
+			attenuation = 1.0;
+		#endif
+
+		if ( ( material_mode & 96 ) != 0 ) {
+			// Keep raw material alpha even when coverage or entity opacity changed base.a.
+			diffuse.a = tex0.a;
+			// r_fixFmaShadows: the grid light's shadows as the lit path gathers them (contact, the
+			// character's own shadow, its hair map), moving FMA's lit/shade step as toonShadow does; 1 without it
+			float fmaShadow = 1.0;
+		#if defined(USE_LIGHT_VECTOR)
+			if ( ReviewFix( 128u ) && max( lightColor.r, max( lightColor.g, lightColor.b ) ) > 0.0 ) {
+				const vec3 P = u_camera.viewOrigin.xyz - var_ViewDir.xyz;
+				fmaShadow = ContactShadow( P, L, int( u_entity.directedLight.w + 0.5 ), 0.0 );
+				if ( u_camera.charOccGridShare > 0.0 ) {
+					const float dl = dot( lightColor, vec3( 0.2126, 0.7152, 0.0722 ) ) / M_PI;
+					const float al = dot( ambientColor, vec3( 0.2126, 0.7152, 0.0722 ) );
+					fmaShadow = 1.0 - ( 1.0 - fmaShadow ) * mix( 1.0, dl / max( dl + al, 1e-4 ), u_camera.charOccGridShare );
+				}
+				const int fmaSlot = int( u_entity.localViewOrigin.w + 0.5 ) - 1;
+			#ifdef USE_ATEST
+				const bool fmaStrand = alpha_test_func != 0;
+			#else
+				const bool fmaStrand = false;
+			#endif
+				const bool fmaInMask = u_camera.selfShadowInMask > 0.5 && fmaSlot == 0 && !fmaStrand && GridContactChannel() > 0;
+				if ( fmaSlot >= 0 && fmaSlot < 5 && !fmaInMask && !SimCloth() )
+					fmaShadow = min( fmaShadow, charSelfShadow( P, normalize( var_Normal.xyz ), L, fmaSlot, fmaStrand ) );
+				if ( fmaSlot == 0 && u_camera.hairMapTexel > 0.0 && !SimCloth() )
+					fmaShadow *= 1.0 - ( 1.0 - charHairTransmittance( P, fmaStrand ) ) * u_camera.selfShadowTile[0].w;
+			}
+		#endif
+			out_color = vec4( FmaColor( diffuse, texCoord0, normalize( var_Normal.xyz ), L, E, lightColor, ambientColor, fmaShadow ), base.a );
+		} else {
+		const bool linearLight = u_entity.ambientLight.w > 0.5;
+		toonLinear = linearLight;
+		if ( linearLight ) {
+			diffuse.rgb = SRGBToLinear( diffuse.rgb );
+			lightColor = SRGBToLinear( lightColor );
+			ambientColor = SRGBToLinear( ambientColor );
+		}
+
+		// materialMask: R subsurface, G sheen, B hair shift, A detail weight; without one the normal map's blue in the
+		// material masks (1 without a normal map) and full detail
+		// the normal map, material mask and layer mask texels are read once here and CalcNormal takes them
+		// (it read the same texels again)
+		const vec4 normalTexel = normal_texture_set > -1 ? texture( normal_texture, texCoord0 ) : vec4( 0.5, 0.5, 1.0, 0.5 );
+		vec4 matMask = vec4( 1.0 );
+		if ( mask_set > -1 )
+			matMask = texture( mask_texture, texCoord0 );
+		else if ( material_mode != 0 && normal_texture_set > -1 )
+			matMask.rgb = vec3( normalTexel.b );
+		const vec4 layerMask = layer_count > 0 ? texture( layer_mask_texture, texCoord0 ) : vec4( 0.0 );
+
+		// layers: each tiling layer covers what is below by its mask weight x opacity; layerKeep is the stage's own share,
+		// layerRM the layers' roughness and metalness already weighted (applied to the ORM values below)
+		float layerKeep = 1.0;
+		vec2 layerRM = vec2( 0.0 );
+		if ( layer_count > 0 ) {
+			for ( int i = 0; i < layer_count; i++ ) {
+				const vec3 uvl = vec3( texCoord0 * u_global.layerParams[i].x, float( i ) );
+				const vec4 albedoRough = texture( layer_albedo_texture, uvl );
+				const float metal = texture( layer_normal_texture, uvl ).b * u_global.layerParams[i].w;
+				const float w = layerMask[i] * u_global.layerTint[i].a;
+				// in linear-light mode the layer albedo and tint decode like the stage albedo
+				const bool dec = linearLight;
+				diffuse.rgb = mix( diffuse.rgb, ( dec ? SRGBToLinear( albedoRough.rgb ) : albedoRough.rgb )
+					* ( dec ? SRGBToLinear( u_global.layerTint[i].rgb ) : u_global.layerTint[i].rgb ), w );
+				layerRM = mix( layerRM, vec2( albedoRough.a * u_global.layerParams[i].z, metal ), w );
+				layerKeep *= 1.0 - w;
+			}
+		}
+
+		// tintMask: each channel multiplies the albedo by its colour where it is set
+		if ( tint_set > -1 ) {
+			const vec3 t = texture( tint_texture, texCoord0 ).rgb;
+			const bool dec = linearLight;	// the tint colours decode in linear-light mode
+			const vec3 t0 = dec ? SRGBToLinear( u_global.tintParams[0].rgb ) : u_global.tintParams[0].rgb;
+			const vec3 t1 = dec ? SRGBToLinear( u_global.tintParams[1].rgb ) : u_global.tintParams[1].rgb;
+			const vec3 t2 = dec ? SRGBToLinear( u_global.tintParams[2].rgb ) : u_global.tintParams[2].rgb;
+			diffuse.rgb *= mix( vec3( 1.0 ), t0, t.r ) * mix( vec3( 1.0 ), t1, t.g ) * mix( vec3( 1.0 ), t2, t.b );
+		}
+
+		// detailMap: tiling albedo (rgb) and roughness (alpha) detail, each scaling by twice its value
+		vec4 detailMap = vec4( 0.5 );
+		float detailMapWeight = 0.0;
+		if ( detail_map_set > -1 ) {
+			detailMap = texture( detail_map_texture, texCoord0 * u_global.detailMapParams.x );
+			detailMapWeight = u_global.detailMapParams.y * matMask.a;
+			diffuse.rgb *= mix( vec3( 1.0 ), 2.0 * detailMap.rgb, detailMapWeight );
+		}
+
+		// toonShadeMap: the shade side's albedo per texel (sRGB like the albedo)
+		if ( ( material_mode & 16 ) != 0 && u_global.toonLight.w > 0.5 && detail_map_set < 0 ) {
+			toonShadeTex = texture( detail_map_texture, texCoord0 ).rgb;
+			if ( linearLight )
+				toonShadeTex = SRGBToLinear( toonShadeTex );
+		}
+
+		// rend2's colorScale (mapLightScale) scales the stage colours that carry this light
+		lightColor *= u_camera.sunAmbCol.w;
+		ambientColor *= u_camera.sunAmbCol.w;
+
+		// r_charFill / r_charRim / r_charAmbientFloor (Ghoul2 models lit by the light grid: u_entity.charFill.w = 1 + fill
+		// level, 0 elsewhere): the grid's whole light here, before any shadow takes from it
+		vec3 gridTotal = vec3( 0.0 );
+		#if defined(USE_LIGHT_VECTOR)
+			gridTotal = lightColor + ambientColor;
+			// r_charAmbientFloor (camera charAmbientFloor): the ambient is at least this share of the grid's whole light, in its
+			// colour, so a character's shade side (and what its own hat or hair shadows) keeps some light
+			if ( u_entity.charFill.w > 0.5 && u_camera.charAmbientFloor > 0.0 ) {
+				const vec3 lumW = vec3( 0.2126, 0.7152, 0.0722 );
+				const float total = dot( gridTotal, lumW );
+				const float lift = max( u_camera.charAmbientFloor * total - dot( ambientColor, lumW ), 0.0 );
+				ambientColor += gridTotal * ( lift / max( total, 1e-4 ) );
+			}
+		#endif
+
+		// character shadows remove the share of the baked light a caster blocks (lightmap and vertex light only)
+		float charKeep = 1.0;
+		#if defined(USE_LIGHTMAP) || defined(USE_LIGHT_VERTEX)
+			if ( u_camera.charShadowParams.x > 0.0 ) {
+				charKeep = charShadowKeep( u_camera.viewOrigin.xyz - var_ViewDir.xyz, normalize( var_Normal.xyz ) );
+				lightColor *= charKeep;
+			}
+		#endif
+
+		N = simpleStylePass ? normalize( var_Normal.xyz ) : CalcNormal( var_Normal.xyz, var_Tangent, texCoord0, normalTexel, layerMask, matMask.a );
+
+		// rend2's sun (lightall.glsl, r_sunlightMode). No shadow maps yet: sunShadow() is 1, so the shadow value
+		// is the normal's facing to the sun. Mode 1 modulates the light by the shadow scale away from the sun,
+		// mode 2 adds the sun as a primary light below.
+		// a lightmap style pass (normalScale.z < 0.5, LitLightmapStyles) adds only its style's light: the base pass
+		// already added the sun, cubemap reflections and dynamic lights; -1 adds the sun again (rend2, r_sunStylePasses 1)
+		const bool stylePass = u_global.normalScale.z < 0.5;
+		const int sunMode = ( !stylePass || u_global.normalScale.z < -0.5 ) ? int( u_camera.sunDir.w ) : 0;
+		vec3 sunL = vec3( 0.0 );
+		float sunShadowValue = 0.0;
+		if ( sunMode != 0 ) {
+			sunL = normalize( u_camera.sunDir.xyz );
+			const float NPL = clamp( dot( N, sunL ), 0.0, 1.0 );
+			sunShadowValue = NPL;
+			// cascades rendered for this scene: rend2's lookup with the normal bias vertexNormal * (1 - NPL)
+			if ( u_camera.sunShadowParams.x > 0.0 && NPL > 0.0 )
+				sunShadowValue = sunShadow( u_camera.viewOrigin.xyz, var_ViewDir.xyz, var_Normal.xyz * ( 1.0 - NPL ) ) * NPL;
+			if ( sunMode == 1 )
+				lightColor = mix( u_camera.sunAmbCol.rgb * lightColor, lightColor, sunShadowValue );
+		}
+	
+
+		#if defined(USE_LIGHTMAP) || defined(USE_LIGHT_VERTEX)
+			ambientColor = lightColor;
+			float surfNL = clamp(dot(var_Normal.xyz, L), 0.0, 1.0);
+			lightColor /= max( surfNL, 0.25 );
+			ambientColor = max( ambientColor - lightColor * surfNL, 0.0 );
+		#endif
+
+		#if defined(USE_LIGHTMAP) && defined(USE_TX1)
+		const vec3 dbgLightmap = texture( texture1, frag_tex_coord1 ).rgb;
+		#else
+		const vec3 dbgLightmap = vec3( 0.0 );
+		#endif
+		// r_sunShadowDebug 5..9 (probes): the light before the PI scale, its N.L, L, the diffuse, the pre-PI ambient
+		const vec3 dbgLight = lightColor;
+		const vec3 dbgAmbient = ambientColor;
+		lightColor *= M_PI;
+
+		// r_charContactShadows: the light grid's directed light on models, blocked by the opaque depth prepass
+		float contactGrid = 1.0;
+		float selfShadowValue = -1.0;	// r_charSelfShadowDebug 1: the self-shadow's lit share (-1: none here)
+		#if defined(USE_LIGHT_VECTOR)
+			// r_charFast 2: the grid light does not reach the surface; its shadows need no lookup (the contact ray's quad
+			// mean needs the whole quad facing away)
+			const bool gridAway = ( CharFast() & 2 ) != 0 && CharLightAway( N, L );
+			bool gridContact = u_camera.charOccParams.y > 0.0 && !stylePass && max( lightColor.r, max( lightColor.g, lightColor.b ) ) > 0.0;
+			if ( gridContact && ( CharFast() & 2 ) != 0 )
+				gridContact = QuadMean( gridAway ? 0.0 : 1.0 ) > 0.0;
+			if ( gridContact ) {
+				contactGrid = ContactShadow( u_camera.viewOrigin.xyz - var_ViewDir.xyz, L, GridContactChannel(), 0.0 );
+				// r_charContactGridShare: the grid's directed light is a fit of light from many directions; a blocker
+				// takes only its directed share (directed / (directed + ambient))
+				if ( u_camera.charOccGridShare > 0.0 ) {
+					const float d = dot( lightColor, vec3( 0.2126, 0.7152, 0.0722 ) ) / M_PI;	// lightColor carries PI here
+					const float a = dot( ambientColor, vec3( 0.2126, 0.7152, 0.0722 ) );
+					contactGrid = 1.0 - ( 1.0 - contactGrid ) * mix( 1.0, d / max( d + a, 1e-4 ), u_camera.charOccGridShare );
+				}
+			}
+			// r_charSelfShadow: the character's own shadow from this light; the contact shadow adds what the map's
+			// texels miss (lids, lashes), the darker of the two counts
+			const int selfSlot = SelfShadowSlot();
+			#ifdef USE_ATEST
+				const bool selfStrand = alpha_test_func != 0;
+			#else
+				const bool selfStrand = false;
+			#endif
+			// r_charSelfShadowScreen (selfShadowInMask): the first tile's opaque stages have it in the grid light's mask already
+			const bool selfInMask = u_camera.selfShadowInMask > 0.5 && selfSlot == 0 && !selfStrand && GridContactChannel() > 0;
+			if ( selfSlot >= 0 && selfSlot < 5 && !selfInMask && !stylePass && !gridAway && !SimCloth() && max( lightColor.r, max( lightColor.g, lightColor.b ) ) > 0.0 ) {
+				selfShadowValue = charSelfShadow( u_camera.viewOrigin.xyz - var_ViewDir.xyz, normalize( var_Normal.xyz ), L, selfSlot, selfStrand );
+				contactGrid = min( contactGrid, selfShadowValue );
+			}
+			// r_charSelfShadowHairMap: the first tile's hair, through its map (its depth tile holds the opaque body only)
+			if ( selfSlot == 0 && u_camera.hairMapTexel > 0.0 && !stylePass && !gridAway && !SimCloth() && max( lightColor.r, max( lightColor.g, lightColor.b ) ) > 0.0 ) {
+				hairDbg = charHairTransmittance( u_camera.viewOrigin.xyz - var_ViewDir.xyz, selfStrand );
+				contactGrid *= 1.0 - ( 1.0 - hairDbg ) * u_camera.selfShadowTile[0].w;
+			}
+			// toon: the shadow moves its step instead (the shaded side keeps the light: the shade colour in it)
+			if ( ( material_mode & 16 ) != 0 )
+				toonShadow = contactGrid;
+			else
+				lightColor *= contactGrid;
+		#endif
+
+		vec4 specular = vec4( 1.0 );
+		float roughness = 0.99;	// perceptual from the decode below on (common/pbr.glsl's convention)
+		float metal = 0.0;		// metalness (metal-roughness maps), for roughnessEncoding metalpow
+		float AO = 1.0;
+
+		// metallic roughness workflow
+		if ( physical_texture_set < 0 )
+		{
+			vec4 ORMS = texture( physical_texture, texCoord0 );
+			ORMS.xyzw *= u_global.specularScale.zwxy;
+			if ( layer_count > 0 )
+				ORMS.yz = ORMS.yz * layerKeep + layerRM;
+			specular.rgb = mix( vec3( 0.08 ) * ORMS.w, diffuse.rgb, ORMS.z );
+			diffuse.rgb *= vec3( 1.0 - ORMS.z );
+
+			roughness = mix( 0.01, 1.0, ORMS.y );
+			metal = ORMS.z;
+			AO = min( ORMS.x, AO );
+		}
+
+		// specular gloss workflow: gloss = 1 - perceptual roughness (glTF KHR_materials_pbrSpecularGlossiness,
+		// Substance, Marmoset). rend2 drew it as 1 - GGX alpha in direct light (and perceptual in reflections), so
+		// rend2 / Q3 spec-gloss maps keep their reflections and get tighter, brighter highlights; roughnessEncoding
+		// alpha on the stage restores rend2's highlights
+		else
+		{
+			specular = texture( physical_texture, texCoord0 );
+			specular.rgb *= u_global.specularScale.xyz;
+			roughness = mix( 1.0, 0.01, specular.a * ( 1.0 - u_global.specularScale.w ) );
+			// layers: their roughness over the stage's (metalness has no place in spec-gloss)
+			if ( layer_count > 0 )
+				roughness = roughness * layerKeep + 0.01 * ( 1.0 - layerKeep ) + 0.99 * layerRM.x;
+		}
+
+		if ( detail_map_set > -1 )
+			roughness = clamp( roughness * mix( 1.0, 2.0 * detailMap.a, detailMapWeight ), 0.01, 1.0 );
+
+		// roughnessEncoding: the stored value (maps, layers and detail, in the stage's own encoding) to perceptual
+		if ( roughness_encoding == 1 )
+			roughness = sqrt( roughness );
+		else if ( roughness_encoding == 2 )
+			roughness = pow( roughness, 1.0 / ( 2.0 - clamp( metal, 0.0, 1.0 ) ) );
+
+		// r_specularAA: geometric specular anti-aliasing (Tokuyoshi & Kaplanyan 2019). Where the shading normal turns
+		// across a pixel, a sharp highlight would alias; widen GGX alpha by the normal's screen-space variance
+		// (sigma^2 0.25, clamp 0.18): alpha'^2 = alpha^2 + kernel, then back to perceptual roughness (alpha = r^2).
+		if ( u_global.lightParams.z > 0.5 ) {
+			const vec3 dNdx = dFdx( N ), dNdy = dFdy( N );
+			const float kernel = min( 0.5 * ( dot( dNdx, dNdx ) + dot( dNdy, dNdy ) ), 0.18 );
+			const float a = roughness * roughness;
+			roughness = sqrt( sqrt( clamp( a * a + kernel, 0.0, 1.0 ) ) );
+		}
+
+
+		// subsurface fills the occluded cavities back in
+		if ( ( material_mode & 1 ) != 0 )
+			AO = mix( AO, 1.0, 0.5 * clamp( u_global.subsurfaceParams.w * matMask.r, 0.0, 1.0 ) );
+
+		// r_charAO: the prepass's ambient occlusion on models' ambient and reflections (not their direct light);
+		// alpha-tested stages (hair) are not in the prepass, so they take none (single-texture variants all carry
+		// USE_ATEST; the test itself is the alpha_test_func constant)
+		float screenAO = 1.0;
+		#if defined(USE_LIGHT_VECTOR)
+		#ifdef USE_ATEST
+			const bool alphaTested = alpha_test_func != 0;
+		#else
+			const bool alphaTested = false;
+		#endif
+			if ( u_camera.charOccParams.x > 0.0 && !alphaTested ) {
+				screenAO = mix( 1.0, ScreenAO(), u_camera.charOccParams.x );
+				AO *= screenAO;
+			}
+		#endif
+
+		// r_cubeMapDiffuse (models lit by the light grid): the grid gives one flat ambient colour. The probes' irradiance
+		// toward N against its mean with the opposite side (the average over both hemispheres) shapes it: brighter
+		// toward bright surroundings, darker toward dark floors, tinted by nearby colours, at the grid's brightness.
+		#if defined(USE_LIGHT_VECTOR)
+			if ( env_texture_set > -1 && !stylePass && u_global.lightParams.x > 0.0 && u_global.cubeProbes[0].w > 0.0 ) {
+				const vec3 P = u_camera.viewOrigin.xyz - var_ViewDir.xyz;
+				const vec3 front = SampleIrradiance( P, N ), back = SampleIrradiance( P, -N );
+				const vec3 sum = front + back;
+				const vec3 shape = vec3( greaterThan( sum, vec3( 1e-4 ) ) ) * ( 2.0 * front / max( sum, vec3( 1e-4 ) ) - 1.0 ) + 1.0;
+				// toon: mostly flat (a third of the shaping keeps bright and dark surroundings readable)
+				ambientColor *= mix( vec3( 1.0 ), shape, u_global.lightParams.x * ( ( material_mode & 16 ) != 0 ? 0.33 : 1.0 ) );
+			}
+		#endif
+
+		ambientColor *= AO;
+
+		vec3  H  = normalize( L + E );
+		float NE = abs( dot( N, E ) ) + 1e-5;
+		float NL = clamp( dot( N, L ), 0.0, 1.0 );
+		float LH = clamp( dot( L, H ), 0.0, 1.0 );
+
+		vec3  Fd = CalcDiffuse( diffuse.rgb, NE, NL, LH, roughness );
+		vec3  Fs = vec3( 0.0 );
+
+		#if defined(USE_LIGHT_VECTOR)
+			float NH = clamp( dot( N, H ), 0.0, 1.0 );
+			float VH = clamp( dot( E, H ), 0.0, 1.0 );
+			Fs = CalcSpecular( specular.rgb, NH, NL, NE, LH, VH, roughness );
+		#endif
+
+		// ~sunny
+		// allow specular highlights even with r_deluxeMapping 0.
+		// lightgrid approximation is sufficient for specular highlights.
+#if 1
+		// deluxe_specular_scale will be 1.0 when r_deluxeMapping = 0
+		// and match r_deuxeSpecular value when r_deluxeMapping = 1
+		#if defined(USE_LIGHTMAP) || defined(USE_LIGHT_VERTEX)
+			if ( deluxe_specular_scale != 0.0 && !simpleStylePass )
+			{
+				float NH = clamp( dot( N, H ), 0.0, 1.0 );
+				float VH = clamp( dot( E, H ), 0.0, 1.0 );
+				Fs = CalcSpecular( specular.rgb, NH, NL, NE, LH, VH, roughness ) * deluxe_specular_scale;
+			}
+		#endif
+#else
+		// rend2 behavior: skip specular when r_deluxeMapping = 0 on lightmapped surfaces
+		#if ( defined(USE_LIGHTMAP) || defined(USE_LIGHT_VERTEX) )
+			if ( deluxe_specular_scale != 0.0 
+			#if defined(USE_LIGHTMAP)
+				&& deluxe_mapping > -1
+			#endif
+				){
+					float NH = clamp(dot(N, H), 0.0, 1.0);
+					float VH = clamp(dot(E, H), 0.0, 1.0);
+					Fs = CalcSpecular( specular.rgb, NH, NL, NE, LH, VH, roughness) * deluxe_specular_scale;
+				}
+		#endif
+#endif
+
+		if ( material_mode != 0 ) {
+			if ( ( material_mode & 16 ) != 0 ) {
+				// toon: the grid's directed and ambient light as one light through the step, so the shade colour alone
+				// sets the contrast (a lit point is as bright as the plain path's at N.L 1), at toonLight.x of its colour
+				// (the rest its brightness in grey); the stage's whole light is compressed at the end (ToonExposure)
+				const vec3 gridLight = ToonLightColor( lightColor * ( 1.0 / M_PI ) + ambientColor );
+				toonMain = true;
+				out_color.rgb = gridLight * M_PI * MaterialLight( N, L, E, NE, Fd, Fs, diffuse.rgb, specular.rgb, matMask ) * attenuation;
+				toonMain = false;
+				// rim: past 1 - N.V = 1 - width (toonSkinShade.w soft), the albedo x rim colour in that light
+				if ( u_global.toonRim.w > 0.0 ) {
+					const float edge = 1.0 - u_global.toonRim.w;
+					const float rim = smoothstep( edge - u_global.toonSkinShade.w, edge + u_global.toonSkinShade.w, 1.0 - min( NE, 1.0 ) );
+					out_color.rgb += gridLight * diffuse.rgb * u_global.toonRim.rgb * rim;
+				}
+			} else {
+				out_color.rgb  = lightColor * MaterialLight( N, L, E, NE, Fd, Fs, diffuse.rgb, specular.rgb, matMask ) * attenuation;
+				out_color.rgb += ambientColor * diffuse.rgb;
+			}
+			toonShadow = 1.0;
+			// sheen under ambient light: the lobe's grazing rim
+			if ( ( material_mode & 4 ) != 0 )
+				out_color.rgb += ambientColor * u_global.sheenParams.rgb * ( matMask.g * 0.5 * pow( 1.0 - min( NE, 1.0 ), 3.0 ) );
+		} else {
+			vec3 reflectance = Fd + ( ( CharTerms() & 1 ) != 0 ? vec3( 0.0 ) : Fs );
+
+			out_color.rgb  = lightColor * reflectance * ( attenuation * NL );
+			out_color.rgb += ambientColor * diffuse.rgb;
+		}
+
+		// r_charFill: soft light from the camera's side away from the grid light, occluded like the ambient (AO);
+		// r_charRim: from behind on the grid light's side, unshadowed (it lights the silhouette). Both a share of the
+		// grid's whole light, so they follow the map's brightness and colour.
+		#if defined(USE_LIGHT_VECTOR)
+			if ( u_entity.charFill.w > 0.5 && !stylePass ) {
+				const float fillLevel = u_entity.charFill.w - 1.0;
+				if ( fillLevel > 0.0 )
+					out_color.rgb += ToonLightColor( gridTotal ) * ( fillLevel * M_PI * AO ) * CharGridExtra( u_entity.charFill.xyz, N, E, NE,
+						diffuse.rgb, specular.rgb, roughness, matMask );
+				if ( u_entity.charRim.w > 0.0 )
+					out_color.rgb += ToonLightColor( gridTotal ) * ( u_entity.charRim.w * M_PI ) * CharGridExtra( u_entity.charRim.xyz, N, E, NE,
+						diffuse.rgb, specular.rgb, roughness, matMask );
+			}
+		#endif
+
+			
+		#ifdef VK_DLIGHT_GPU
+			if ( !stylePass && material_mode != 0 )
+				out_color.rgb += CalcDynamicLightMaterial( roughness, N, E, u_camera.viewOrigin.xyz - viewDir, NE, diffuse.rgb, specular.rgb, matMask );
+			else if ( !stylePass )
+				out_color.rgb += CalcDynamicLightContribution(roughness, N, E, u_camera.viewOrigin.xyz, viewDir, NE, diffuse.rgb, specular.rgb, var_Normal.xyz);
+		#endif
+
+		// r_specularOcclusion: the material's AO occludes the whole reflection, more at grazing angles and on smooth
+		// surfaces (Lagarde & de Rousiers 2014, "Moving Frostbite to PBR"; their roughness is GGX alpha, r^2). Off: AO
+		// scales the reflectance at normal incidence only, as before.
+		if ( env_texture_set > -1 && !stylePass && ( CharTerms() & 2 ) == 0 ) {
+			if ( u_global.lightParams.y > 0.5 )
+				out_color.rgb += CalcIBLContribution( roughness, N, E, NE, specular.rgb, u_camera.viewOrigin.xyz - var_ViewDir.xyz )
+					* clamp( pow( NE + AO, exp2( -16.0 * RoughnessToAlpha( roughness ) - 1.0 ) ) - 1.0 + AO, 0.0, 1.0 );
+			else
+				out_color.rgb += CalcIBLContribution( roughness, N, E, NE, specular.rgb * AO, u_camera.viewOrigin.xyz - var_ViewDir.xyz );
+			// eye: the cornea mirrors the surroundings sharply on the geometric normal
+			if ( ( material_mode & 8 ) != 0 ) {
+				const vec3 Ng = normalize( var_Normal.xyz );
+				out_color.rgb += CalcIBLContribution( CorneaRoughness(), Ng, E, abs( dot( Ng, E ) ) + 1e-5,
+					vec3( CorneaF0() ), u_camera.viewOrigin.xyz - var_ViewDir.xyz );
+			}
+		}
+
+		// r_cubeMapDebug 4: the probes' irradiance toward N; 5: the ambient light after r_cubeMapDiffuse (x4)
+		if ( env_texture_set > -1 && !stylePass && DebugCubeMap() > 3.5 )
+			out_color.rgb = DebugCubeMap() < 4.5 ? SampleIrradiance( u_camera.viewOrigin.xyz - var_ViewDir.xyz, N ) : ambientColor * 4.0;
+		else if ( env_texture_set > -1 && !stylePass && DebugCubeMap() > 0.5 )
+			out_color.rgb = CalcIBLDebug( var_Normal.xyz, E, u_camera.viewOrigin.xyz - var_ViewDir.xyz );
+
+		if ( sunMode == 2 ) {
+			// rend2 quirks kept for parity: VH uses the first light's half vector, the shadow value carries a
+			// second N.L, and entities get the sun on top of the light grid
+			vec3  H2   = normalize( sunL + E );
+			float NL2  = clamp( dot( N, sunL ), 0.0, 1.0 );
+			float L2H2 = clamp( dot( sunL, H2 ), 0.0, 1.0 );
+			float NH2  = clamp( dot( N, H2 ), 0.0, 1.0 );
+			float VH2  = clamp( dot( E, H ), 0.0, 1.0 );
+			vec3 sunReflectance = CalcDiffuse( diffuse.rgb, NE, NL2, L2H2, roughness )
+				+ CalcSpecular( specular.rgb, NH2, NL2, NE, L2H2, VH2, roughness );
+			if ( ( material_mode & 16 ) != 0 ) {
+				// toon: the cascades' shadow moves the step (sunShadowValue carries N.L, divided out); the sun lights both sides
+				toonShadow = NL2 > 0.0 ? clamp( sunShadowValue / NL2, 0.0, 1.0 ) : 1.0;
+				out_color.rgb += ToonLightColor( u_camera.sunCol.rgb ) * MaterialLight( N, sunL, E, NE, vec3( 0.0 ), vec3( 0.0 ), diffuse.rgb, specular.rgb, matMask );
+				toonShadow = 1.0;
+			}
+			else if ( material_mode != 0 )
+				out_color.rgb += u_camera.sunCol.rgb * sunShadowValue * MaterialLight( N, sunL, E, NE, CalcDiffuse( diffuse.rgb, NE, NL2, L2H2, roughness ),
+					CalcSpecular( specular.rgb, NH2, NL2, NE, L2H2, VH2, roughness ), diffuse.rgb, specular.rgb, matMask );
+			else
+			out_color.rgb += u_camera.sunCol.rgb * sunShadowValue * sunReflectance * NL2;
+		}
+
+		if ( ( material_mode & 16 ) != 0 && !stylePass )
+			out_color.rgb = ToonExposure( out_color.rgb, diffuse.rgb );
+
+		// r_charLinear: back to the sRGB-encoded target (reflections and the sun stay as they were added)
+		if ( linearLight )
+			out_color.rgb = LinearToSRGB( mod( u_entity.ambientLight.w, 10.0 ) > 1.5 ? PBRNeutral( max( out_color.rgb, 0.0 ) ) : clamp( out_color.rgb, 0.0, 1.0 ) );
+
+		if ( selfDbgColor.x >= 0.0 )
+			out_color.rgb = selfDbgColor;
+		if ( DebugSelfShadow() > 0.5 && DebugSelfShadow() < 1.5 || DebugSelfShadow() > 3.5 && DebugSelfShadow() < 4.5 && selfShadowValue >= 0.0 )
+			out_color.rgb = vec3( selfShadowValue );
+		// r_charSelfShadowDebug 3: the first tile as the light sees it, tiled over the screen (r/g/b = stored depth >= 0.3/0.5/0.7)
+		if ( DebugSelfShadow() > 2.5 && DebugSelfShadow() < 3.5 && u_camera.selfShadowParams.x > 0.5 ) {
+			const vec4 t = u_camera.selfShadowTile[0];
+			const vec2 s = t.xy + fract( gl_FragCoord.xy / 1100.0 ) * t.z;
+			out_color.rgb = vec3( texture( sun_shadow_texture, vec4( s, 3.0, 0.3 ) ), texture( sun_shadow_texture, vec4( s, 3.0, 0.5 ) ), texture( sun_shadow_texture, vec4( s, 3.0, 0.7 ) ) );
+		}
+		// r_charSelfShadowDebug 6: the first tile's stored depth over a 1100 px square (left edge 250), the tile square
+		// r_charSelfShadowDebugBox "x y size" (tile uv, centre and side); depth = r + g / 16 (1 = nothing stored)
+		if ( DebugSelfShadow() > 5.5 && DebugSelfShadow() < 6.5 && u_camera.selfShadowParams.x > 0.5 ) {
+			const vec4 t = u_camera.selfShadowTile[0];
+			const vec2 q = ( gl_FragCoord.xy - vec2( 250.0, 0.0 ) ) / 1100.0;
+			const vec2 s = t.xy + ( u_camera.selfShadowDebugBox.xy + ( q - 0.5 ) * u_camera.selfShadowDebugBox.z ) * t.z;
+			float lo = 0.0, hi = 1.0;
+			for ( int b = 0; b < 16; b++ ) { const float mid = 0.5 * ( lo + hi ); if ( texture( sun_shadow_texture, vec4( s, 3.0, mid ) ) < 0.5 ) hi = mid; else lo = mid; }
+			const float d16 = 0.5 * ( lo + hi ) * 16.0;
+			out_color.rgb = vec3( floor( d16 ) / 16.0, fract( d16 ), 0.0 );
+		}
+		// r_charSelfShadowDebug 7: the hair map's transmittance alone (white = no hair in front)
+		if ( DebugSelfShadow() > 6.5 && DebugSelfShadow() < 7.5 && hairDbg >= 0.0 )
+			out_color.rgb = vec3( hairDbg );
+		out_color.a = diffuse.a;
+
+		// emissiveMap: light the surface gives off, after lighting (style passes add only their light); the glow pass
+		// (emissiveParams.w 1) sees it alone
+		if ( emissive_set > -1 ) {
+			const vec3 emissive = stylePass ? vec3( 0.0 ) : texture( emissive_texture, texCoord0 ).rgb * u_global.emissiveParams.rgb;
+			out_color.rgb = u_global.emissiveParams.w > 0.5 ? emissive : out_color.rgb + emissive;
+		}
+
+		// r_charOcclusionDebug on light-grid lit models: 1 AO, 2 grid light contact, 3 first dynamic light contact,
+		// 4 depth reprojection (green: the pixel finds its own depth within 0.05 u, red: off by up to 1 u, blue: none)
+		#if defined(USE_LIGHT_VECTOR)
+		if ( DebugOcclusion() > 0.5 && !stylePass ) {
+			const float dbg = DebugOcclusion();
+			if ( dbg < 1.5 )
+				out_color.rgb = vec3( screenAO );
+			else if ( dbg < 2.5 )
+				out_color.rgb = vec3( contactGrid );
+			else if ( dbg < 3.5 )
+				out_color.rgb = vec3( dbgContactDlight );
+			else if ( dbg > 6.5 )
+				// 7: the contact masks' channels 1..3 as red, green, blue
+				out_color.rgb = ScreenOcclusion().gba;
+			else if ( dbg > 5.5 )
+				// 6: the raw prepass AO texture, occlusion x8 (white = none)
+				out_color.rgb = vec3( 1.0 - 8.0 * ( 1.0 - ScreenAO() ) );
+			else if ( dbg > 4.5 ) {
+				// 5: projected uv minus the pixel's own uv (x red, y green; 0.5 = equal, x4)
+				const vec3 Pv = ( u_camera.viewMatrix * vec4( u_camera.viewOrigin.xyz - var_ViewDir.xyz, 1.0 ) ).xyz;
+				const vec2 duv = ScreenUV( Pv ) - gl_FragCoord.xy / vec2( textureSize( screen_depth_texture, 0 ) );
+				out_color.rgb = vec3( clamp( duv * 4.0 + 0.5, 0.0, 1.0 ), 0.0 );
+			}
+			else {
+				const vec3 Pv = ( u_camera.viewMatrix * vec4( u_camera.viewOrigin.xyz - var_ViewDir.xyz, 1.0 ) ).xyz;
+				const float sd = abs( textureLod( screen_depth_texture, ScreenUV( Pv ), 0.0 ).r );
+				const float err = abs( -Pv.z - sd );
+				out_color.rgb = sd <= 0.0 ? vec3( 0.0, 0.0, 1.0 ) : err < 0.05 ? vec3( 0.0, 1.0, 0.0 ) : vec3( clamp( err, 0.2, 1.0 ), 0.0, 0.0 );
+			}
+		}
+		#endif
+
+		// r_charShadowDebug 1: the baked light kept under character shadows (style passes add nothing)
+		if ( DebugCharShadow() > 0.5 && DebugCharShadow() < 1.5 )
+			out_color.rgb = stylePass ? vec3( 0.0 ) : vec3( charKeep * u_camera.charShadowInfo.x );
+		else if ( DebugCharShadow() > 2.5 && DebugCharShadow() < 3.5 )
+			out_color.rgb = stylePass ? vec3( 0.0 ) : vec3( min( charDbgCover * 0.5, 1.0 ), charDbgOcclusion, 0.0 ) * u_camera.charShadowInfo.x;
+		else if ( DebugCharShadow() > 4.5 )
+			// 5: the first caster's receiver-to-blocker distance, 128 u = white; blue where no blocker was found
+			out_color.rgb = ( stylePass ? vec3( 0.0 ) : charDbgDistance < 0.0 ? vec3( 0.0, 0.0, 1.0 ) : vec3( charDbgDistance / 128.0 ) ) * u_camera.charShadowInfo.x;
+		else if ( DebugCharShadow() > 3.5 )
+			out_color.rgb = stylePass ? vec3( 0.0 ) : ( charDbgCover > 0.5 ? charDbgStored : vec3( 0.0 ) ) * u_camera.charShadowInfo.x;
+
+		// r_parallaxMapping 2 (normal_texture_set 3): parallax surfaces green, red by the offset's size in texels
+		if ( normal_texture_set == 3 )
+			out_color.rgb = vec3( clamp( length( parallaxOffset * vec2( textureSize( normal_texture, 0 ) ) ) / 8.0, 0.0, 1.0 ), 0.6, 0.0 );
+
+		// the debug views below show one pass: style passes add nothing to them
+		if ( stylePass && DebugSun() > 0.0 )
+			out_color.rgb = vec3( 0.0 );
+
+		// r_sunShadowDebug (sunCol.w): 1 = which cascade covers the pixel, 2 = the shadow value
+		if ( sunMode != 0 && DebugSun() > 0.0 && u_camera.sunShadowParams.x > 0.0 ) {
+			vec4 biasPos = vec4( u_camera.viewOrigin.xyz - var_ViewDir.xyz, 1.0 );
+			vec3 c0 = sunShadowCoord( u_camera.sunShadowMvp0, biasPos );
+			vec3 c1 = sunShadowCoord( u_camera.sunShadowMvp1, biasPos );
+			vec3 c2 = sunShadowCoord( u_camera.sunShadowMvp2, biasPos );
+			if ( DebugSun() < 1.5 ) {
+				vec3 tint = all( lessThanEqual( abs( c0 - vec3( 0.5 ) ), vec3( 0.5 ) ) ) ? vec3( 1, 0, 0 ) :
+					all( lessThanEqual( abs( c1 - vec3( 0.5 ) ), vec3( 0.5 ) ) ) ? vec3( 0, 1, 0 ) :
+					all( lessThanEqual( abs( c2 - vec3( 0.5 ) ), vec3( 0.5 ) ) ) ? vec3( 0, 0, 1 ) : vec3( 0.2 );
+				out_color.rgb = mix( out_color.rgb, tint, 0.5 );
+			} else if ( DebugSun() < 2.5 ) {
+				out_color.rgb = vec3( sunShadowValue );
+			} else if ( DebugSun() > 4.5 ) {
+				const float m = DebugSun();
+				out_color.rgb = m < 5.5 ? dbgLight : m < 6.5 ? vec3( clamp( dot( var_Normal.xyz, L ), 0.0, 1.0 ) ) :
+					m < 7.5 ? L * 0.5 + 0.5 : m < 8.5 ? diffuse.rgb : m < 9.5 ? dbgAmbient :
+					m < 10.5 ? vec3( NL, clamp( dot( N, sunL ), 0.0, 1.0 ), clamp( dot( N, sunL ), 0.0, 1.0 ) ) :
+					m < 11.5 ? dbgLightmap : frag_color0.rgb;
+			} else if ( DebugSun() > 3.5 ) {
+				// 4: cascades not drawn (backend), normal output
+			} else {
+				// stored depth at the pixel's texel in the first cascade that covers it, bracketed:
+				// r/g/b = stored >= 0.1 / 0.4 / 0.7; magenta = no cascade covers the pixel
+				const float layer = all( lessThanEqual( abs( c0 - vec3( 0.5 ) ), vec3( 0.5 ) ) ) ? 0.0 :
+					all( lessThanEqual( abs( c1 - vec3( 0.5 ) ), vec3( 0.5 ) ) ) ? 1.0 :
+					all( lessThanEqual( abs( c2 - vec3( 0.5 ) ), vec3( 0.5 ) ) ) ? 2.0 : -1.0;
+				const vec2 st = layer < 0.5 ? c0.xy : layer < 1.5 ? c1.xy : c2.xy;
+				out_color.rgb = layer < 0.0 ? vec3( 1.0, 0.0, 1.0 ) : vec3( texture( sun_shadow_texture, vec4( st, layer, 0.1 ) ),
+					texture( sun_shadow_texture, vec4( st, layer, 0.4 ) ), texture( sun_shadow_texture, vec4( st, layer, 0.7 ) ) );
+			}
+		}
+		} // existing material models (FMA has its own source Gamma/contrast path)
+	#else
+		out_color = base;
+		if ( color_mode > 0 )
+			out_color.rgb *= float( color_mode ) * 0.001;
+	#endif
+
+	#if defined(USE_FOG)
+		if ( hw_fog == 1 ) {
+			int u_fogIndex = int(fogDistanceVector[1]);
+			vec4 fog_color = CalcFog( u_camera.viewOrigin.rgb, fog_tex_coord, u_fogs.fogs[u_fogIndex] );
+			out_color = mix( out_color, fog_color, fog_color.a );
+		} 
+		else {
+			vec4 fog = texture(fog_texture, fog_tex_coord.xy);
+			out_color = mix( out_color, fog * fogColor, fog.a );
+		}
+	#endif
+#endif
+}

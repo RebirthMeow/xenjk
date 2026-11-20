@@ -1,0 +1,8 @@
+// Native spawn loadout for the movement-only Kejim runner.
+GeneralBotInfo
+{
+forceinfo 7-1-033330000330000110
+saberspecialist 1
+chatability 0
+camper 0
+}

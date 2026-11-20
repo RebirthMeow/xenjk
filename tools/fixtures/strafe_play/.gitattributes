@@ -1,0 +1,2 @@
+# The legacy personality parser expects CRLF around group names and braces.
+*.jkb text eol=crlf

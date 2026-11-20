@@ -1,0 +1,69 @@
+{
+  "format": "MOVEBENCH1",
+  "map": "mp/ctf_kejim",
+  "bsp_sha256": "76537a48e7d7273e2be6c033f281f8e0dfa49fcc8d550c334e4a8b0a42682e37",
+  "declared": "Goal-chain cases (leg 'chain'): the runner's objective is each chain point in turn, advancing within 40 units, then its native CTF objective. Kejim item points are the map's item origins on the red side (repeater, disruptor, thermal) then the blue repeater; the pass is the capture that follows. dash2 is a straight race map without flags: the point is past its finish line (the trigger at x 30,814..30,858), and the pass is reaching it.",
+  "cases": [
+    {
+      "name": "red_items_L1_stand",
+      "team": "red",
+      "leg": "chain",
+      "level": 1,
+      "start": {
+        "name": "red_flagstand",
+        "origin": [
+          152.0,
+          -1160.0,
+          1924.125
+        ],
+        "yaw": 90.0,
+        "velocity": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "carrying": 0
+      },
+      "resources": {
+        "force": 0,
+        "speed_ms": 0
+      },
+      "spend": {
+        "templates": [
+          "walk",
+          "corner",
+          "hop",
+          "tap"
+        ]
+      },
+      "goal": "chain",
+      "chain": [
+        [
+          -576.0,
+          -1408.0,
+          1776.0
+        ],
+        [
+          -688.0,
+          1472.0,
+          1384.0
+        ],
+        [
+          768.0,
+          1728.0,
+          1384.0
+        ],
+        [
+          3200.0,
+          5568.0,
+          1776.0
+        ]
+      ],
+      "pass_condition": {
+        "condition": "capture",
+        "bound_ms": 240000,
+        "no_death": true
+      }
+    }
+  ]
+}

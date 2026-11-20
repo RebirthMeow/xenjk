@@ -1,0 +1,103 @@
+#version 450
+// Render scenes (vk_scene.cpp): the eye view's visible lists made independent of thread timing. scene_cull.comp fills
+// each LOD's range of a view's visible list in the order its threads' atomics land, which changes run to run; where two
+// instances draw the same depth (a seam two modular pieces share, two coplanar copies) the lit pass's EQUAL test passes
+// both and the last one drawn wins, so that order flickered. scene_cull.comp lists each LOD that got a second instance;
+// one workgroup per listed LOD sorts its range by instance index, so the draws always come in instance order. With
+// kTouched, one workgroup sorts occlusion phase 2's touched commands instead, which scene_compact.comp then appends to
+// the phase-2 slot's lists in that order.
+// A bitonic sort in its flip form: every exchange puts the smaller value at the lower index, so a range that is not a
+// power of two needs no padding (a partner past its end counts as larger: nothing to exchange). Up to SHARED entries in
+// shared memory, longer ranges in place in the visible list. The key is the instance index alone (an entry's low 24
+// bits): its top byte is r_sceneLodFade's tag, which made the order (fade share, index) and let two pieces at a seam
+// swap as the eye crossed a band.
+
+layout(local_size_x = 64) in;
+// 1: sort phase 2's touched commands (binding 4 holds them: their count first), one workgroup
+layout(constant_id = 0) const int kTouched = 0;
+
+const uint SHARED = 2048u;
+
+struct Cmd { uint indexCount, instanceCount, firstIndex; int vertexOffset; uint firstInstance; };
+struct Lod { uint firstPart, numParts; float screen; uint pad; };
+
+layout(std430, set = 0, binding = 0) readonly buffer Lods { Lod lods[]; };
+layout(std430, set = 0, binding = 1) readonly buffer PartCmd { uint partCmd[]; };
+layout(std430, set = 0, binding = 2) readonly buffer Cmds { Cmd cmds[]; };
+layout(std430, set = 0, binding = 3) coherent buffer Visible { uint visible[]; };
+// the LODs to sort: x the workgroups (an indirect dispatch's size), then 1, 1, the count; then the LODs
+layout(std430, set = 0, binding = 4) coherent buffer SortList { uint groups, one0, one1, count; uint ids[]; } list;
+
+shared uint keys[SHARED];
+
+void main()
+{
+	const uint t = gl_LocalInvocationIndex;
+	if ( kTouched == 1 ) {	// the touched commands (their count in the first word) in ascending order
+		if ( gl_WorkGroupID.x != 0u )
+			return;
+		const uint n = list.groups;
+		uint p = 1u;
+		while ( p < n )
+			p <<= 1u;
+		for ( uint size = 2u; size <= p; size <<= 1u ) {
+			for ( uint d = size >> 1u; d > 0u; d >>= 1u ) {
+				for ( uint i = t; i < p; i += 64u ) {
+					const uint j = d == ( size >> 1u ) ? i ^ ( size - 1u ) : i ^ d;
+					if ( j <= i || j >= n )
+						continue;
+					const uint a = list.ids[i], b = list.ids[j];
+					if ( a > b ) {
+						list.ids[i] = b;
+						list.ids[j] = a;
+					}
+				}
+				memoryBarrierBuffer();
+				barrier();
+			}
+		}
+		return;
+	}
+	for ( uint k = gl_WorkGroupID.x; k < list.count; k += gl_NumWorkGroups.x ) {
+		const Lod L = lods[list.ids[k]];
+		const Cmd C = cmds[partCmd[L.firstPart]];
+		const uint n = C.instanceCount, base = C.firstInstance;
+		uint p = 1u;
+		while ( p < n )
+			p <<= 1u;
+		const bool local = n <= SHARED;
+		if ( local )
+			for ( uint i = t; i < n; i += 64u )
+				keys[i] = visible[base + i];
+		barrier();
+		for ( uint size = 2u; size <= p; size <<= 1u ) {
+			for ( uint d = size >> 1u; d > 0u; d >>= 1u ) {
+				for ( uint i = t; i < p; i += 64u ) {
+					// the first step of each size pairs a block's two halves mirrored, the rest pair at distance d
+					const uint j = d == ( size >> 1u ) ? i ^ ( size - 1u ) : i ^ d;
+					if ( j <= i || j >= n )
+						continue;
+					if ( local ) {
+						const uint a = keys[i], b = keys[j];
+						if ( ( a & 0xffffffu ) > ( b & 0xffffffu ) ) {
+							keys[i] = b;
+							keys[j] = a;
+						}
+					} else {
+						const uint a = visible[base + i], b = visible[base + j];
+						if ( ( a & 0xffffffu ) > ( b & 0xffffffu ) ) {
+							visible[base + i] = b;
+							visible[base + j] = a;
+						}
+					}
+				}
+				memoryBarrierBuffer();
+				barrier();
+			}
+		}
+		if ( local )
+			for ( uint i = t; i < n; i += 64u )
+				visible[base + i] = keys[i];
+		barrier();
+	}
+}

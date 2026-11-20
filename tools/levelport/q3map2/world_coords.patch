@@ -1,0 +1,12 @@
+--- a/tools/quake3/common/maxworld.h
++++ b/tools/quake3/common/maxworld.h
+@@ -1,5 +1,7 @@
+ #pragma once
+ 
+-#define MIN_WORLD_COORD         ( -65536 )
+-#define MAX_WORLD_COORD         ( 65536 )
++// xenjk: a city's coordinates (Night City's exteriors reach about +-238 k u at the level port's 37.5 u a metre;
++// docs/levelport-collision.md); a power of two, as polylib.cpp's base windings assume
++#define MIN_WORLD_COORD         ( -262144 )
++#define MAX_WORLD_COORD         ( 262144 )
+ #define WORLD_SIZE              ( MAX_WORLD_COORD - MIN_WORLD_COORD )

@@ -1,0 +1,193 @@
+//------------------------------------------------------------------------------------------------
+// xen_character: the character picker (codemp/ui/ui_picker.c; docs/character-loading-plan.md, M4c)
+//
+// Opened by the console command ui_characters (bind a key to it). Shipped in the characters pack
+// (tools/characters/manifests.py --pack) as ui/jamp/xen_character.menu; the UI loads it beside every
+// menu set. The roster, stage, outfit strip and details are ownerdraws 400-403; the keys are the
+// picker's own (Up/Down character, Left/Right outfit, 1/2/3 team colour, F face, Enter apply).
+//------------------------------------------------------------------------------------------------
+{
+	menuDef
+	{
+		name						"xen_character"
+		visible						0
+		fullscreen					0
+		rect						0 0 640 480
+		style						WINDOW_STYLE_FILLED
+		backcolor					0 0 0 .6
+		focusColor					1 1 1 1
+		onOpen
+		{
+			uiScript				pickerOpen
+		}
+		onClose
+		{
+			uiScript				pickerClose
+		}
+		onESC
+		{
+			play					"sound/interface/esc.wav"
+			uiScript				pickerBack
+		}
+
+		itemDef
+		{
+			name					title
+			style					WINDOW_STYLE_EMPTY
+			text					"CHARACTERS"
+			rect					10 8 620 24
+			textalign				ITEM_ALIGN_LEFT
+			textalignx				0
+			textaligny				0
+			font					3
+			textscale				.9
+			forecolor				.549 .854 1 1
+			visible					1
+			decoration
+		}
+
+		itemDef
+		{
+			name					roster
+			ownerdraw				400
+			rect					10 40 170 400
+			textalignx				0
+			textaligny				0
+			font					2
+			textscale				.6
+			forecolor				1 1 1 1
+			visible					1
+			decoration
+		}
+
+		itemDef
+		{
+			name					stage
+			ownerdraw				401
+			rect					190 36 260 364
+			textalignx				0
+			textaligny				0
+			font					2
+			textscale				.6
+			forecolor				1 .682 0 1
+			visible					1
+			decoration
+		}
+
+		itemDef
+		{
+			name					outfits
+			ownerdraw				402
+			rect					190 404 260 36
+			textalignx				0
+			textaligny				0
+			font					2
+			textscale				.7
+			forecolor				1 1 1 1
+			visible					1
+			decoration
+		}
+
+		itemDef
+		{
+			name					details
+			ownerdraw				403
+			rect					460 40 170 220
+			textalignx				0
+			textaligny				0
+			font					2
+			textscale				.7
+			forecolor				1 1 1 1
+			visible					1
+			decoration
+		}
+
+		itemDef
+		{
+			name					face
+			type					ITEM_TYPE_BUTTON
+			style					WINDOW_STYLE_FILLED
+			backcolor				.15 .15 .15 .8
+			text					"Face view (F)"
+			rect					470 300 150 24
+			textalign				ITEM_ALIGN_CENTER
+			textalignx				75
+			textaligny				2
+			font					2
+			textscale				.6
+			forecolor				.7 .7 .7 1
+			visible					1
+			mouseEnter				{ setitemcolor face forecolor 1 1 1 1 }
+			mouseExit				{ setitemcolor face forecolor .7 .7 .7 1 }
+			action
+			{
+				play				"sound/interface/button1.wav"
+				uiScript			pickerFace
+			}
+		}
+
+		itemDef
+		{
+			name					apply
+			type					ITEM_TYPE_BUTTON
+			style					WINDOW_STYLE_FILLED
+			backcolor				.2 .35 .6 .9
+			text					"Apply"
+			rect					470 372 150 28
+			textalign				ITEM_ALIGN_CENTER
+			textalignx				75
+			textaligny				3
+			font					2
+			textscale				.8
+			forecolor				.8 .8 .8 1
+			visible					1
+			mouseEnter				{ setitemcolor apply forecolor 1 1 1 1 }
+			mouseExit				{ setitemcolor apply forecolor .8 .8 .8 1 }
+			action
+			{
+				play				"sound/interface/button1.wav"
+				uiScript			pickerApply
+			}
+		}
+
+		itemDef
+		{
+			name					back
+			type					ITEM_TYPE_BUTTON
+			style					WINDOW_STYLE_FILLED
+			backcolor				.15 .15 .15 .8
+			text					"Back"
+			rect					470 408 150 28
+			textalign				ITEM_ALIGN_CENTER
+			textalignx				75
+			textaligny				3
+			font					2
+			textscale				.8
+			forecolor				.8 .8 .8 1
+			visible					1
+			mouseEnter				{ setitemcolor back forecolor 1 1 1 1 }
+			mouseExit				{ setitemcolor back forecolor .8 .8 .8 1 }
+			action
+			{
+				play				"sound/interface/esc.wav"
+				uiScript			pickerBack
+			}
+		}
+
+		itemDef
+		{
+			name					help
+			style					WINDOW_STYLE_EMPTY
+			text					"Up/Down character   Left/Right outfit   1/2/3 colour   F face   Enter apply   Esc back"
+			rect					10 452 620 20
+			textalign				ITEM_ALIGN_CENTER
+			textalignx				310
+			textaligny				0
+			font					2
+			textscale				.55
+			forecolor				.6 .6 .6 1
+			visible					1
+			decoration
+		}
+	}
+}
