@@ -751,6 +751,58 @@ static float CG_ThirdPersonStepOffset( void )
 	return offset;
 }
 
+/*
+xenjk (cg_thirdPersonVertSpring, cg_thirdPersonHopFollow): the camera's height bounced at the bottom of each hop. The
+player's height turns from falling to a full jump in one frame, and the damping above eases positions, not speeds, so
+the camera's vertical speed flipped within a frame or two (owner 2026-11-21: landing into the next jump "still feels
+non-fluid but responsive"). The focus height now follows through a critically damped spring of cg_thirdPersonVertSpring
+ms, which eases the speed too: the V at the bottom of a hop becomes a U. cg_thirdPersonHopFollow below 1 also takes
+only that part of a jump's rise above the last ground height, for the first HOP_FOLLOW_CAP units (a hop is about 45);
+higher rises (force jumps) and drops below the ground height are followed in full.
+*/
+#define HOP_FOLLOW_CAP	64.0f
+static float	camVertY = 0.0f, camVertV = 0.0f, camVertGroundZ = 0.0f;
+static int		camVertLastCmd = 0;
+
+static float CG_ThirdPersonVertical( float z )
+{
+	const playerState_t *ps = &cg.predictedPlayerState;
+	const int dtms = ps->commandTime - camVertLastCmd;
+	const float T = cg_thirdPersonVertSpring.value * 0.001f;
+	float follow = cg_thirdPersonHopFollow.value;
+	float target = z;
+
+	if ( follow < 0.0f )
+		follow = 0.0f;
+	if ( ps->groundEntityNum != ENTITYNUM_NONE || ps->m_iVehicleNum )
+		camVertGroundZ = z;
+	else if ( follow < 1.0f && z > camVertGroundZ )
+	{
+		const float rise = z - camVertGroundZ;
+
+		target = camVertGroundZ + ( rise < HOP_FOLLOW_CAP ? rise * follow : HOP_FOLLOW_CAP * follow + rise - HOP_FOLLOW_CAP );
+	}
+	if ( T <= 0.0f || ps->m_iVehicleNum || cg.thisFrameTeleport || !camVertLastCmd || dtms < 0 || dtms > 200
+		|| fabs( target - camVertY ) > 256.0f )
+	{
+		camVertY = target;
+		camVertV = 0.0f;
+	}
+	else if ( dtms > 0 )
+	{	// a critically damped spring, stepped exactly for any frame time (Game Programming Gems 4, 1.10)
+		const float omega = 2.0f / T, dt = dtms * 0.001f, x = omega * dt;
+		const float e = 1.0f / ( 1.0f + x + 0.48f * x * x + 0.235f * x * x * x );
+		const float change = camVertY - target;
+		const float temp = ( camVertV + omega * change ) * dt;
+
+		camVertV = ( camVertV - omega * temp ) * e;
+		camVertY = target + ( change + temp ) * e;
+	}
+	if ( dtms != 0 || !camVertLastCmd )
+		camVertLastCmd = ps->commandTime;
+	return camVertY;
+}
+
 static void CG_OffsetThirdPersonView( void )
 {
 	vec3_t diff;
@@ -774,6 +826,7 @@ static void CG_OffsetThirdPersonView( void )
 	cameraStiffFactor = 0.0;
 
 	cg.refdef.vieworg[2] -= CG_ThirdPersonStepOffset();	// xenjk: the focus eases through a step (above)
+	cg.refdef.vieworg[2] = CG_ThirdPersonVertical( cg.refdef.vieworg[2] );	// xenjk: and its height through a spring
 
 	// Set camera viewing direction.
 	VectorCopy( cg.refdef.viewangles, cameraFocusAngles );
