@@ -163,6 +163,7 @@ XCVAR_DEF( cg_thirdPersonRange,					"80",					NULL,					CVAR_ARCHIVE )
 XCVAR_DEF( cg_thirdPersonSpecialCam,			"0",					NULL,					CVAR_NONE )
 XCVAR_DEF( cg_thirdPersonTargetDamp,			"0.5",					NULL,					CVAR_ARCHIVE )
 XCVAR_DEF( cg_thirdPersonVertOffset,			"16",					NULL,					CVAR_ARCHIVE )
+XCVAR_DEF( cg_thirdPersonStepSmooth,			"1",					NULL,					CVAR_ARCHIVE )	// xenjk: the third-person camera eases through steps as first person does; 0: it follows the pop
 XCVAR_DEF( cg_timescaleFadeEnd,					"1",					NULL,					CVAR_NONE )
 XCVAR_DEF( cg_timescaleFadeSpeed,				"0",					NULL,					CVAR_NONE )
 XCVAR_DEF( cg_viewsize,							"100",					NULL,					CVAR_ARCHIVE )

@@ -245,6 +245,8 @@ vec3_t	cameraIdealTarget,			cameraIdealLoc;
 vec3_t	cameraCurTarget={0,0,0},	cameraCurLoc={0,0,0};
 vec3_t	cameraOldLoc={0,0,0},		cameraNewLoc={0,0,0};
 int		cameraLastFrame=0;
+// xenjk: the predicted state's commandTime at the last camera frame (CG_CameraDampMs)
+static int	cameraLastCmdTime=0;
 // xenjk (cg_cameraFPS): the ideal target and location of the last damped frame
 static vec3_t	cameraPrevIdealTarget={0,0,0},	cameraPrevIdealLoc={0,0,0};
 
@@ -257,6 +259,23 @@ the stock code at a steady N fps, whatever the real frame rate: for a step of dt
 moving idealDelta over it, the offset from the ideal goes to f^dt (offset + shift) - shift, shift = (idealDelta / dt)
 f / (1 - f) (the semigroup property: two steps give the same as one of their sum). 0 (or under 15): the stock code.
 */
+/*
+xenjk: the time a cg_cameraFPS step covers. The ideal point follows the predicted origin, and the predicted state
+advances by its commandTime, a frame behind cg.time (the frame's command is made before cg.time moves on). Stepping
+over cg.time's delta took the ideal's move over one frame's time as made over the next one's, so at uneven frame times
+(76 fps runs 11, 13 and 14 ms frames) the velocity term was off by up to a quarter from frame to frame: a steady
+shake of about half a unit, measured 2026-11-21. The commandTime's delta keeps the move and its time together;
+cg.time's is the fallback when the predicted state did not advance or jumped.
+*/
+static int CG_CameraDampMs( void )
+{
+	int ms = cg.predictedPlayerState.commandTime - cameraLastCmdTime;
+
+	if ( ms <= 0 || ms > 200 )
+		return cg.time - cameraLastFrame;
+	return ms;
+}
+
 static void CG_DampCameraFPS( vec3_t cur, const vec3_t ideal, vec3_t prevIdeal, float left, int ms )
 {
 	vec3_t damp, delta, shift;
@@ -463,6 +482,7 @@ static void CG_ResetThirdPersonViewDamp(void)
 	}
 
 	cameraLastFrame = cg.time;
+	cameraLastCmdTime = cg.predictedPlayerState.commandTime;
 	cameraLastYaw = cameraFocusAngles[YAW];
 	cameraStiffFactor = 0.0f;
 }
@@ -490,7 +510,7 @@ static void CG_UpdateThirdPersonTargetDamp(void)
 	else if ( cg_cameraFPS.integer >= 15 )
 	{	// xenjk: as the stock code at a steady cg_cameraFPS fps, whatever the real frame rate
 		CG_DampCameraFPS( cameraCurTarget, cameraIdealTarget, cameraPrevIdealTarget, 1.0f - cg_thirdPersonTargetDamp.value,
-			cg.time - cameraLastFrame );
+			CG_CameraDampMs() );
 	}
 	else if (cg_thirdPersonTargetDamp.value>=0.0)
 	{
@@ -586,7 +606,7 @@ static void CG_UpdateThirdPersonCameraDamp(void)
 	}
 	else if ( cg_cameraFPS.integer >= 15 && dampfactor >= 0.0f )
 	{	// xenjk: as the stock code at a steady cg_cameraFPS fps, whatever the real frame rate
-		CG_DampCameraFPS( cameraCurLoc, cameraIdealLoc, cameraPrevIdealLoc, 1.0f - dampfactor, cg.time - cameraLastFrame );
+		CG_DampCameraFPS( cameraCurLoc, cameraIdealLoc, cameraPrevIdealLoc, 1.0f - dampfactor, CG_CameraDampMs() );
 	}
 	else if (dampfactor>=0.0)
 	{
@@ -677,6 +697,60 @@ CG_OffsetThirdPersonView
 */
 extern vmCvar_t cg_thirdPersonHorzOffset;
 extern qboolean BG_UnrestrainedPitchRoll( playerState_t *ps, Vehicle_t *pVeh );
+/*
+xenjk (cg_thirdPersonStepSmooth): first person eases a step up over STEP_TIME (CG_StepOffset); the third-person camera
+followed the pop within about two frames. CPM and freestyle step up to 22 u, and up to 70 u while rising in a jump
+(PM_StepSlideMove), so hopping over curbs jerked the view (measured 2026-11-21: 22-45 u in one frame). On the frame a
+step event fires, the step's size is measured from the predicted origin (EV_STEP's codes stop at 16 u) and the camera's
+focus eases through it as first person's view does; the player model still steps at once.
+*/
+static float	camStepChange = 0.0f;
+static int		camStepTime = 0, camStepSeen = 0, camStepLastCmd = 0;
+static float	camStepLastZ = 0.0f, camStepLastVz = 0.0f;
+static qboolean	camStepLastAir = qfalse;
+
+static float CG_ThirdPersonStepOffset( void )
+{
+	const playerState_t *ps = &cg.predictedPlayerState;
+	const int dt = ps->commandTime - camStepLastCmd;
+	const qboolean air = (qboolean)( ps->groundEntityNum == ENTITYNUM_NONE );
+	float offset = 0.0f;
+
+	if ( !cg_thirdPersonStepSmooth.integer || ps->m_iVehicleNum || cg.thisFrameTeleport || !camStepLastCmd
+		|| dt < 0 || dt > 200 )
+	{
+		camStepChange = 0.0f;
+		camStepTime = 0;
+	}
+	else if ( dt > 0 && cg.stepTime == cg.time && cg.stepTime != camStepSeen )
+	{	// a step this frame: its size is the rise the vertical velocity does not explain (in the air both frames:
+		// the mean of the two velocities, exact under gravity alone; on landing the part fallen is left in)
+		float step = ps->origin[2] - camStepLastZ;
+
+		if ( camStepLastAir && air )
+			step -= 0.5f * ( camStepLastVz + ps->velocity[2] ) * dt * 0.001f;
+		camStepSeen = cg.stepTime;
+		if ( step > 2.0f && step < 96.0f )
+		{
+			const int since = cg.time - camStepTime;
+			const float left = ( camStepTime && since < STEP_TIME ) ? camStepChange * ( STEP_TIME - since ) / STEP_TIME : 0.0f;
+
+			camStepChange = left + step;
+			camStepTime = cg.time;
+		}
+	}
+	if ( camStepTime && cg.time - camStepTime < STEP_TIME )
+		offset = camStepChange * ( STEP_TIME - ( cg.time - camStepTime ) ) / STEP_TIME;
+	if ( dt != 0 || !camStepLastCmd )
+	{
+		camStepLastCmd = ps->commandTime;
+		camStepLastZ = ps->origin[2];
+		camStepLastVz = ps->velocity[2];
+		camStepLastAir = air;
+	}
+	return offset;
+}
+
 static void CG_OffsetThirdPersonView( void )
 {
 	vec3_t diff;
@@ -698,6 +772,8 @@ static void CG_OffsetThirdPersonView( void )
 	}
 
 	cameraStiffFactor = 0.0;
+
+	cg.refdef.vieworg[2] -= CG_ThirdPersonStepOffset();	// xenjk: the focus eases through a step (above)
 
 	// Set camera viewing direction.
 	VectorCopy( cg.refdef.viewangles, cameraFocusAngles );
@@ -869,6 +945,7 @@ static void CG_OffsetThirdPersonView( void )
 	VectorCopy(cameraCurLoc, cg.refdef.vieworg);
 
 	cameraLastFrame=cg.time;
+	cameraLastCmdTime = cg.predictedPlayerState.commandTime;
 }
 
 void CG_GetVehicleCamPos( vec3_t camPos )
