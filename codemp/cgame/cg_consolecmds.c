@@ -299,6 +299,7 @@ static consoleCommand_t	commands[] = {
 	{ "benchview",					CG_Bench_View_f }, // renderer bench frame times (cg_bench.c)
 	{ "briefing",					CG_SiegeBriefing_f },
 	{ "clientlist",					CG_ClientList_f },
+	{ "director",					CG_Director_f }, // shot files: camera path and actors (cg_director.c)
 	{ "forcenext",					CG_NextForcePower_f },
 	{ "forceprev",					CG_PrevForcePower_f },
 	{ "invnext",					CG_NextInventory_f },

@@ -2689,6 +2689,9 @@ void CG_DestroyAllGhoul2(void)
 
 	// the map's misc_model_ghoul2 instances (cg_miscg2.c)
 	CG_MiscG2_Shutdown();
+
+	// a shot file's actors (cg_director.c)
+	CG_Director_Shutdown();
 }
 
 /*

@@ -2152,6 +2152,7 @@ extern cgameImport_t *trap;
 
 #include "cg_be.h" // base_enhanced protocol, quarantined (cg_be.c)
 #include "cg_bench.h"		// renderer bench frame times and camera (cg_bench.c)
+#include "cg_director.h"	// shot files: camera path and actors (cg_director.c)
 #include "cg_screenpos.h"	// screenpos issue reports (cg_screenpos.c)
 void CG_Signals_Frame( void );	// cg_signals.c
 

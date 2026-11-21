@@ -8553,6 +8553,10 @@ void CG_Player( centity_t *cent ) {
 	{ // crushed in a map's pit death (cg_pitdeath.c): no body until the respawn
 		return;
 	}
+	if ( CG_Director_HidesPlayer( cent->currentState.number ) )
+	{ // a shot file that leaves the local player out (cg_director.c)
+		return;
+	}
 	if ( cent->currentState.eType == ET_PLAYER )
 	{ // held in its hand: drawn there, not where the server has the player falling
 		CG_PitDeath_HeldOrigin( cent->currentState.number, cent->lerpOrigin );

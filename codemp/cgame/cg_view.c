@@ -2808,6 +2808,7 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 	// build cg.refdef
 	inwater = CG_CalcViewValues();
 	CG_Bench_Camera(); // renderer bench fixed camera, idle unless benchcam is set (cg_bench.c)
+	CG_Director_Camera(); // a shot file's camera, idle unless director play runs (cg_director.c)
 	CG_SetupFrustum();
 
 	if (cg_linearFogOverride)

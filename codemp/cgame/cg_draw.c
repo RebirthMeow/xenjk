@@ -8484,6 +8484,7 @@ void CG_DrawActive( stereoFrame_t stereoView ) {
 
 	CG_DrawMiscStaticModels();
 	CG_DrawMiscG2Models();
+	CG_Director_AddActors(); // a shot file's actors (cg_director.c)
 	CG_PitDeath_Frame();
 
 	// draw 3D view

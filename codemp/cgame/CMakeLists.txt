@@ -73,6 +73,8 @@ set(MPCGameCgameFiles
 	"${MPDir}/cgame/cg_conctrace_visual.h"
 	"${MPDir}/cgame/cg_consolecmds.c"
 	"${MPDir}/cgame/cg_cvar.c"
+	"${MPDir}/cgame/cg_director.c"
+	"${MPDir}/cgame/cg_director.h"
 	"${MPDir}/cgame/cg_draw.c"
 	"${MPDir}/cgame/cg_drawtools.c"
 	"${MPDir}/cgame/cg_effects.c"
