@@ -88,9 +88,20 @@ by hand.
 - From then on every workstream branches from `baseline/1`, and a fix lands in the converter or the tree, never as an
   overlay on a kit.
 
-## Resume here (2026-11-20 23:59)
+## Resume here (2026-11-21 02:00)
 
-**Play: kit 15** (`<2.5 research root>/levelport/build/cp_watson_baseline-15`, its Play_Watson_*.bat; CP2077 2.5 data,
+**Merged (owner 2026-11-21):** `build/tag12-prep2` into master (63db73990): 2.5 is the documented process, and the guide
+says it has not been replicated outside this machine (no clean-room run: owner, "no time to do more runs"). Before it
+on master: the third-person camera fix (2638afe73: cg_cameraFPS over the predicted commandTime, cg_thirdPersonStepSmooth,
+cg_thirdPersonVertSpring 50 ms, cg_thirdPersonHopFollow; owner "i like it").
+
+**Play: kit 15cam** (`<2.5 research root>/levelport/build/cp_watson_baseline-15cam`): kit 15 with the camera-fix cgame,
+everything else hard-linked from kit 15.
+
+**Open, each needing a run (not started):** tag 16 (the ad-light fix in a kit: `inputs-16.json`, below); a clean-room
+replication from a fresh clone and research root, following only docs/guide/night-city.md; then publishing.
+
+**Earlier (2026-11-20 23:59). Play: kit 15** (`<2.5 research root>/levelport/build/cp_watson_baseline-15`, its Play_Watson_*.bat; CP2077 2.5 data,
 master c6db3dc47 binaries; owner 2026-11-20 23:15 after the A/B: "Yes, switch to 15"). Its openjk.cfg took kit 12's
 played lines (model cp_lucy_moon, g_moveStyle 2, ui_rankChange 7; the built file is openjk.cfg.built). Kit 12 stays
 in place for the machinima session (its HANDOFF names it; told of kit 15). Kit 13 and 14 bulk is in C:'s trash.
