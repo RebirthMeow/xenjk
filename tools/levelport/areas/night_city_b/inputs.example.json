@@ -1,0 +1,31 @@
+{
+ "note": "build_watson.py inputs for Watson (night_city_b) from CP2077 2.5; copy it, replace every <...>, keep the copy uncommitted. docs/guide/night-city.md, section B, has the order to run. env, cfg and moon are left out: the repository's env files and settings template, and the moon --extract fetches.",
+ "area": "night_city_b",
+ "map": "cp_watson",
+ "game_data": "<your Jedi Academy GameData folder>",
+ "sdl2": "<SDL2.dll for the kit's bin64, from your x64 build>",
+ "wolvenkit_cli": "<WolvenKit 10.0.0-beta.1 WolvenKit.CLI.exe>",
+ "ads_dir": "<research root>/levelport/look/ads",
+ "decals_root": "<research root>/levelport/look/decals",
+ "fx_root": "<research root>/levelport/look/fx",
+ "ocean_mask": "<research root>/levelport/cp77/watson/sea_plane_mask20.npz",
+ "collision": [
+  "python",
+  "-I",
+  "tools/levelport/cp77_collision.py",
+  "{area}",
+  "{tag}",
+  "--map",
+  "{map}",
+  "--out",
+  "{out}",
+  "--q3map2",
+  "<the hub build's q3map2.exe (all patches, world_coords included)>",
+  "--q3map2-chunks",
+  "<the chunk build's q3map2.exe (no world_coords)>"
+ ],
+ "clutter": {
+  "max_height": 1.0,
+  "jobs": 6
+ }
+}

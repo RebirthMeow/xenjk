@@ -424,7 +424,7 @@ game's signal system and its sounds (`look/signals-agent-20261029/`).
     and light group; the `compiledTraffic_Intersection_*` nodes hold each group's program (colour, seconds), every
     group of an intersection on one clock (e.g. cars green 16.83, yellow 2.5, red 23.33; crossings walk 10, flashing
     8.33). A crossing lights its walking figure on green, blinks its hand on yellow (the `blink_01` curve, 1 s) and
-    holds it on red. `signal_groups.json` (the agent's `build_groups.py`) is copied into the work folder.
+    holds it on red. `signal_groups.json` (`tools/levelport/cp77_signals.py`) is written into the work folder.
   - Converter: each signal head's face splits by its vertex colour into the lamps' zones (which lamp lights which
     zone: the entity's light components' `materialZone`), each zone its own glowing material (flags 8 | lamp << 4);
     the instance carries its signal slot; every lamp's light is kept, tagged (type bit 3, lamp, slot);

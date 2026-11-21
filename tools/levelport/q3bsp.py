@@ -26,6 +26,9 @@ from pathlib import Path
 
 import numpy as np
 
+import sys
+if __name__ == '__main__':      # (run as python -I, the script's own folder is not on the path)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mapio import cross3
 
 # Quake 3 content and surface flags (the BSP stores the compiled Q3 values, not surfaceparm names)

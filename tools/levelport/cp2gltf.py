@@ -54,6 +54,8 @@ from pathlib import Path
 
 import numpy as np
 
+if __name__ == '__main__':      # (run as python -I, the script's own folder is not on the path)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gltfio
 import paths as lpaths
 # the .xscn format and its writer live in xscn.py (game-independent); their names stay importable from here
@@ -62,6 +64,9 @@ from xscn import (SCENE_KIND, SCENE_VERSION, SCENE_VERT, SceneImages, dds_bytes,
                   snorm8, vertex_frame, xscn_blob, xscn_head_of, xscn_rebuild, xscn_sections)
 
 HERE = Path(__file__).resolve().parent
+# code the stages run without importing it, in their keys (stagekey.py): the lenient sector reader, the Blender
+# decimation script
+STAGEKEY_FILES = {'stage_sectors': ['wk_read_lenient.ps1'], 'stage_decimate': ['blender_decimate.py']}
 REPO = HERE.parent.parent
 # The game, WolvenKit and Blender: environment variables read when a stage needs them (paths.py); cp2gltf.GAME,
 # .ARCHIVES, .WOLVENKIT, .DOTNET, .BLENDER and .PWSH resolve through __getattr__ below
@@ -394,6 +399,18 @@ def stage_sectors(work, box, kinds=('exterior',), boxes=None):
         else:
             made.pop(out.name, None)       # retried next run; its old json, if any, is not certified
             stale.append(out.name)
+    # CP2077 2.5's layout (WolvenKit 10: compiled records, cooked nodes) rewritten in the 2.31 one the readers know: the
+    # sectors serialised now, and every earlier one rewritten by an older cp77_sector25 (convert_file adds the fixes
+    # its version lacks; a 2.31 or current file is left as it is)
+    import cp77_sector25
+    conv = {}
+    for f in every:
+        if (fresh(f) if f in before else js_of(f).exists() and js_of(f).stat().st_size > 0):
+            for k, v in cp77_sector25.convert_file(js_of(f)).items():
+                conv[k] = conv.get(k, 0) + v
+    if conv:
+        print('sectors: rewritten from the 2.5 layout (cp77_sector25): ' + ', '.join(
+            '%s %d' % kv for kv in sorted(conv.items())), flush=True)
     if stale:
         print('sectors: %d not serialised this run, left to retry: %s' % (len(stale), ', '.join(stale[:8])), flush=True)
     tmp = man_f.with_suffix('.tmp')
@@ -459,6 +476,14 @@ def cname(v):
     if isinstance(v, dict):
         return v.get('$value') or ''
     return v or ''
+
+
+def cname_hash(name):
+    """a CName's hash, as CP2077 stores the names a resource leaves unnamed (FNV-1a 64 of the UTF-8 bytes)"""
+    h = 0xcbf29ce484222325
+    for b in name.encode('utf-8'):
+        h = ((h ^ b) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+    return h
 
 
 def depot(v):
@@ -1741,6 +1766,11 @@ def stage_fetch_ents(work, centre, radius):
         if ref:
             apps.add(ref[0])
     fetch_serialised(apps, work / 'apps_raw', work / 'apps')
+    # CP2077 2.5 through WolvenKit 10: the templates' and appearances' unset light colours back to the placeholder black
+    import cp77_sector25
+    n25 = sum(cp77_sector25.convert_resource_file(f) for d in ('ents', 'apps') for f in sorted((work / d).glob('*.json')))
+    if n25:
+        print(f'fetch: {n25} template and appearance lights left white by WolvenKit 10 put back as placeholders', flush=True)
     # an entity's meshes hide where its entity proxy takes over (the proxy's entityAttachDistance): the proxy whose
     # origin is within 1 m of the entity's (91% one-to-one on Watson); none: drawn as before
     prox = [q for q in json.load(open(work / 'placements.json', encoding='utf-8')).get('proxies', [])
@@ -1953,8 +1983,18 @@ class MeshLods:
         ok = [lv for lv in self.levels if lv <= want]
         return max(ok) if ok else self.levels[0]
 
+    def app_name(self, app):
+        """an appearance as this mesh names it: CP2077 2.5's cooked nodes give WolvenKit 10 some appearance names only
+        as their CName hash (FNV-1a 64 of the name: 'cyan' 8119478377456132730), matched here against the mesh's own
+        appearances; an unknown name stays as it is"""
+        if app in self.apps or not (isinstance(app, str) and app.isdigit()):
+            return app
+        if not hasattr(self, '_app_hash'):
+            self._app_hash = {cname_hash(n): n for n in self.apps}
+        return self._app_hash.get(int(app), app)
+
     def material_names(self, app):
-        names = self.apps.get(app) or (next(iter(self.apps.values())) if self.apps else [])
+        names = self.apps.get(self.app_name(app)) or (next(iter(self.apps.values())) if self.apps else [])
         return names
 
 
@@ -3580,7 +3620,7 @@ def ad_light_key(L):
 
 class SceneSignals:
     """The traffic signals' cycles (cycling WALK / DON'T WALK like the game). From
-    signal_groups.json in the work folder (built from the sectors' compiledTraffic_Intersection programs and each
+    signal_groups.json in the work folder (cp77_signals.py builds it from the sectors' compiledTraffic_Intersection programs and each
     placed signal's worldTrafficLightListenerComponent override): per signal its group's program, (colour, seconds) from the intersection's t = 0. Every group of
     an intersection shares that clock; when an intersection's cycle starts is the engine's, so each gets a fixed
     offset from its name. Slot 0 is no signal (the renderer shows it green: a crossing's walking figure).
@@ -4114,6 +4154,7 @@ def scene_part(work, a, plan, origin, sig, mats, images, stats, water_from=None)
         # a bent placement is geometry of its own; a mesh showing stand-in ads is one per ad variant; an entity's mesh
         # component may hide some of its chunks; a signal head's face splits into its lamps' zones (zones: zone -> lamp);
         # open water (open_water) draws its global_water_patch chunks in the scene's water material
+        app = ml.app_name(app)
         names = ml.material_names(app)
         if not any(material(ml, nm) is not None and (mats_key(ml, nm) in standin) for nm in names):
             variant = None

@@ -88,6 +88,179 @@ by hand.
 - From then on every workstream branches from `baseline/1`, and a fix lands in the converter or the tree, never as an
   overlay on a kit.
 
+## Resume here (2026-11-20 23:59)
+
+**Play: kit 15** (`<2.5 research root>/levelport/build/cp_watson_baseline-15`, its Play_Watson_*.bat; CP2077 2.5 data,
+master c6db3dc47 binaries; owner 2026-11-20 23:15 after the A/B: "Yes, switch to 15"). Its openjk.cfg took kit 12's
+played lines (model cp_lucy_moon, g_moveStyle 2, ui_rankChange 7; the built file is openjk.cfg.built). Kit 12 stays
+in place for the machinima session (its HANDOFF names it; told of kit 15). Kit 13 and 14 bulk is in C:'s trash.
+
+**Tag 15 result (built 22:45, rc 0).** Watson from the installed CP2077 2.5 with every fix below, research root
+`<2.5 research root>`, run by `resume_tag15.sh` (stage by stage after the stopped attempts; logs `tag15.out`/`.err`,
+`tiles/15/driver/`). Collision recompiled all 214 tiles (chunk cache missed, see follow-ups), none failed. Verdict
+against kit 12 (`tiles/15/driver/verdict/`), tag 14 in brackets:
+
+| | tag 15 | (tag 14) |
+|---|---|---|
+| entity lights (scene.log; kit 12 23,534) | 23,981 | (37,630) |
+| lights only in 15 / only in 12 | 22,248 / 21,213 | (35,897 / 21,213) |
+| instances differing by mesh | 15,705 | (178,507) |
+| instances only in 12 / only in 15 | 8,687 / 25,934 | (8,691 / 26,034) |
+| materials only in 12 / only in 15 | 56 / 548 | (5,819 / 955) |
+| ad screens only in 12 | 4 | (273) |
+| engine.strict | 1,838 | (2,083) |
+
+Both tag 14 fixes landed (entity light placeholders, hashed appearances). The 579,824 slot differences are a
+renumbering; the 2,921 materials with other images are mostly ad screens showing another ad in 2.5 (sampled: the
+rest are foliage and road textures within 1 level of 255 on average, re-encodes). Lights and instances only on one
+side are 2.5 content (patch changes; tag 14's analysis below).
+
+**A/B** (`<levelport root>/levelport/look/tag15-ab`: chain.sh, pairs.py, pairs_night/, pairs_day/; kit 12 reshot
+beside kit 15 in the same session, same binaries, so every difference is data): most changed views ref05 23 %
+(2.5 adds crates and pallets, drops a barrel at Misty's), diode_delamain_a 23 % and day_delamain 19 % (the Delamain
+garage camera sits a few pixels lower: collision there changed), lamps_office 17 % (a lamp lit on the left, plant
+placement), ref04_day/hilldn 10-17 % (foliage placement), signs 0-7 %. Nothing broken or missing in any view.
+
+**Found after the switch: the ad lights.** Kit 15 colours 0 ad lights from their billboards where kit 12 colours
+14,145 (scene.log `ad_light_coloured`, `ad_lights.json`): a mesh node's `lightsData` colour is black in 2.31 and
+white from WolvenKit 10 (40 sectors sampled: 197 black to white, the one real colour unchanged), and cp2gltf colours
+only the black placeholder. Fixed in `cp77_sector25.py` v4 (d616c5ad8, tested). The sectors stage converted only the
+sectors it serialised in the same run, so a change to the rewrite never reached the JSON on disk; it now upgrades
+every sector (95442474d). Kit 15 stays the play kit until tag 16 has it.
+
+**Tag 16, ready, not launched** (heavy: waits for the owner's go; they were gaming): `<2.5 research root>/run_tag16.sh`
+with `inputs-16.json` (tag 15's, `from_tag` 15, the same sea mask). `--extract` reruns the sectors stage (WolvenKit
+unbundle; every sector JSON upgraded to v4, 6,628 files, 18 GB) and the scan; then tiles from tag 15 and whatever
+parts the new placements change; collision should hit the chunk cache tag 15 filled. The dry run plans every stage,
+93 GB to write with 134 GB free on C:. Check: scene.log `ad_light_coloured` near 14 k, then the A/B
+(`look/tag15-ab`'s chain.sh and pairs.py, kit 16 against kit 15 and 12), the night views at the billboards first.
+
+**Docs (62431202d):** the guide describes 2.5 through WolvenKit 10 as the process (order, inputs, timings, limits),
+with `tools/levelport/areas/night_city_b/inputs.example.json`. The branch passes `publish_scrub.py`'s rules (0
+findings on every changed file).
+
+**Next:** tag 16 on the owner's go; the merge below on the owner's word (they want the 2.5 process official if
+kit 15 plays well).
+
+**Waiting on the owner:**
+- merge `build/tag12-prep2` (worktree `.codex-research/wt-tag12`; master merged into it at 38defab00, so it is a
+  fast-forward) into master; the owner said "lets do 2.5 before we merge". It edits none of the local-only docs.
+- tag 12's engine.strict 43: contents-only ties at coincident brushes; the tie rule excuses flag ties, not contents.
+- tag 12's other four misses are stale expectations (each explained below); expect-12 is not edited.
+
+**Follow-ups found today (not done):**
+- `memgate.py` (and jobguard) are in stage keys and in the chunk compile identity: editing the memory gate moved the
+  parts stage key and missed every cached chunk. Infrastructure that does not change outputs should not key them.
+- `cp2gltf chunks` peaks over 43 GB of commit on 32 GB of RAM (Watson); it now reserves 45 GB and runs alone, but it
+  should not need the whole area's geometry in one process.
+- 2.5 limits: WolvenKit 10.0.0-beta.1 does not export 11 meshes with textures; 11 instance lights white in 2.31 too
+  are lost with the placeholder fix (Kabuki count; no field tells them apart).
+- Portable checks: the checks stage needs a reference kit, which a first build by someone else does not have (the
+  guide says `--until kit`); a check of a kit on its own (counts, spawns, a few engine traces) would serve them.
+- Watson has no traffic signal programs (signal_instances 0 in every kit); `cp77_signals.py` was only run on Kabuki.
+
+**Disk (21:40):** C: 129 GB free, D: 87 GB. C:'s trash: `20261120T212909-r25-tags13-14-kabuki-pilot` (about 247 GB
+of tags 13, 14 and the Kabuki pilot; their logs and reports stay in `<2.5 research root>`) and a 3 KB stopped collision
+folder. The 2.31 Watson bake cache and sector JSON are on D: (`<archive drive>/cp77-watson-231`, verified; the
+C: paths are junctions to them).
+
+## CP2077 2.5 (2026-11-20): tags 13 and 14, from the installed game, research root <2.5 research root>
+
+Owner, 2026-11-20: future users have CP2077 2.5 or later; "lets do 2.5 before we merge". The 2.31 Watson bake cache
+and sector JSON were moved to `<archive drive>/cp77-watson-231` (verified; the C: paths are junctions). Inputs
+`<2.5 research root>/inputs-13.json`, `-14.json`; scripts `run_tag13.sh`, `run_tag14.sh`; reports
+`levelport/cp77/watson/tiles/<tag>/driver/verdict/` (against kit 12, not judged).
+
+What 2.5 (WolvenKit 10.0.0-beta.1) needed, each found by a run and fixed on this branch:
+- Sectors: compiled node records and cooked nodes (inner nodes in a buffer, fixed-point instanced transforms,
+  inline destructible transforms): `cp77_sector25.py` rewrites each sector in the 2.31 layout as it is serialised.
+  Kabuki pilot: 65,600 placements against 2.31's 65,732, every instanced, destructible and static mesh at the same
+  position; Watson: 5,313,290 placements against 5,293,416.
+- Unset light colours read white (2.31: black, the placeholder the readers skip): put back black in sector instance
+  data (11,842; 11 of Kabuki's 831 instance lights white in both versions are lost with them) and in entity
+  templates and appearances (502 and 3,300, none white in both).
+- Appearance names given only as their CName hash (FNV-1a 64) on 601,962 static and instanced placements: matched
+  to the mesh's appearances (`MeshLods.app_name`).
+- Not 2.5 but a fresh extraction: the entity fetch ran after the mesh fetches (about 92,000 entity component
+  placements had no mesh in tag 13), and the device graph and `light_time.json` (night- and day-only lamps) were made
+  by hand. `build_watson`'s extract stage now fetches entities first and makes both. Five tools did not start as
+  `python -I` (the guide's way).
+- Memory: the collision stage's chunk export (29.7 GB commit) ran ungated beside a game client and grew the page
+  file 63 -> 87 GB: it now waits for its room, and the commit cap no longer follows a grown page file.
+
+Tag 14 against kit 12 (before the light and appearance fixes): instances only in 12 92,212 (tag 13) -> 8,691;
+lights whose type bits differ 6,466 -> 44; engine strict 12,147 -> 2,083. What is left looks like 2.5's own content
+(the same meshes at other places: Arasaka waterfront walls, apartment interiors, door frames; the patch's new quests
+and the Kabuki and Japantown vendor), slot indexes renumbered by a few new interior groups, and 11 meshes WolvenKit 10
+beta does not export with textures. Mods: the extraction reads only archive/pc/content and ep1. Next: tag 15 with
+the light and appearance fixes, then the owner's look at it.
+
+## Tag 12 result (2026-11-20 07:30): built; verdict FAIL 23 of 28, every miss explained, two owner calls
+
+Kit `build/cp_watson_baseline-12` (levelport/build, C:), run from wt-tag12 at 3ac64785..8ebcce13 (three restarts:
+the memgate ledger rename race, the commit cap, the part reservations; each fix committed with a test). Parts gate:
+268 of 268 collision parts equal tag 11's. Chunks 46 byte-equal + 149 brush-equal, 0 different; hub and spawns equal;
+env and moon packs equal; materials: no unexpected change. Log `.codex-research/baseline-1/tag12-run4.out`; verdict
+`levelport/cp77/watson/tiles/12/driver/verdict.txt` and `verdict/`.
+
+The five misses (not "fixed" by editing expect-12; the owner decides):
+- engine.strict 43: every one a contents-only difference (endpoint, fraction and surface flags equal; contents 0
+  against 0x300000, both ways): coincident brushes in another order (tag 12 drops clutter in the chunk stage, 11c
+  patched it after). The tie rule excuses flag ties, not contents ties: owner's call.
+- instances 198 fewer and parity only_a 1,057 (expected 859): the 198 are CP2077 foliage litter (paper trash, cups,
+  garbage bags) about 230 m under the area's floor, dropped by the review's RL-122 fix (cp77_foliage now applies the
+  floor). Correct.
+- meshes +165: +209 screen and ad meshes split by placeholder variant (the converter's stand-ins in place of 11za's
+  patch pack), +1 the estate pond's water mesh, -45 their unsplit forms.
+- detail cutouts 428, not 432: the 11za patch's 432 counted 4 materials that stayed opaque (patch_rep3b.log: 382
+  opaque->cutout + 46 cutout->cutout + 4 opaque->opaque). 428 is the same set of cutouts.
+
+Look changes the verdict does not gate, from converter code merged into master since tag 11 (never built into a
+Watson kit before): 13 vehicle diode and fake-light materials emissive and untextured (11za: textured cutouts);
+6 sign letters and lamps with an emissive colour; 8,959 materials' base images re-encoded (cutout mips weighted by
+alpha, 0dca7f95). They need the owner's walk-through before kit 12 replaces 11zd.
+
+Owner 2026-11-20 after the A/B (look/tag12-ab: pairs_night, pairs_day, zoom_ref05.png; a hybrid kit of tag 12's packs
+on 11zd's binaries split the change: the data changes are small, most of the difference is master's renderer, crisper
+neon and edges): "12 looks good". Kit 12 is the one to play. Prior Watson tags' bulk moved to
+`<levelport root>/.codex-trash/20261120T075633-watson-prior-tags` (4,540 files, MANIFEST.tsv; about 75 GB returns
+when the owner empties it): tile parts of tag 11 and the test tags, test kits and builds. Kept: kit 12 and its builds,
+kit 11zd and every file it links (the castle and Night City video sessions use it; asked to switch to kit 12), the
+2.31 extraction, logs and records. Still the owner's: the contents-tie rule (engine.strict 43).
+
+## Tag 12 prep (2026-11-20): ready to launch, waiting on the owner's go
+
+Branch `build/tag12-prep2` (worktree `.codex-research/wt-tag12`, from master e3f87daf), not merged:
+- ffca3e33 RL-13: stage keys hash code the stages run without importing it (`STAGEKEY_FILES`: wk_read_lenient.ps1,
+  blender_decimate.py, vcache.c).
+- f9dacd5e Watson's env files and kit settings template in `tools/levelport/areas/night_city_b/` (byte for byte as
+  11za's); build_watson takes them when the inputs leave `env`/`cfg` out, keys file inputs by contents, and fetches
+  the moon under `--extract` (fetched from the installed 2.5: byte-identical to the kits' moon).
+- 2b543981 RL-120: each bake file holds its code-and-sizes key and a mismatched one is baked again in place. The 39 GB
+  bake cache is kept: the bake computation's code key is the same at all eight cp77mat.py commits since the lv2 bakes,
+  so tag 12 reuses them (renaming them, the review's fix, would have re-baked all and doubled the cache).
+- bf830908, b6c4d725 `toolchain.py` / `toolchain.json`: the outside tools pinned (q3map2 builds and libzstd by
+  SHA-256; WolvenKit 10.0.0-beta.1, CP2077 2.5, PowerShell, Blender by version; Python modules); the preflight runs it.
+- 9e364f23 the generators of signal_groups.json (`cp77_signals.py`), the ads (`cp77_ads_fetch.py`) and the sea mask
+  (`cp77_seamask.py`), each reproducing the existing output exactly. Watson has no signal_groups.json (only Kabuki).
+
+Inputs: `.codex-research/baseline-1/inputs-12.json` (backup `.bak-20261120`): no `env`/`cfg`/`moon` (repository and
+extraction defaults, same bytes), no extra packs (GameData's Install 95 bike pack, with ct3x.bike), engine checks
+and `--bin` = `.codex-research/baseline-1/bin-c6db3dc47` (master c6db3dc47, byte-identical to Install 95).
+Checked: master's openjkded traces tag 11's collision identically (13 corpora, 2,865,342 traces, strict 0:
+`look/tag12-prep/engine-master/engine.json`); five tiles' collision parts on master equal tag 11's array by array
+(`look/tag12-prep/parts-p12`, tiles tag p12); the preflight passes (C: about 48 GB to write).
+
+Launch (from the worktree; the env sourced and `XENJK_RESEARCH` set to the main checkout's .codex-research):
+
+    python -I tools/levelport/build_watson.py 12 --data .codex-research/baseline-1/inputs-12.json \
+      --bin .codex-research/baseline-1/bin-c6db3dc47
+
+Expect a full rebuild (the review moved most stage and part keys) and memory-gated starts: the 5-tile check ran one
+part at a time on the commit cap with other sessions' memory in use. Owner, 2026-11-20: future users have CP2077 2.5
+or later; Watson's extraction is 2.31's and WolvenKit 9.0.1 cannot read 2.5's sectors, so a 2.5 extraction (10.0.0-beta.1)
+is the replication run still to do.
+
 ## Update (2026-11-10 late): build loop items merged; review fixes; Install 77
 
 - **baseline/1 head:** f0723fe0 = merge of buildproc/report4 9131b096 (owner: "Yes, commit and merge").
@@ -136,7 +309,7 @@ relayed approval.
 
 **State: everything is idle.** Nothing is running and nothing is waiting on another session.
 
-**Play: kit 11zd** (<levelport root>/levelport/build/cp_watson_baseline-11zd; 11zc + the renderer of baseline/1 9dd47e72: terrain push off, teleport settle, cutout coverage on, 2026-11-16). The kits table below (11n-11z) and
+**Play: kit 12** (<levelport root>/levelport/build/cp_watson_baseline-12, its Play_Watson_*.bat; tag 12, master c6db3dc47 binaries; owner 2026-11-20 after the A/B: "12 looks good"). Before it: kit 11zd (11zc + the renderer of baseline/1 9dd47e72: terrain push off, teleport settle, cutout coverage on, 2026-11-16), kept in place while the video sessions use it. The kits table below (11n-11z) and
 each kit's KIT.txt say what each adds. 11z = baseline/1 code through 87e37a5f + renderer R6b + the report packs
 (rep3b, window env) + collision 11c (clutter) + the 120-spawn hub + cfg r_sceneRainTiles 0 and cm_chunkMegs 2048.
 

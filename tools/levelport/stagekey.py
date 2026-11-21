@@ -21,6 +21,8 @@ for both kinds of part).
 
   code_key('cp2gltf.py', ['stage_build'], entry='main')
   code_key('cp2gltf.py', ['stage_build.walk_level'], entry=None)     (a function defined inside another)
+  code_key('cp77mat.py', ['Materials._multilayer'], entry=None)     (a method: the methods and class attributes it
+                                                                     reads on self follow)
 
 From the roots, every top-level name a reached definition mentions is followed (functions, classes, constants,
 regexes, `global` names), within the file and into the local modules it imports (`import cp77mat`: the attributes
@@ -34,7 +36,11 @@ What is hashed is each reached definition's syntax tree (ast.dump, no positions,
 their own: comments, docstrings, blank lines, moves within the file and other stages' code leave the key alone.
 Top-level imports and statements that are not definitions are always in. A name reached only through getattr or
 globals() is missed: none of these tools do that (checked); keep it so, or add the name to the roots. A full
-rebuild before each numbered kit stays the safety net."""
+rebuild before each numbered kit stays the safety net.
+
+Code a stage runs without importing it (a script run by path, a C source compiled at run time) is declared by the
+module that runs it, STAGEKEY_FILES (declared_files), and hashed with the reached code; cp77_collision.module_closure
+takes the same declarations whole."""
 import ast
 import hashlib
 import sys
@@ -61,7 +67,7 @@ class _Module:
     def __init__(self, path):
         self.path = Path(path)
         tree = _strip_docstrings(ast.parse(self.path.read_text(encoding='utf-8')))
-        self.defs, self.always, self.nested, self.inner_binds = {}, [], {}, {}
+        self.defs, self.always, self.nested, self.inner_binds, self.classes = {}, [], {}, {}, set()
         for i, node in enumerate(tree.body):
             names = []
             if isinstance(node, FUNCS + (ast.ClassDef,)):
@@ -70,6 +76,22 @@ class _Module:
                     for n in ast.walk(node):
                         if isinstance(n, FUNCS) and n is not node:
                             self.nested.setdefault('%s.%s' % (node.name, n.name), n)
+                    self.inner_binds[node.name] = _names(node)[2]
+                else:                                   # a class: its methods and attributes as Class.name
+                    self.classes.add(node.name)
+                    rest = []
+                    for n in node.body:
+                        if isinstance(n, FUNCS):
+                            self.nested.setdefault('%s.%s' % (node.name, n.name), n)
+                        elif isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                            for t in targets:
+                                for x in ast.walk(t):
+                                    if isinstance(x, ast.Name):
+                                        self.nested.setdefault('%s.%s' % (node.name, x.id), n)
+                        else:
+                            rest.append(n)
+                    self.nested['%s.__rest__' % node.name] = ast.Module(body=rest, type_ignores=[])
                     self.inner_binds[node.name] = _names(node)[2]
             elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -180,6 +202,11 @@ def _follow(mod, f, i, todo, base, root_set, is_entry):
     node = mod.node(i)
     names, attrs, binds = _names(node)
     outer = i.split('.')[0] if isinstance(i, str) else None
+    if outer in mod.classes:                            # a method: the methods and attributes it reads on self
+        todo.append((f, outer + '.__rest__', False))
+        for at in attrs.get('self', set()) | attrs.get('cls', set()) | attrs.get(outer, set()) | names:
+            if '%s.%s' % (outer, at) in mod.nested:
+                todo.append((f, '%s.%s' % (outer, at), False))
     for n in names:
         if outer and '%s.%s' % (outer, n) in mod.nested:
             todo.append((f, '%s.%s' % (outer, n), False))    # a sibling defined in the same outer function
@@ -208,13 +235,54 @@ def _follow(mod, f, i, todo, base, root_set, is_entry):
                 todo.append((lf, at, False))
 
 
+def declared_files(path):
+    """A module's STAGEKEY_FILES: code it runs that is not imported (a script run by path, a C source it compiles),
+    beside the module. A list: keyed whenever any of the module is reached; a dict {definition: [files]}: keyed when
+    that top-level definition (or one nested in it) is reached. Returns {definition or None: [Path]}."""
+    mod = _module(path)
+    for i in mod.defs.get('STAGEKEY_FILES', []):
+        v = ast.literal_eval(mod.body[i].value)
+        if isinstance(v, dict):
+            return {k: [mod.path.parent / f for f in fs] for k, fs in v.items()}
+        return {None: [mod.path.parent / f for f in v]}
+    return {}
+
+
+def file_digest(p):
+    """A declared file's bytes, CRLF read as LF (worktrees check files out with other line ends)."""
+    return hashlib.sha256(Path(p).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
+
+
+def reached_files(seen):
+    """The declared files (declared_files) of what a closure reached."""
+    out = set()
+    for f in {f for f, _ in seen}:
+        decl = declared_files(f)
+        if not decl:
+            continue
+        mod = _module(f)
+        names = set()
+        for _, i in (x for x in seen if x[0] == f):
+            if isinstance(i, str):
+                names.add(i.split('.')[0])
+            else:
+                names.update(k for k, v in mod.defs.items() if i in v)
+        for k, fs in decl.items():
+            if k is None or k in names:
+                out.update(Path(x).resolve() for x in fs)
+    return sorted(out)
+
+
 def code_key(path, roots, entry='main', base=None, n=16):
-    """The stage's code key: a hash of every reached statement's tree, sorted by file and tree (not position)."""
+    """The stage's code key: a hash of every reached statement's tree, sorted by file and tree (not position), and of
+    the files the reached code declares it runs (STAGEKEY_FILES)."""
     path = Path(path) if Path(path).is_absolute() else (Path(base) if base else HERE) / path
     seen, _ = closure(path, roots, entry, base)
     h = hashlib.sha1(('py%d.%d\n' % sys.version_info[:2]).encode())
     for name, dump in sorted((f.name, _module(f).dumps[i]) for f, i in seen):
         h.update(('%s\n%s\n' % (name, dump)).encode())
+    for f in reached_files(seen):
+        h.update(('file %s %s\n' % (f.name, file_digest(f))).encode())
     return h.hexdigest()[:n]
 
 
@@ -231,7 +299,9 @@ def report(path, roots, entry='main', base=None):
             node = mod.body[i]
             nm = getattr(node, 'name', None) or ','.join(k for k, v in mod.defs.items() if i in v) or type(node).__name__
         out.setdefault(f.name, set()).add(nm)
-    return {k: sorted(v) for k, v in sorted(out.items())}, sorted(f.name for f in whole)
+    rep = {k: sorted(v) for k, v in sorted(out.items())}
+    rep['(declared files)'] = [f.name for f in reached_files(seen)]
+    return rep, sorted(f.name for f in whole)
 
 
 if __name__ == '__main__':

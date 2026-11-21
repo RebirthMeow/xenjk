@@ -392,6 +392,7 @@ class Materials:
         # setups. The scene build keeps them all
         self.collision = False
         self.bake_dir = Path(bake_dir) if bake_dir else None
+        self._bake_code = None
         self.tex_cache, self.tpl_cache, self.ml_cache, self.detail_cache = OrderedDict(), {}, OrderedDict(), {}
         self.tex_bytes = self.ml_bytes = 0
         self.ad_pool = None
@@ -537,7 +538,7 @@ class Materials:
         with self.track() as deps:
             disk = self.bake_path(setup, mlmask, n)
             self._touch(disk)
-            got = self._load_bake(disk) if disk is not None and disk.exists() else None
+            got = self._load_bake(disk, self.bake_code()) if disk is not None and disk.exists() else None
             if got is None:
                 got = self._multilayer(setup, mlmask, n)
                 if disk is not None and got is not None:
@@ -549,7 +550,8 @@ class Materials:
                         det = {k: v for k, v in det.items() if k != 'share'}
                     # (to a name of this process's, renamed: another process never reads a half-written bake)
                     tmp = disk.with_name('%s.tmp%d.npz' % (disk.stem, os.getpid()))
-                    np.savez(tmp, col=got[0], nrm=got[1], orm=got[2], detail=np.array(json.dumps(det)), **extra)
+                    np.savez(tmp, col=got[0], nrm=got[1], orm=got[2], detail=np.array(json.dumps(det)),
+                             code=np.array(self.bake_code()[1]), **extra)
                     try:
                         os.replace(tmp, disk)
                     except OSError:         # (another process writing the same bake: theirs stands)
@@ -573,12 +575,36 @@ class Materials:
         share = got[3].get('share') if got[3] is not None else None
         return sum(getattr(x, 'nbytes', 0) for x in got[:3]) + getattr(share, 'nbytes', 0)
 
-    @staticmethod
-    def _load_bake(disk):
-        """a cached bake, or None when the file does not read (cut short by a stopped run: baked again)"""
+    # the bake computation's code key (bake_code) from the lv2 bakes (2026-11-06) until bakes held their own key: a bake
+    # file without one was made by this code (the key was the same at every commit of cp77mat.py in that time)
+    LEGACY_BAKE_CODE = 'fc93196e5ec2b415'
+
+    def bake_code(self):
+        """(code, key): the code key of what computes a bake (_multilayer and what it reaches, stagekey.py) and the bake's
+        key, that code with the sizes it reads; a bake file holds its key, one made otherwise is baked again"""
+        if self._bake_code is None:
+            import stagekey
+            code = stagekey.code_key(Path(__file__).resolve(), ['Materials._multilayer'], entry=None)
+            key = hashlib.sha1(json.dumps([code, self.layer_size, self.detail_size, self.detail_slots]).encode())
+            self._bake_code = (code, key.hexdigest()[:16])
+        return self._bake_code
+
+    _stale_said = False
+
+    @classmethod
+    def _load_bake(cls, disk, want):
+        """a cached bake, or None when the file does not read (cut short by a stopped run) or another code or other sizes
+        made it (want: bake_code()): baked again, in its place"""
         import zipfile
         try:
             with np.load(disk) as z:
+                ok = str(z['code']) == want[1] if 'code' in z.files else want[0] == cls.LEGACY_BAKE_CODE
+                if not ok:
+                    if not cls._stale_said:
+                        print('cp77mat: bake %s was made by other code or sizes: baked again (and others like it)'
+                              % disk.name, flush=True)
+                        cls._stale_said = True
+                    return None
                 detail = json.loads(str(z['detail'])) if 'detail' in z.files else None
                 if detail is not None and 'share' in z.files:
                     detail['share'] = z['share']

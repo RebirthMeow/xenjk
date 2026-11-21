@@ -1,0 +1,74 @@
+xenv 1
+# Night City by day (owner 2026-11-04: "im gonna need a sunlit version"). The day kit runs cp_watson with
+# +set r_sceneEnv maps/cp_watson_day.xenv. CP2077's clear day at 13:00: its master environment
+# base\weather\24h_basic\cp2077_master_env_ep1_v006.env (24h_weather_sunny changes only emitters and wind), read and
+# interpolated at 13:00 by the pipeline's research. The CP2077 values are in the comments; the renderer session maps
+# their units to these cvars (marked "renderer:" where the value is still its first guess).
+time day
+# The sun: LightDirectionSettings latitude 35, summer, no rotation -> elevation 72.6, azimuth 232 (south-west); toward
+# the sun (east, north, up) = (-0.24, -0.18, 0.95): yaw 217 from +x toward +y (game axes are CP2077's x/y).
+# LightColorSettings.light.sunColor (LU_Lux) (1, 0.934, 0.878) x 1.041. renderer: the intensity's scale.
+sun 1 0.934 0.878 1 217 72.6
+r_sceneCharSun 1
+# renderer (pre-A/B): a white sunlit surface near 1 after the exposure: r_sceneSun / pi x 0.04 ~ 1.2
+r_sceneSun 95
+# The sky: procedural in CP2077 (no zenith/horizon colours; AtmosphereAreaSettings turbidity 3, skydomeColor and
+# skylightColor white x 1.3, groundReflectance 0.071). No day cubemap exists. The horizon takes the distant fog's
+# colour (DistantFogAreaSettings simpleColor (0.75, 0.8875, 1); albedoFar (0.70, 0.874, 1.0)). renderer: zenith,
+# both levels.
+r_sceneSky 1
+# renderer (pre-A/B): display about (0.3, 0.5, 0.85) at the exposure below
+r_sceneSkyZenith 1.3 3.3 12
+# renderer (pre-A/B): display about simpleColor (0.75, 0.89, 1) at the exposure below
+r_sceneSkyHorizon 11 22 30
+r_sceneSkySun 1
+# Ambient: AmbientOverrideAreaSettings off; the sky light (skylightColor x 1.3) and GlobalIlluminationSettings
+# (localLightsScale 1.1, rayTracedSkyRadianceScale 1.1); HACK_AREA_Settings.bottomHemisphereTint 0.035. renderer.
+# renderer (pre-A/B): about a fifth of the sun on a white surface (shade to sun 1:5)
+# renderer, day pass 3 (2026-11-04): r1's 2.6 3.1 3.9 washed the shaded streets blue; neutral 1.9 2.0 2.2 left
+# them drab and dark; this is between, a little blue. Owner's pick.
+r_sceneAmbient 3.2 3.4 3.9
+# Exposure: automatic in CP2077 (CameraAreaSettings.automated 1), ExposureAreaSettings exposureMax 5.38 (1.0 at
+# night), exposureMin -1.2, exposureCompensation -0.65, exposureSkyImpact 0.5. renderer.
+# renderer (pre-A/B): night 1.3 at CP2077 EV max 1.0; day EV max 5.38 with compensation -0.65: 1.3 x 2^-(4.38+0.65)
+r_sceneExposure 0.04
+r_sceneEmissive 1
+# Haze: VolumetricFogAreaSettings density 0.003, absorption 0.04, fogHeight 125, ambientScale 0.05 (2.0 at night),
+# globalLightScale 0.01, globalLightAnisotropy 0.8; DistantFogAreaSettings density 1.274 (3.0 at night), nearDistance
+# 200, farDistance 3183 (1500 at night), heightFallof 0.5; albedoNear (0.818, 0.932, 1.016) x 1.096. The colour below
+# is simpleColor's in 0..255. renderer: density, light, start, far.
+# renderer, day pass 3: simpleColor in full blued the alleys; greyer
+r_sceneFog 200 215 235
+r_sceneFogDensity 0.002
+r_sceneFogHeight 125
+r_sceneFogLight 0.3
+r_sceneFogStart 200
+# renderer (pre-A/B): the sun's share in the haze, from VolumetricFogAreaSettings globalLightScale 0.01 (the night's moon
+# share is 1 at r_sceneSun 0.25; the sun here is 380x that)
+r_sceneFogMoon 0.01
+# Lamps: the scene's night-only lights (fuse-switched street and wall lamps, type bit 20) are dropped by `time day`;
+# the day-only ones (ECG_Sky portal fills, ECG_Group0, bit 21) come on. Emissives keep their EV by day in CP2077
+# (signs, neon, ads; EmissiveColorSettings does not change with the hour); window interiors are all lit by day, without
+# the night tint (AmountTurnOffAtNight, TintColorAtNight apply at night only).
+r_sceneDayLamps 0
+# renderer: CP2077 keeps the portal fills (bit 21) at x1.3 by day; their power here is as converted
+
+# renderer, day pass 3: CP2077's clear day is dry (the rain's wetness is a weather state); the night's wet ground
+# mirrored the day sky blue. A look value from H6 on.
+r_sceneWet 0
+
+# (2026-11-05, coordinator) glows hold their on-screen brightness at every hour: r_sceneEmissiveExposure 0 against
+# the night's exposure 1.3 (renderer H21; replaces r_sceneEmissive 32); the foliage canopy shading and day clouds
+# at the renderer session's recommended values (H19+: r_sceneFoliage, r_sceneClouds)
+r_sceneEmissiveExposure 0
+r_sceneEmissiveRef 1.3
+r_sceneFoliage 0.7
+r_sceneClouds 0.35
+# (2026-11-05, coordinator) eye adaptation (renderer H27, r_sceneAutoExposure): the exposure moves within
+# CP2077's window at 13:00, ExposureAreaSettings exposureMin / exposureMax in EV about r_sceneExposure
+r_sceneExposureWindow -1.2 5.38
+
+# (2026-11-09, renderer R6b; the owner's pick from sheet_winab, kit 11s report 2: "this window is blacked out in
+# CP2077") the lit rooms behind windows (window_parallax_interior) follow the exposure as physical lights by day:
+# CP2077's EmissiveEV 4 rooms read nearly black at 13:00. Dawn and night keep the cvar's -1 (r_sceneEmissiveExposure's).
+r_sceneWindowExposure 1

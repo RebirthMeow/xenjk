@@ -111,6 +111,7 @@ HUB_CACHE = paths.LEVELPORT / 'cache' / 'hub'   # compiled hubs by their inputs'
 # raw-copies the member from the pack an earlier build wrote, checked against its recorded CRC and sizes; a missing or
 # changed pack is a miss. Entries are added when a build finishes (the packs at their final path).
 CHUNK_CACHE = paths.LEVELPORT / 'cache' / 'chunks' / 'index.json'
+CHUNKS_PEAK_GB = 45.0         # cp2gltf chunks' reservation (Watson: over 43 GB of commit, more than the RAM)
 PACK_MAX = 3_500_000_000        # bytes in one pack: under the engine's 4 GB (no zip64), with room for the directory
 GRID_MAX = 65536                # distinct light grid samples: the light array's index is an unsigned short
 READ = 4 << 20
@@ -156,7 +157,7 @@ def free_ok(label):
 
 def memory():
     """(available physical GB, free commit GB): memgate's, the commit limit capped at physical RAM plus
-    memgate.PAGE_ALLOW_GB (the uncapped limit grew with the page file, 88.7 GB on C: once)"""
+    memgate.commit_cap (the uncapped limit grew with the page file, 88.7 GB on C: once)"""
     import memgate
     return memgate.memory()
 
@@ -445,22 +446,30 @@ def glb_geometry_digest(path):
 
 
 def module_closure(entry):
-    """entry and every tools/levelport module it imports, at any depth (ast: imports anywhere in the file)"""
+    """entry and every tools/levelport module it imports, at any depth (ast: imports anywhere in the file), and the
+    files those modules declare they run without importing (STAGEKEY_FILES, every one: stagekey.declared_files)"""
     import ast
-    seen, todo = set(), [Path(entry).resolve()]
+    seen, todo, extra = set(), [Path(entry).resolve()], set()
     while todo:
         f = todo.pop()
         if f in seen:
             continue
         seen.add(f)
-        for node in ast.walk(ast.parse(f.read_text(encoding='utf-8'))):
+        tree = ast.parse(f.read_text(encoding='utf-8'))
+        for node in ast.walk(tree):
             names = [x.name for x in node.names] if isinstance(node, ast.Import) else (
                 [node.module] if isinstance(node, ast.ImportFrom) and node.module and not node.level else [])
             for nm in names:
                 g = HERE / (nm.split('.')[0] + '.py')
                 if g.exists():
                     todo.append(g.resolve())
-    return sorted(seen)
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'STAGEKEY_FILES'
+                                                    for t in node.targets):
+                v = ast.literal_eval(node.value)
+                for x in (sum(v.values(), []) if isinstance(v, dict) else v):
+                    extra.add((f.parent / x).resolve())
+    return sorted(seen | extra)
 
 
 def compile_identity(q3map2, args):
@@ -853,10 +862,13 @@ class Run:
         free_ok('chunks')
         if not (self.tdir / 'tiles.json').exists():
             sys.exit('cp77_collision: no tiles tag %s (%s)' % (self.a.tiles_tag, self.tdir))
+        # one process holding the whole area's collision geometry: Watson's passes 43 GB of commit on 32 GB of RAM, and
+        # beside the other lane it grew the page file until C: was nearly full (tags 14, 15): it runs with nothing else
+        self.wait_start('chunks', CHUNKS_PEAK_GB)
         r = self.sh([PY, '-u', HERE / 'cp2gltf.py', 'chunks', '--area', self.a.area, '--tiles-tag', self.a.tiles_tag,
                      '--map', self.a.map, *cp77_tiles.BUILD_ARGS,
                      *(['--clutter-drops', self.a.clutter_drops] if self.a.clutter_drops else [])],
-                    self.part / 'logs' / 'chunks.log')
+                    self.part / 'logs' / 'chunks.log', start='chunks')
         if r or not (self.cdir / 'manifest.json').exists() or not (self.cdir / 'base.glb').exists():
             sys.exit('cp77_collision: cp2gltf chunks failed (exit %d): %s' % (r, self.part / 'logs' / 'chunks.log'))
         self.mark('chunks', {'manifest_sha256': sha256(self.cdir / 'manifest.json'),
@@ -883,7 +895,7 @@ class Run:
                     break
                 others = memgate.ledger_others()
                 with self.running_lock:
-                    alone = not self.running and others <= 0     # (the driver's other lane counts)
+                    alone = not self.running and not memgate.ledger_others(live=True)   # (the driver's other lane counts)
                 if not alone and time.time() - said >= 60:
                     log(memgate.waiting_line(label, peak, MARGIN_GB, avail, commit, out, others, since), self.logf)
                     said = time.time()

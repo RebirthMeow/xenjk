@@ -6,7 +6,7 @@ the engine, server, renderer and cgame so a city of that size loads, collides, s
 reader who only wants the engine side (collision chunks, the 128 k world, the 64-bit client) can skip to
 [What xenjk changed](#what-xenjk-changed-to-run-it).
 
-**Status (2026-11-19).**
+**Status (2026-11-20).**
 
 - In the installed game (Install 94):
   - Kabuki, as `Play_Kabuki.bat`.
@@ -17,7 +17,14 @@ reader who only wants the engine side (collision chunks, the 128 k world, the 64
   - the converters;
   - the build driver (`build_watson.py`);
   - the collision builder (`cp77_collision.py`).
-- Some inputs still come from local research scripts. Those are named below.
+- The process reads **CP2077 2.5 or later** through WolvenKit 10. Watson was built from the installed 2.5 on
+  2026-11-20 (tag 15) and compared with the earlier 2.31 build: the differences are 2.5's own content.
+- Every input is made by a repository tool or kept in the repository, except your own crossing sounds and the
+  Realistic Map mod's tiles the sea mask is traced from (both named below).
+- **Not yet replicated elsewhere.** Every build so far ran on the authors' machine, with its toolchain already in place;
+  nobody has yet followed this chapter from a fresh clone and a fresh install. Expect to fill gaps, and compare your
+  counts with [What a correct build looks like](#what-a-correct-build-looks-like). The last 2.5 fix (advertisement
+  lights, `cp77_sector25.py` version 4) is in the code and its tests but not yet in a built kit.
 
 **Converted levels are for local play only.** The pipeline assumes you own the game and extract from your own install.
 The output (meshes, textures, sounds, ads, the maps themselves) is the game's content and must never be published,
@@ -310,9 +317,11 @@ Commands:
   - `WOLVENKIT_DOTNET` is a folder holding that runtime (it becomes `DOTNET_ROOT`; ours is .NET 10);
   - `PWSH` is PowerShell 7, for `wk_read_lenient.ps1`.
 
-  Our Watson extraction was read by WolvenKit 9.0.1 from game patch 2.31. Later patches changed the sector format
-  (9.0.1 cannot read them; 10.0.0-beta.1 can), and the readers here were written against 2.31's JSON. A newer patch
-  may need reader fixes.
+  Use **WolvenKit 10.0.0-beta.1** with **CP2077 2.5** (the pins are in `tools/levelport/toolchain.json`; the
+  driver's preflight checks every tool there, stops on a missing one and reports another build). 2.5 changed the
+  sector format (WolvenKit 9 cannot read it), and `cp77_sector25.py` rewrites 2.5's sectors, as the sectors stage
+  serialises them, in the layout the readers take. A later patch or WolvenKit build may need reader fixes: compare its
+  build with the last one (Limits below).
 - **q3map2**, netradiant-custom at be3b369 with the patches in `tools/levelport/q3map2/` (build steps in its
   `README.md`). You need two builds:
   - the hub build: all patches, including `world_coords`;
@@ -325,11 +334,17 @@ Commands:
 - **xenjk built** (x86 for Kabuki, x64 for a city). The tools look for the game at `game_directory/Jedi
   Academy/GameData` in the repo, or in `XENJK_GAMEDATA`. `levelcheck.py` uses `XENJK_X64` (an x64 Release folder)
   and `XENJK_X64_GAME` (a jampgame build with `g_levelcheck`).
-- **Disk and memory.**
-  - A work folder grows to tens of GB. Watson's meshes, LODs and bakes are about 20 GB; a full collision build is
-    about 21 GiB; tag 11's chunk BSPs are 24 GB before compression.
-  - Stages refuse to start without their own size plus 15 GB free (`cp77_collision.py` stops under 25 GB).
-  - The parts and compiles are memory-gated (`memgate.py`). 32 GB of RAM is what the project ran on.
+- **Disk, memory and time** (measured on the authors' machine, 32 GB of RAM).
+  - Disk: plan on at least 150 GB free for one fresh Watson build, on one drive. From 2.5, the serialised sectors
+    alone are 18 GB and the material bakes 39 GB; a collision build is about 21 GiB; the first two 2.5 builds (tags 13
+    and 14) and a Kabuki pilot in one research root came to about 247 GB.
+  - Stages refuse to start without their own size plus 15 GB free (`cp77_collision.py` stops under 25 GB); the
+    driver's preflight sums the run per drive first.
+  - Memory: the parts and compiles are memory-gated (`memgate.py`). The collision stage's chunk export peaks above
+    43 GB of committed memory and runs alone (it reserves 45 GB), so with 32 GB of RAM Windows must be able to grow the
+    page file by well over 16 GB, on a drive with that much free.
+  - Time: about 5 hours for a first build from a fresh extraction (tag 13); about 3 hours when the extraction and
+    bakes are kept (tag 12). Windows only.
 - Work and build folders go under `levelport/` in the research root (`cp77/<area>/`, `build/`, `look/`): `.codex-research`
   in the checkout, or `XENJK_RESEARCH`. They are local and never committed. The examples below write
   `.codex-research/levelport/...`; read that as `$XENJK_RESEARCH/levelport/...` if you set it.
@@ -404,9 +419,9 @@ Run every tool from the repository root. The Python tools are meant to run as `p
 
 5. **Play.** Copy both pk3s into your own `GameData/base` and start the map with rd-vulkan. `Play_Kabuki.bat` is
    the example launcher.
-   - The traffic signals need `signal_groups.json` in the work folder. A local research script built it from the
-     sectors' `compiledTraffic_Intersection` programs; there is no repo tool yet. Without it the signal heads stay
-     dark.
+   - The traffic signals need `signal_groups.json` in the work folder: `python -I tools/levelport/cp77_signals.py
+     --area kabuki` builds it from the sectors' `compiledTraffic_Intersection` programs. Without it the signal heads
+     stay dark.
    - The crossing sounds are your own WAVs (a local script made ours from `sfx_container.bnk`). The `.signals` file
      names them: pass `--signal-sounds <folder>` to the scene stage, with `walk_base`, `walk_layer`,
      `dontwalk_base` and `dontwalk_layer` `.wav` in that folder of a pack
@@ -420,42 +435,78 @@ Run every tool from the repository root. The Python tools are meant to run as `p
 
    These are hand-made JSON with no game data. `night_city_b` is the template: Watson, the 78 tiles south and east,
    and El Coyote Cojo's block.
-2. **An inputs file** (local, never committed: it names your extraction's folders). `build_watson.py`'s docstring
-   lists every key. These are required:
+2. **An inputs file.** Copy `tools/levelport/areas/night_city_b/inputs.example.json` and fill in your folders. Keep
+   the copy outside the repository or uncommitted: it names your machine's paths. `build_watson.py`'s docstring lists
+   every key. These are required:
 
    | Key | What |
    |---|---|
    | `area`, `map` | e.g. `night_city_b`, `cp_watson` |
    | `game_data` | your GameData (shader scripts and common textures for the hub) |
-   | `cfg` | the kit's `openjk.cfg` template |
+   | `sdl2`, `wolvenkit_cli` | `SDL2.dll` for the kit's `bin64`; the WolvenKit CLI the decal and effect fetches use |
    | `collision` | the collision entry point's command, e.g. `["python", "-I", "tools/levelport/cp77_collision.py", ...]` |
-   | `ocean_mask` | the bay's sea mask (`.npz`) |
-   | `ads_dir` | the ad compositor folder: `ads.json` and `rendered/` |
-   | `decals_root`, `fx_root` | the decal and effect fetch folders (`wk_fetch.py` layout) |
-   | `env`, `moon` | the `.xenv` files (night, dawn, day) and the moon image |
-   | `reference_*`, `expect` | the checks stage's references and expectations |
+   | `ocean_mask` | the bay's sea mask (`.npz`), made by `cp77_seamask.py` (step 3) |
+   | `ads_dir` | the ad folder `cp77_ads_fetch.py` writes: `ads.json` and `rendered/` |
+   | `decals_root`, `fx_root` | folders for the decal and effect fetches (`wk_fetch.py` layout): create them empty; the stages fill them |
 
-   Several of these are still made by local research scripts, not repo tools: the sea mask, the TweakDB ad dump and
-   its rendered ads, the Watson `.xenv` look values, and the moon.
-3. **Dry run, then run.**
+   `env`, `cfg` and `moon` may be left out: the `.xenv` files (night, dawn, day) and the kit's settings template are
+   in `tools/levelport/areas/night_city_b/`, and `--extract` fetches the moon. The checks stage's keys
+   (`reference_*`, `engine`, `expect`) compare a build with an earlier kit of yours; a first build has none (step 3).
+3. **Run, in this order** (what the 2.5 build did). Use a research root of its own for a fresh extraction
+   (`XENJK_RESEARCH`): a work folder holds one game patch's extraction.
 
    ```
+   python -I tools/levelport/cp77_ads_fetch.py <ads dir>
    python -I tools/levelport/build_watson.py <tag> --data <inputs.json> --bin <x64 Release folder> --dry-run
-   python -I tools/levelport/build_watson.py <tag> --data <inputs.json> --bin <x64 Release folder> [--extract]
+   python -I tools/levelport/build_watson.py <tag> --data <inputs.json> --bin <x64 Release folder> --extract --until parts
+   python -I tools/levelport/cp77_seamask.py <ocean_mask .npz> --tiles-tag <tag> --map <Realistic Map 32K tiles> \
+       --preview <mask.jpg>
+   python -I tools/levelport/build_watson.py <tag> --data <inputs.json> --bin <x64 Release folder> --extract --until kit
    ```
 
-   - `--extract` runs the WolvenKit stage: sectors (exterior and interior), scan, and the eight fetches. Without it,
-     the existing extraction is kept. A fetch cache records the identity of the game archives and of WolvenKit
-     (`.fetch_identity.json`), so after a game patch the fetch stops instead of mixing versions. Either move the cache
-     aside, or keep building from the old one.
+   - The ads come first: the indexes and parts stages read them. The sea mask needs the tiles' collision parts and
+     the Realistic Map 32K mod's 16 map tiles (your own copy of a third-party mod, uncooked with WolvenKit:
+     `base/fx/textures/3dmap/static/image/32k`); look at its preview before going on. The scene stage reads it.
+   - Without the mod's tiles you can leave `ocean_mask` out: the driver builds the scene without a sea mask. Nobody has
+     looked at such a build yet, so the bay may look wrong.
+   - `--until kit` stops before the checks, which need a reference kit. A later build of the same area can name the
+     earlier kit as `reference_kit` (with `reference_materials`, `reference_collision` and the rest) and run the
+     checks: parity of instances, lights and materials, the chunks, the hub, the packs and the engine corpora.
+   - `--extract` runs the WolvenKit stage: sectors (exterior and interior), scan, the fetches (entities first, then
+     meshes, LODs, proxies, embedded meshes and multilayer setups), the device graph and the light times, and the
+     moon. Without it, the existing extraction is kept. A fetch cache records the identity of the game archives and
+     of WolvenKit (`.fetch_identity.json`), so after a game patch the fetch stops instead of mixing versions: start a
+     new research root, or keep building from the old one.
    - The other flags: `--from STAGE` reruns that stage and everything that reads it; `--until` and `--only` limit the
      run; `--one-lane` runs the two lanes in turn; `--idle` runs at Idle priority with half the workers;
      `--kit-name` names the kit folder.
    - A stage's `.done` holds a key of its tools' code and inputs, so a changed tool reruns it. An interrupted run
      resumes where it stopped.
 
-   Tag 11 on 268 tiles took about 5 min (tiles), 8 (indexes), 80 (parts), 5 (scene), 1 (interiors), 4 (decals) and
-   4 (fx). Collision took about 6-8 hours with 4 workers. The kit is `build/<map>_baseline-<tag>/`.
+   Tag 12 on 269 tiles (32 GB of RAM, from a kept extraction) took about 6 min (tiles), 9 (indexes), 27 (parts),
+   10 (scene), 1 (interiors), 5 (decals), 4 (fx) and 106 (collision, 4 workers); the checks took 12. Tag 13, the
+   first build from a fresh 2.5 extraction, took about 5 hours: 32 min (extract), 132 (parts, every material bake
+   made new) and 94 (collision) the largest. The kit is `build/<map>_baseline-<tag>/`.
+   #### What a correct build looks like
+
+   With no reference kit to check against, compare your first build with Watson from 2.5 as built here (tag 15,
+   CP2077 2.5, WolvenKit 10.0.0-beta.1). A build from the same patch should land within a few percent of every line;
+   a large miss in one line names the stage to look at.
+
+   | Count | Tag 15 (2.5) | Where |
+   |---|---|---|
+   | tiles | 269 | `tiles/<tag>/tiles.json` |
+   | placements (scan) | 5,313,290 | `placements.json` |
+   | scene instances | 6,712,721 | `tiles/<tag>/driver/scene.log`, scene merge counts |
+   | meshes, materials, images | 63,766, 57,083, 27,876 | the same |
+   | static, entity, instance lights | 78,399, 23,981, 5,956 | `lights_*` in the same line |
+   | advertisement lights | 14,314 (about 14,100 coloured from their ads) | `lights_ad`, `ad_light_coloured` |
+   | collision chunks | 195 | the collision build's chunk packs |
+
+   Tag 15 predates the advertisement-light fix and colours none of its ad lights; the 2.31 build coloured 14,160 of
+   14,306, so a build with the fix should come close to that. A build from a later patch differs by that patch's
+   content: our 2.31-to-2.5 comparison moved instances by under one percent.
+
 4. **Pieces alone** (what the driver calls):
 
    ```
@@ -638,14 +689,27 @@ The scene format, tiles, streaming, GPU cull and LOD are general. See [levelport
 
 ## Limits and open issues
 
-- **Game patch.** Our extraction is 2.31's. The installed, patched game can no longer re-make it, and the readers are
-  untested on later patches' sector JSON.
-- **Local research inputs.** Several inputs a fresh user needs have no repo tool:
-  - `signal_groups.json` and the crossing sounds;
-  - the ad TweakDB dump and its rendered ads (`cp77_ads.py` reads `CP77_ADS_DIR`);
-  - the decal contract;
-  - the bay's sea mask;
-  - the Watson `.xenv` look values and the moon.
+- **Game patch.** The process reads CP2077 2.5 through WolvenKit 10.0.0-beta.1 (`tools/levelport/toolchain.json`).
+  Watson from 2.5 (tag 15, 2026-11-20) against the same district from 2.31 (tag 12), same binaries: 6.66 M of
+  6.71 M instances match, about 8,700 placements are only in 2.31 and 26,000 only in 2.5, and the views differ by
+  2.5's own changes (props, foliage, a few lamps, other ads). Known 2.5 limits:
+  - WolvenKit 10 (a beta) exports 11 of Watson's meshes without their textures.
+  - A light whose colour the game sets at run time reads white from WolvenKit 10 where WolvenKit 9 read black, the
+    placeholder the readers skip or colour; `cp77_sector25.py` puts white back to black for entity, device, template,
+    appearance and advertisement lights. The few lights that are really white become placeholders too (Kabuki: 11);
+    no field tells them apart.
+  - A patch after 2.5, or another WolvenKit build, may change the format again: build a few tiles and compare them
+    with your last kit (the checks stage) before a full run.
+- **Inputs made before the build** (each by a repo tool now):
+  - `signal_groups.json`: `cp77_signals.py`. The crossing sounds are still your own WAVs;
+  - the ad TweakDB dump and its rendered ads: `cp77_ads_fetch.py <ads dir>` (WolvenKit 10.0.0-beta.1 or later), read
+    through `CP77_ADS_DIR` or the inputs' `ads_dir`;
+  - the bay's sea mask: `cp77_seamask.py`, from the tiles' collision parts, the water patches and a stitch of the
+    Realistic Map 32K mod's map tiles (a third-party mod: your own copy, uncooked with WolvenKit; the one input from
+    outside the game);
+  - the Watson `.xenv` look values and the kit settings: in the repository (`tools/levelport/areas/night_city_b/`);
+    the moon: fetched by `--extract`.
+  - Still without a tool: the decal contract.
 - **Collision is derived from render meshes**, not CP2077's PhysX shapes: walkable, but not the game's exact
   collision.
 - **Still tangled** ([engine](../review/2026-11-19/engine.md) and [CP2077](../review/2026-11-19/levelport-cp.md)
@@ -663,7 +727,9 @@ The scene format, tiles, streaming, GPU cull and LOD are general. See [levelport
   - The `.xlod` reader (CP2077's own LOD distances) is not built.
   - The rain view's tiles and the probe sky are parked off.
   - One ground z-fight report is unreproduced.
-- **Not converted:** crowds, traffic, the glitch ambient layers, and the Wwise attenuation.
+- **Not converted:** crowds, traffic, the glitch ambient layers, and the Wwise attenuation. Watson's scene carries
+  no traffic signal programs (0 signal heads lit, as in every Watson kit so far); Kabuki's come from
+  `cp77_signals.py`, which has not been run on Watson.
 
 ## Further reading
 
@@ -678,7 +744,8 @@ The scene format, tiles, streaming, GPU cull and LOD are general. See [levelport
 - [../levelport-scene.md](../levelport-scene.md): the render scene format, tiled scenes and `.xman`.
 - [../levelport-watson-renderer-20261109.md](../levelport-watson-renderer-20261109.md): the latest playtest reports
   and the renderer fixes they drove.
-- [../BASELINE.md](../BASELINE.md): the clean tag-11 import from committed tools, the kit chain, and stage timings.
+- [../BASELINE.md](../BASELINE.md): the clean imports from committed tools (tag 12 from 2.31, tag 15 from 2.5), the kit
+  chain, stage timings and the 2.5 comparison.
 - [../../tools/levelport/README.md](../../tools/levelport/README.md): every tool's one-paragraph usage and "Things
   that bit".
 - [../../tools/levelport/q3map2/README.md](../../tools/levelport/q3map2/README.md): the q3map2 patches and how to

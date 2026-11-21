@@ -1,0 +1,18 @@
+xenv 1
+# Night City at night (coordinator, 2026-11-05; owner: "take Misty's scene and work it"). The renderer's night defaults
+# but the haze: CP2077's own VolumetricFogAreaSettings at 01:00 (cp2077_master_env_ep1_v006: density 0.003 a metre,
+# albedo 0.9) in place of the 0.005 and r_sceneFogLight 1.6 fitted on Kabuki before eye adaptation (H27). At ref05's
+# solved camera (cams_ref05s.txt, classes/regions05.py) the lamps' light in the haze was a grey veil over everything they
+# do not light directly: the overhang 114 against CP2077's 60, the upper facade 85 against 38. The night's constants,
+# not a view's: the ring views keep their halo (sheets/solve/ref05_haze_ab.jpg).
+time night
+r_sceneFogDensity 0.003
+# renderer H32 (2026-11-06): the haze's light integrated along the eye's ray (r_sceneFogSegment 1, the renderer's
+# default), CP2077's fogHeight 125 m and globalLightAnisotropy 0.7 at 01:00, and one level for the haze's light fitted
+# at the matched night views (ref05-ref09, ref12; cams_h32*.txt, score_h32.py: the centre crop's mean and its darkest
+# tenth, summed over the views): 0.5 with the soft ceiling off (it discounted the far lights; nothing washes out without
+# it). Summed gap 127.3 (H31 as played) -> 113.6.
+r_sceneFogHeight 125
+r_sceneFogPhase 0.7
+r_sceneFogLight 0.5
+r_sceneFogLightMax 0

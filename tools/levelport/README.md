@@ -32,6 +32,13 @@ a default, and a tool that needs one exits naming the variable:
 | `PWSH` | PowerShell 7 | `pwsh` on PATH |
 | `XENJK_X64`, `XENJK_X64_GAME` | levelcheck's x64 client build folder, and its optional game module | none |
 
+`toolchain.py` checks these tools against the builds the reference kits were made with (`toolchain.json`). Inputs made
+before a build, each by its own tool: `cp77_signals.py` (signal_groups.json), `cp77_ads_fetch.py` (the ads' TweakDB
+dump and rendered ads; WolvenKit 10.0.0-beta.1 or later), `cp77_seamask.py` (the bay's sea mask); Watson's env files,
+kit settings and an example inputs file (`inputs.example.json`) are in `areas/night_city_b/`. The process reads
+CP2077 2.5 through WolvenKit 10.0.0-beta.1; `cp77_sector25.py` rewrites 2.5's sectors and entity resources in the
+layout the readers take (docs/guide/night-city.md, section B, has the order to run).
+
 ## Node convention
 
 Space: glTF metres, +Y up. 37.5 Quake units per metre (the cloth pipeline's scale; a 64-unit player is 1.71 m).
@@ -327,7 +334,9 @@ How Cyberpunk's lights convert:
 - **Ad lights** (`worldAdvertisementNode.lightsData`) take their colour from the ad's video at run time. The scene
   build gives each the mean colour (its hue; the light keeps its power) of what its own billboard shows: the nearest
   placement of its node within 30 m. It writes them to `ad_lights.json` beside the pk3, and `--relight` reads them
-  back. `AD_LIGHT_COLOUR` stands in where no billboard is found.
+  back. `AD_LIGHT_COLOUR` stands in where no billboard is found. The placeholder is the black colour the data leaves
+  them; WolvenKit 10 reads it from 2.5 as white, which `cp77_sector25.py` puts back (tag 15 lost all 14 k colours
+  before it did).
 - **Screens.**
   - `television_ad.mt` (the roundabout's ring, digital billboards) shows its `AdTexture`; for an animated sheet of
     `TilesWidth` × `TilesHeight` frames, the first frame.
@@ -364,6 +373,9 @@ How Cyberpunk's lights convert:
 - **Placement contracts** follow the WolvenKit Blender add-on: nodeData Position/Orientation/Scale per record;
   `worldInstancedMeshNode` transforms are absolute; `worldInstancedDestructibleMeshNode` cooked transforms are
   local to each nodeData record; shared buffers resolve by `HandleId`/`HandleRefId`. nodeData `Bounds` are points.
+  That is 2.31's layout. 2.5's (WolvenKit 10: compiled records with `nodeIdx`/`instanceIndex`, cooked nodes holding
+  inner nodes, fixed-point instanced transforms) is rewritten into it by `cp77_sector25.py` as the sectors stage
+  serialises each sector; a change to that tool upgrades the JSON already on disk the next time the stage runs.
 - **WolvenKit CLI drops LODs 2-4** unless its `appsettings.json` has `"MeshExportArgs": {"LodFilter": false}`
   (`fetch --lods` patches and restores it; the file has a BOM). glb nodes are `submesh_NN_LOD_m`: NN the global
   chunk index (the appearance material lists index it), m the LOD mask bit. Material names in the glb are all

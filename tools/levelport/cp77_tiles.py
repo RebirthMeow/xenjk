@@ -36,6 +36,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -131,6 +132,30 @@ def part_peak_gb(kind, placements):
         if placements < x1:
             return round(y0 + (y1 - y0) * (placements - x0) / (x1 - x0), 2)
     return pts[-1][1]
+
+
+class PeakScale:
+    """the reservations scaled to what this run's parts of a kind took: after SCALE_AFTER of them, each estimate times
+    the largest measured peak / estimate seen so far, with SCALE_ROOM above it (never more than the table's, never under
+    SCALE_FLOOR of it). The jobs start largest first, so the parts measured bound the smaller ones after them. (Tag 12's
+    scene parts peaked at 2.1-2.8 GB on reservations of 7.7-8.7 and started one at a time with 14 GB free.)"""
+    SCALE_AFTER, SCALE_ROOM, SCALE_FLOOR = 5, 1.3, 0.3
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.ratios = {}
+
+    def add(self, kind, peak, est):
+        if est > 0 and peak > 0:
+            with self.lock:
+                self.ratios.setdefault(kind, []).append(peak / est)
+
+    def scale(self, kind):
+        with self.lock:
+            r = self.ratios.get(kind, [])
+            if len(r) < self.SCALE_AFTER:
+                return 1.0
+            return min(1.0, max(self.SCALE_FLOOR, max(r) * self.SCALE_ROOM))
 
 
 def source_key(extra, files=('cp2gltf.py', 'cp77mat.py', 'gltfio.py')):
@@ -427,6 +452,7 @@ def main():
 
     import memgate
     gate = memgate.Gate(a.min_free_gb, log=lambda m: log(tdir, '  ' + m))
+    scales = PeakScale()
 
     def one(job):
         """a part on a memory reservation (a fixed 10 s gap left 10 workers 25-45% used): it starts when
@@ -434,7 +460,8 @@ def main():
         --min-free-gb; its process tree's peak is sampled and logged"""
         tid, kind, cmd, done, keyf, key = job
         label = '%s %s' % (tid, kind)
-        peak = part_peak_gb(kind, size.get(tid, 0))
+        est = part_peak_gb(kind, size.get(tid, 0))
+        peak = round(est * scales.scale(kind), 2)
         if a.workers > 1:
             gate.wait_start(label, peak)
             if a.start_gap:
@@ -454,6 +481,7 @@ def main():
         if rc == 0 and done.exists():
             keyf.parent.mkdir(parents=True, exist_ok=True)
             keyf.write_text(key)
+            scales.add(kind, top, est)
         log(tdir, '  %s %s %s in %.0f s (peak %.1f GB, reserved %.1f)' % (
             tid, kind, 'ok' if rc == 0 else 'FAILED (%d)' % rc, time.time() - t, top, peak))
         return rc

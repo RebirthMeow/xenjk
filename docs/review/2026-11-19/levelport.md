@@ -197,7 +197,7 @@ call passes an argument list), so there is no quoting finding.
   kept from before the change.
 - Fix: let a module declare extra key files (`STAGEKEY_FILES = ['vcache.c']`) that both closures hash.
 - Confidence: confirmed (traced)
-- Status: deferred: keying wk_read_lenient.ps1 and vcache.c (blender_decimate.py is the levelport-w3col lane's) moves every stage and part key that reaches cp2gltf or vcache once, a full rebuild of the parts: owner's call on when
+- Status: done 2026-11-20, just before tag 12 (a full rebuild anyway): `STAGEKEY_FILES` in cp2gltf.py (a dict: `stage_sectors` -> wk_read_lenient.ps1, `stage_decimate` -> blender_decimate.py, so only those stages' keys move) and vcache.py (`['vcache.c']`); `stagekey.code_key` hashes the declared files the reached code names (CRLF read as LF) and `report` lists them; `cp77_collision.module_closure` adds every declared file of its modules. Measured on master's tree: the sectors, decimate and w3scene keys moved, `stage_tiles`, `scene_material`/`SceneImages` and `Materials` did not; an edit to each of the three files moves its keys. Tests: tools/test_levelport_stagekey.py
 
 ### RL-14 P2 `w3bundle.index` cache is never checked against the bundles
 - Where: `tools/levelport/w3bundle.py:24-26,48-50`.

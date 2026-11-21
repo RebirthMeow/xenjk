@@ -24,10 +24,12 @@ tag, scene, decals, fx, env and collision build of their own per run, and a new 
 
 Stages, in order (each logs to <work>/tiles/<tag>/driver/<stage>.log and leaves <stage>.done; a rerun skips what is
 done, so an interrupted run resumes; --from reruns from a stage on):
-  extract    cp2gltf sectors (exterior and interior), scan, the eight fetches (meshes, LODs, proxies and their LODs,
-             embedded meshes and multilayer setups, entity meshes); only with --extract. Watson's extraction is
-             CP2077 patch 2.31's (kept as is), which the installed, patched game can no longer
-             re-make: cp2gltf's archive identity check stops a fetch. Without --extract the stage keeps it.
+  extract    cp2gltf sectors (exterior and interior), scan, the fetches (the entities first, then meshes, LODs, proxies
+             and their LODs, embedded meshes and multilayer setups), the device graph and light_time.py, the moon;
+             only with --extract. CP2077 2.5 or later is read through WolvenKit 10 (cp77_sector25 rewrites its
+             sectors in the layout the readers know); a fresh extraction goes in a research root of its own
+             (XENJK_RESEARCH), as the reference kits' 2.31 extraction cannot be re-made from a patched game.
+             Without --extract the stage keeps the work folder's.
   tiles      cp2gltf tiles: the area's placements in 256 m squares (tiles/<tag>)
   indexes    cp77_ads index, cp77_rotate index, cp77_foliage (tiles/<tag>/foliage)
   parts      cp77_tiles --parts-only: every tile's collision part, then its scene part (keyed: a part is reused
@@ -51,7 +53,8 @@ done, so an interrupted run resumes; --from reruns from a stage on):
   checks     scene_parity against the inputs' reference kit ("parity_tiles": a list or "all"); the chunk packs'
              members against the inputs' reference collision build by CRC and size (logs/chunk_crc.json)
 
-The inputs file (local data, never committed: CP2077-derived and hand-made inputs, each with its producer named):
+The inputs file (local data, never committed: CP2077-derived and hand-made inputs, each with its producer named;
+areas/night_city_b/inputs.example.json is a template with the required keys):
   {"area": "night_city_b", "map": "cp_watson",
    "ocean_mask": ".../look/ocean-tag10-20261104/sea_plane_mask20_final.npz",
    "ads_dir": ".../look/ads-20261105", "decals_root": ".../look/decals-<tag>", "fx_root": ".../look/fx-<tag>",
@@ -75,6 +78,10 @@ The inputs file (local data, never committed: CP2077-derived and hand-made input
    "parity_materials_b_only": true (parity's materials: only the keys the tag holds, for a tag of a few tiles),
    "scene_stats": "<scene_stats.py>", "log_counts": {"<name>": ["<stage>", "<regex with one number group>"]},
    "expect": "<expectations json for tag_verdict.py judge>"}
+"env", "cfg" and "moon" may be left out: the env files and the settings template are the repository's
+(tools/levelport/areas/<area>/env/*.xenv, kit-openjk.cfg), the moon the extraction's (--extract fetches it into the
+work folder). A relative path in the inputs is read from the repository's root. A file an input names is keyed by its
+contents.
 Converted levels are for local play only."""
 import argparse
 import json
@@ -113,6 +120,10 @@ TOOLS = {'extract': ['cp2gltf.py'], 'tiles': ['cp2gltf.py'], 'indexes': ['cp77_a
          'engine_trace_ded.py']}
 # stages keyed on Run methods of their own (each method's syntax tree, docstring dropped) in place of a tool's closure
 METHODS = {'env': ['env']}
+# inputs that name a file: keyed by its contents (Run.input_value); and those read from the repository's root when
+# relative (Run.defaults)
+FILE_INPUTS = ('env', 'moon', 'cfg', 'spawns', 'ocean_mask', 'sdl2')
+REPO_PATHS = ('cfg', 'moon', 'spawns', 'ocean_mask', 'ads_dir', 'expect', 'scene_stats', 'sdl2')
 INPUTS = {'tiles': ['from_tag'], 'indexes': ['ads_dir'], 'parts': ['ads_dir', 'from_tag', 'parts_reference', 'parts_gate'], 'clutter': ['clutter'], 'collision': ['collision', 'clutter'],
           'clutter_patch': ['clutter'], 'spawns': ['spawns'], 'scene': ['ocean_mask', 'ads_dir'],
           'decals': ['decals_root'], 'fx': ['fx_root'], 'env': ['env', 'moon'],
@@ -165,6 +176,39 @@ class Run:
         self.tiles = cp2gltf.tile_dir(self.work, self.tag)
         self.logs = self.tiles / 'driver'
         self.build = LP / 'build'
+        self.defaults()
+
+    def defaults(self):
+        """the inputs a run may leave out, from the repository (tools/levelport/areas/<area>/: env/*.xenv, the
+        night, dawn and day files; kit-openjk.cfg, the kit's settings template) and the extraction (the moon, which
+        --extract fetches); a relative path in the inputs is read from the repository's root"""
+        inp, own = self.inp, HERE / 'areas' / self.area
+        for k in REPO_PATHS:
+            if isinstance(inp.get(k), str) and not Path(inp[k]).is_absolute():
+                inp[k] = str(REPO / inp[k])
+        if isinstance(inp.get('env'), dict):
+            inp['env'] = {arc: str(REPO / src) if not Path(src).is_absolute() else src
+                          for arc, src in inp['env'].items()}
+        elif not inp.get('env') and (own / 'env').is_dir():
+            inp['env'] = {'maps/' + f.name: str(f) for f in sorted((own / 'env').glob('*.xenv'))}
+        if not inp.get('cfg') and (own / 'kit-openjk.cfg').exists():
+            inp['cfg'] = str(own / 'kit-openjk.cfg')
+        if not inp.get('moon') and self.moon_file().exists():
+            inp['moon'] = str(self.moon_file())
+
+    def moon_file(self):
+        """the moon image as the extraction's fetch leaves it (CP2077's engine/textures/sky/moon.xbm, uncooked)"""
+        return self.work / 'moon' / 'engine' / 'textures' / 'sky' / 'moon.png'
+
+    def input_value(self, k):
+        """an input as a stage key holds it: a file named by the inputs by its contents, not its path (the same
+        file in another checkout keys the same; an edit to it moves the key)"""
+        v = self.inp.get(k)
+        if k not in FILE_INPUTS or not v:
+            return v
+        if isinstance(v, dict):
+            return {a: file_sha(f) if Path(f).is_file() else f for a, f in sorted(v.items())}
+        return file_sha(v) if Path(v).is_file() else v
 
     def writes(self, stage):
         """the folders a stage writes (its log folder too)"""
@@ -220,7 +264,7 @@ class Run:
                 h.update(('%s %s\n' % (f.name, file_sha(f))).encode())
         for m in METHODS.get(stage, []):         # (a stage keyed on Run methods: an edit to one reruns it)
             h.update(('code Run.%s %s\n' % (m, method_sha(m))).encode())
-        h.update(json.dumps({k: self.inp.get(k) for k in INPUTS.get(stage, [])}, sort_keys=True, default=str).encode())
+        h.update(json.dumps({k: self.input_value(k) for k in INPUTS.get(stage, [])}, sort_keys=True, default=str).encode())
         h.update(json.dumps({'tag': self.tag, 'area': self.area, 'map': self.map, 'extract': self.a.extract,
                              'kit_name': self.a.kit_name if stage in ('kit', 'checks') else None,
                              'bin': self.a.bin if stage == 'kit' else None}).encode())
@@ -232,7 +276,7 @@ class Run:
         """stage_key's parts by name (for the marker, and to say which one moved)"""
         parts = {'tool ' + f.name: file_sha(f) for t in TOOLS.get(stage, []) for f in self.closure(t)}
         parts.update({'code Run.' + m: method_sha(m) for m in METHODS.get(stage, [])})
-        parts.update({'input ' + k: json.dumps(self.inp.get(k), sort_keys=True, default=str)
+        parts.update({'input ' + k: json.dumps(self.input_value(k), sort_keys=True, default=str)
                       for k in INPUTS.get(stage, [])})
         parts.update({'stage ' + d: str(runs.get(d)) for d in DEPS.get(stage, [])})
         return parts
@@ -351,6 +395,20 @@ class Run:
                     if b'brushbin' not in Path(cmd[i + 1]).read_bytes():
                         bad.append('inputs: collision: --q3map2-chunks %s has no -brushbin, which the cooked chunks '
                                    '(cp77_collision\'s default) need: the xenjk9 build' % cmd[i + 1])
+            import toolchain        # (the q3map2 builds the inputs name against the reference build's)
+            for flag, name in (('--q3map2', 'Q3MAP2_HUB'), ('--q3map2-chunks', 'Q3MAP2_CHUNKS')):
+                if flag in cmd and cmd.index(flag) + 1 < len(cmd) and Path(cmd[cmd.index(flag) + 1]).exists():
+                    q, pin = cmd[cmd.index(flag) + 1], toolchain.pin_of(name)
+                    if pin and toolchain.sha256(q) != pin:
+                        print('preflight: collision %s %s is not the reference build (toolchain.json): the chunks '
+                              'may differ from the reference collision' % (flag, q), flush=True)
+        # the outside tools every run uses (toolchain.py): one missing stops the run now; another build is reported
+        import toolchain
+        problems, diffs = toolchain.check(['python', 'numpy', 'Pillow', 'psutil'] + (
+            ['XENJK_LIBZSTD'] if 'collision' in todo else []), quiet=True)
+        bad += ['toolchain: ' + p for p in problems]
+        for d in diffs:
+            print('preflight: toolchain: %s' % d, flush=True)
         # outputs that a stage to run would find made already (each exits on an existing folder, hours in)
         b = self.build
         outs = {'scene': b / ('%s_scene-%s' % (self.map, self.tag)), 'interiors': b / ('%s_scene-%s-int' % (
@@ -502,7 +560,7 @@ class Run:
         """what an extraction leaves that the side stages read: the fetch and scan records, the placements"""
         w = self.work
         return [w / 'stage_records.json', w / 'placements.json', w / 'fetch_missing.txt', w / 'json',
-                w / 'entity_meshes.json']
+                w / 'entity_meshes.json', w / 'light_time.json']
 
     def cp2gltf(self, stage, *args, env=None):
         self.sh(stage, [PY, '-u', tool('cp2gltf.py'), *args, '--area', self.area], env)
@@ -517,14 +575,56 @@ class Run:
         self.cp2gltf(s, 'sectors')
         self.cp2gltf(s, 'sectors', '--sector-kinds', 'interior')
         self.cp2gltf(s, 'scan')
-        for extra in ([], ['--lods'], ['--proxies'], ['--proxies', '--lods'], ['--embedded'], ['--embedded-ml'],
-                      ['--ents']):
-            self.cp2gltf(s, 'fetch', *extra)
+        # the entities first: their mesh components (street crossings, sign panels, ladders, turrets) are fetched by
+        # the mesh fetches after them; fetched last, a fresh extraction had none of them (tag 13, 2026-11-20)
+        self.cp2gltf(s, 'fetch', '--ents')
         # the entity fetch reports its mesh components only on a pass that found its entities' templates fetched
         # (tag 10a); a second pass with CP2GLTF_RERUN picks them up
         if not self.a.dry_run and 'entity mesh components' not in (self.logs / 'extract.log').read_text(
                 encoding='utf-8', errors='replace'):
             self.cp2gltf(s, 'fetch', '--ents', env={'CP2GLTF_RERUN': '1'})
+        for extra in ([], ['--lods'], ['--proxies'], ['--proxies', '--lods'], ['--embedded'], ['--embedded-ml']):
+            self.cp2gltf(s, 'fetch', *extra)
+        self.devices()
+        self.sh(s, [PY, '-I', tool('light_time.py'), self.area])
+        self.moon()
+
+    def devices(self):
+        """the city's device graph (light_time.py: the lamps fuses switch by the clock): CP2077's
+        base/worlds/03_night_city/_compiled/default/03_night_city.devices unbundled and serialised into work/devices"""
+        out = self.work / 'devices'
+        print('== extract: devices -> %s' % out, flush=True)
+        if self.a.dry_run:
+            return
+        import cp2gltf
+        import re
+        raw = self.work / 'devices_raw'
+        rx = '^%s$' % re.escape(cp2gltf.SL.join(('base', 'worlds', '03_night_city', '_compiled', 'default',
+                                                  '03_night_city.devices')))
+        cp2gltf.wolvenkit('unbundle', *cp2gltf.archives(), '-r', rx, '-o', raw, '-v', 'Minimal')
+        src = sorted(raw.rglob('03_night_city.devices'))
+        if not src:
+            sys.exit('build_watson: extract: the device graph was not unbundled into %s' % raw)
+        out.mkdir(parents=True, exist_ok=True)
+        cp2gltf.wolvenkit('convert', 'serialize', src[0].parent, '-o', out, '-v', 'Minimal')
+        if not (out / '03_night_city.devices.json').exists():
+            sys.exit('build_watson: extract: no %s' % (out / '03_night_city.devices.json'))
+
+    def moon(self):
+        """the moon's image for the env stage: CP2077's engine/textures/sky/moon.xbm uncooked to PNG
+        (work/moon; AtmosphereAreaSettings.moonTexture, a grey disc in its alpha)"""
+        out = self.work / 'moon'
+        print('== extract: moon -> %s' % self.moon_file(), flush=True)
+        if self.a.dry_run:
+            return
+        import cp2gltf
+        import re
+        rx = '^%s$' % re.escape(cp2gltf.SL.join(('engine', 'textures', 'sky', 'moon.xbm')))
+        cp2gltf.wolvenkit('uncook', *cp2gltf.archives(), '-r', rx, '-o', out,
+                          '--uext', 'png', '-v', 'Minimal')
+        if not self.moon_file().exists():
+            sys.exit('build_watson: extract: the moon fetch left no %s' % self.moon_file())
+        self.inp.setdefault('moon', str(self.moon_file()))
 
     def tiles_(self):
         """cp2gltf tiles in cp77_tiles' own words, then its tiles.key (without the key, the parts stage

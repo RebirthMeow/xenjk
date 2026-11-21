@@ -21,15 +21,19 @@ This (used by cp77_collision) replaced the fixed 45 s between compile starts: ea
 estimated peak, and the gate subtracts what the running processes have not yet grown into (each one's peak less its
 process tree's private bytes now). cp77_tiles' parts start the same way here, in place of their 10 s gap.
 
-Free commit is counted only up to physical RAM plus PAGE_ALLOW_GB: the commit limit grows with a
-system-managed page file, so a gate reading CommitLimit - CommitTotal passed by taking disk (the page file was 88.7 GB
-on C: with 31.8 GB of RAM). Our starts never push the commit charge past that cap."""
+Free commit is counted up to a cap the page file need not grow for: the commit limit grows with a system-managed page
+file only when the charge reaches it, so a gate reading CommitLimit - CommitTotal passed by taking disk (the page file
+was 88.7 GB on C: with 31.8 GB of RAM). The cap is the smallest limit the run has seen (limit_seen: the page file as it was) less
+PAGE_MARGIN_GB, and never under physical RAM plus PAGE_ALLOW_GB: our starts use the page file there is and never make
+it grow. (Capped at RAM + 16
+alone, tag 12's parts ran one at a time with 37 of a 63 GB limit committed and half the RAM free.)"""
 import ctypes
 import os
 import threading
 import time
 
-PAGE_ALLOW_GB = 16.0    # commit our starts may take beyond physical RAM (the page file backs it)
+PAGE_ALLOW_GB = 16.0    # commit our starts may take beyond physical RAM at least (the page file backs it)
+PAGE_MARGIN_GB = 4.0    # kept between the charge and the commit limit as it stands, so the page file does not grow
 POLL_S = 2.0
 
 
@@ -52,15 +56,50 @@ def commit():
     return p.CommitTotal * g, p.CommitLimit * g, p.PhysicalTotal * g
 
 
+def commit_cap(limit, phys):
+    """the commit charge our starts may reach: the limit as it stands less PAGE_MARGIN_GB (no page file growth), at
+    least physical RAM plus PAGE_ALLOW_GB, never past the limit"""
+    return min(limit, max(limit - PAGE_MARGIN_GB, phys + PAGE_ALLOW_GB))
+
+
+_LIMIT0 = [None]
+
+
+def limit_seen(limit):
+    """the smallest commit limit this run has seen (GB): the run's ledger folder keeps it for every process of the run,
+    else this process does. The limit grows with the page file under pressure (tag 14, 2026-11-20: 63 -> 87 GB while
+    a 30 GB chunk export ran beside a game client), and a cap that followed it would let the page file go on growing."""
+    import json
+    d = ledger_dir()
+    f = d / 'commit_limit0.txt' if d is not None else None      # (not *.json: ledger_others reads those)
+    seen = _LIMIT0[0]
+    if f is not None:
+        try:
+            seen = min(x for x in (seen, json.loads(f.read_text(encoding='utf-8'))) if x is not None)
+        except (OSError, ValueError, TypeError):
+            pass
+    if seen is None or limit < seen:
+        seen = limit
+        if f is not None:
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+                tmp = f.with_name('commit_limit0.%d.tmp' % os.getpid())
+                tmp.write_text(json.dumps(limit), encoding='utf-8')
+                _replace(tmp, f)
+            except OSError:
+                pass
+    _LIMIT0[0] = seen
+    return min(limit, seen)
+
+
 def memory():
-    """(available physical GB, free commit GB): the commit limit, capped at physical RAM plus PAGE_ALLOW_GB, less the
-    commit charge (Windows), else free swap"""
+    """(available physical GB, free commit GB): commit_cap() less the commit charge (Windows), else free swap"""
     import psutil
     avail = psutil.virtual_memory().available / 2 ** 30
     c = commit()
     if c is not None:
         total, limit, phys = c
-        return avail, min(limit, phys + PAGE_ALLOW_GB) - total
+        return avail, commit_cap(limit_seen(limit), phys) - total
     return avail, avail + psutil.swap_memory().free / 2 ** 30
 
 
@@ -87,6 +126,18 @@ _seq = [0]
 _seq_lock = threading.Lock()
 
 
+def _replace(tmp, f, tries=100):
+    """tmp renamed over f, tried again for up to 2 s while Windows refuses it (another process is reading f: the other
+    lane's ledger_others; a sharing violation, not a fault)"""
+    for i in range(tries):
+        try:
+            return tmp.replace(f)
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.02)
+
+
 def ledger_dir():
     d = os.environ.get(LEDGER_ENV)
     return None if not d else __import__('pathlib').Path(d)
@@ -107,7 +158,7 @@ def ledger_add(label, peak, pid=None):
     born = psutil.Process().create_time()     # (a reused pid is not its owner: the create times differ)
     tmp.write_text(json.dumps({'owner': os.getpid(), 'born': born, 'pid': pid, 'peak': peak, 'label': label}),
                    encoding='utf-8')
-    tmp.replace(f)
+    _replace(tmp, f)
     return f
 
 
@@ -122,7 +173,7 @@ def ledger_bind(f, pid):
     e['pid'] = pid
     tmp = f.with_suffix('.tmp')
     tmp.write_text(json.dumps(e), encoding='utf-8')
-    tmp.replace(f)
+    _replace(tmp, f)
 
 
 def ledger_remove(f):
@@ -149,24 +200,28 @@ def waiting_line(label, peak, margin, avail, room, out, others, since):
     if avail - out < peak + margin:
         held.append('available memory %.1f GB less %.1f reserved < %.1f needed' % (avail, out, peak + margin))
     if room - out < peak + margin:
-        held.append('commit room %.1f GB (capped at RAM + %g) less %.1f reserved < %.1f needed%s' % (
-            room, PAGE_ALLOW_GB, out, peak + margin, ': the commit cap allows one start at a time now'
+        held.append('commit room %.1f GB (the page file as it is) less %.1f reserved < %.1f needed%s' % (
+            room, out, peak + margin, ': the commit cap allows one start at a time now'
             if room < 2 * (peak + margin) else ''))
     return '%s waits %.0f s: %s%s' % (label, time.time() - since, '; '.join(held),
                                      ' (%.1f GB of it the other lane\'s)' % others if others else '')
 
 
-def ledger_others():
-    """what other processes' reservations may still take (GB): each live one's peak less its tree's private bytes"""
+def ledger_others(live=False):
+    """what other processes' reservations may still take (GB): each live one's peak less its tree's private bytes;
+    live: how many there are instead (a reservation its process has outgrown still holds its memory, so a start that
+    waits for room is not alone beside it: tag 15's decals started "alone" beside a 43 GB chunk export)"""
     import json
     d = ledger_dir()
     if d is None or not d.is_dir():
-        return 0.0
-    out = 0.0
+        return 0 if live else 0.0
+    out, n = 0.0, 0
     for f in d.glob('*.json'):
         try:
             e = json.loads(f.read_text(encoding='utf-8'))
         except (OSError, ValueError):
+            continue
+        if not isinstance(e, dict):     # (not a reservation)
             continue
         if e.get('owner') == os.getpid():
             continue
@@ -176,9 +231,10 @@ def ledger_others():
             except OSError:
                 pass
             continue
+        n += 1
         used = tree_private_gb(e['pid']) if e.get('pid') else 0.0
         out += max(0.0, float(e['peak']) - used)
-    return out
+    return n if live else out
 
 
 class Gate:
@@ -208,7 +264,7 @@ class Gate:
                     break
                 others = ledger_others()
                 with self.lock:
-                    alone = not self.running and others <= 0     # (the other lane's reservations count)
+                    alone = not self.running and not ledger_others(live=True)   # (the other lane's count)
                 if not alone and time.time() - said >= 60:
                     self.log(waiting_line(label, peak, self.margin, avail, room, out, others, since))
                     said = time.time()

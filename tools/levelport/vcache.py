@@ -34,6 +34,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 SRC = HERE / 'vcache.c'
+STAGEKEY_FILES = ['vcache.c']     # compiled at run time (_load): its source is in the stage keys (stagekey.py)
 sys.path.insert(0, str(HERE))
 import paths  # noqa: E402
 

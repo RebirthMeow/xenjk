@@ -232,7 +232,7 @@ axis maps (`CP_TO_GLTF`, `G2C`, `G = to_g M from_g`, `bend`'s frames, `box_map`,
   new result. The 2026-11-06 levels fix needed the `lv2` tag for this.
 - Fix: `stagekey.code_key(..., ['Materials._multilayer'])` and the two sizes in the tag.
 - Confidence: confirmed (read)
-- Status: deferred: stagekey keys top-level definitions only (Materials._multilayer cannot be a root), keying all of Materials re-bakes every multilayer on any Materials edit, and any new tag renames every bake file: owner's call
+- Status: done 2026-11-20, before tag 12: stagekey keys a class's methods and attributes (`Materials._multilayer` as a root follows what it reads on self); a bake file holds its key (`Materials.bake_code`: `_multilayer`'s code key with layer_size, detail_size and detail_slots) and one made by other code or sizes is baked again in its place, so the 39 GB of bakes are neither renamed nor doubled. A bake without a key is taken while the code key equals `LEGACY_BAKE_CODE` fc93196e5ec2b415, the same at all eight commits of cp77mat.py from the lv2 bakes (a6d789618) to master. Tests: tools/test_levelport_bake_key.py
 
 ### RL-121 P3 `levelcheck.py`: small items
 - `:804-805`: `Path(pk3).with_name('materials.json')` on a comma-separated pack list names no folder: no
@@ -301,7 +301,7 @@ Beyond the first pass's list (which already has these files' machine paths, the 
   `cp77_tiles.py:489-490` (`--sky cp_kabuki_haze` for every area): derive from `cp2gltf.AREAS`.
 - `tools/levelport/levelcheck.py:21`: "look/kabuki_collide.py vectorised": a script that is not in the repository.
 - No credentials or URLs in the eleven files. None carries a licence header (as the first pass notes).
-- Status: deferred (owner): the generators of signal_groups.json, ads.json/rendered and the sea mask are not in the repository (commit them, or say in the README those features are off without them); the research-folder contract paths and levelcheck.py:21 are comments, left for the comment sweep; the Watson defaults (--map cp_watson, --origin, --area night_city_b, --sky cp_kabuki_haze) are tool behaviour, a design choice
+- Status: generators done 2026-11-20 (before tag 12): `cp77_signals.py` (signal_groups.json; Kabuki's rebuilt equal but for its `sources` field), `cp77_ads_fetch.py` with `cp77_ads_dump.ps1` (ads.json and all 1,748 rendered ads byte-identical; WolvenKit 10.0.0-beta.1), `cp77_seamask.py` (the sea mask byte-identical from tiles/11; it reads a stitch of the Realistic Map 32K mod's tiles, a third-party input). Still open: the research-folder contract paths and levelcheck.py:21 are comments, left for the comment sweep; the Watson defaults (--map cp_watson, --origin, --area night_city_b, --sky cp_kabuki_haze) are tool behaviour, a design choice
 
 ## Liftability
 

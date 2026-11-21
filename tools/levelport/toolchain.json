@@ -1,0 +1,116 @@
+{
+ "about": "The outside tools the level port's Watson build was made with (toolchain.py checks a machine against it; --record rewrites the values from this machine). A tool is found by its environment variable (paths.py); 'pin' is what the reference build used: a different value is reported, and only --strict makes it an error, but a different build of a tool can change the outputs.",
+ "tools": [
+  {
+   "name": "python",
+   "check": "python",
+   "pin": "3.11.9",
+   "needed_by": "every tool",
+   "required": true
+  },
+  {
+   "name": "numpy",
+   "check": "module",
+   "pin": "1.26.4",
+   "needed_by": "every tool; in the material result cache's key",
+   "required": true
+  },
+  {
+   "name": "Pillow",
+   "module": "PIL",
+   "check": "module",
+   "pin": "11.3.0",
+   "needed_by": "materials, images; in the material result cache's key",
+   "required": true
+  },
+  {
+   "name": "psutil",
+   "check": "module",
+   "pin": "7.1.3",
+   "needed_by": "build_watson, memgate",
+   "required": true
+  },
+  {
+   "name": "scipy",
+   "check": "module",
+   "pin": "1.16.0",
+   "needed_by": "cp77_seamask",
+   "required": false
+  },
+  {
+   "name": "q3map2 (gltf2map default)",
+   "var": "Q3MAP2",
+   "check": "sha256",
+   "pin": "55d827f1ee1a9d0bcb51d37be0e90db085a139d6b1618b262c41da3839fd5da1",
+   "needed_by": "gltf2map (q3map2/README.md: plane_hash, cullsides_sweep, large_maps)",
+   "required": false
+  },
+  {
+   "name": "q3map2 (the hub)",
+   "var": "Q3MAP2_HUB",
+   "check": "sha256",
+   "pin": "483fa036938fcb49ffa38d088c353758f59ef11d89e617f2bf67836ef5ba5e3a",
+   "needed_by": "build_watson collision: the hub (the inputs' --q3map2)",
+   "required": true
+  },
+  {
+   "name": "q3map2 (the chunks)",
+   "var": "Q3MAP2_CHUNKS",
+   "check": "sha256",
+   "pin": "5c1f52030789b3288f57f3cbdbc11b8e1f07cfbb2fa2edd60de95575e5e45403",
+   "needed_by": "build_watson collision: the chunks, cooker A (exact_planes, brush_cook, brush_bin; the inputs' --q3map2-chunks)",
+   "required": true
+  },
+  {
+   "name": "libzstd",
+   "var": "XENJK_LIBZSTD",
+   "check": "sha256",
+   "pin": "b13d4f30b93c96823473d742dda0075f7334cba03a40c33d8a7dc282e37b1500",
+   "needed_by": "colpack (XBSZ chunk packs)",
+   "required": true
+  },
+  {
+   "name": "WolvenKit.CLI",
+   "var": "WOLVENKIT_CLI",
+   "check": "pe_version",
+   "pin": "10.0.0-beta.1",
+   "needed_by": "--extract (sectors, fetches, the moon), the decal and fx fetches (the inputs' wolvenkit_cli), cp77_ads_fetch; CP2077 2.5 or later needs 10.0.0-beta.1 or later (9.0.1 reads neither its sectors nor all of its TweakDB)",
+   "required": false
+  },
+  {
+   "name": ".NET for WolvenKit",
+   "var": "WOLVENKIT_DOTNET",
+   "check": "exists",
+   "needed_by": "WolvenKit.CLI",
+   "required": false
+  },
+  {
+   "name": "Cyberpunk 2077",
+   "var": "CP77_GAME",
+   "check": "pe_version",
+   "file": "bin/x64/Cyberpunk2077.exe",
+   "pin": "2.5",
+   "needed_by": "--extract and the generators: CP2077 2.5 or later (the reference kits' extraction kept in the work folder is 2.31's)",
+   "required": false
+  },
+  {
+   "name": "PowerShell 7",
+   "var": "PWSH",
+   "check": "pe_version",
+   "pin": "7.6.10",
+   "needed_by": "--extract (the lenient sector reader)",
+   "required": false
+  },
+  {
+   "name": "Blender",
+   "var": "BLENDER",
+   "check": "command",
+   "args": [
+    "--version"
+   ],
+   "pin": "Blender 5.1.1",
+   "needed_by": "cp2gltf decimate",
+   "required": false
+  }
+ ]
+}

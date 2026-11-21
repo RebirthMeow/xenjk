@@ -29,9 +29,9 @@ item of the ad's .inkwidget library. Two kinds of screens carry these:
   python -I cp77_ads.py index [--area night_city_b]        work/ad_index.json: every ad screen of the scanned sectors
   python -I cp77_ads.py stats [--area night_city_b]
 
-The TweakDB side (groups -> ads, ad -> library items per format) is an ads.json dumped with ads_dump.ps1 (WolvenKit
-10.0.0-beta.1 on the installed game's tweakdb.bin: patch 2.31's sectors, the new patch's ad records);
-the rendered items are its rendered/manifest.json. Converted levels are for local play only."""
+The TweakDB side (groups -> ads, ad -> library items per format) is an ads.json, the rendered items its
+rendered/manifest.json, both made by cp77_ads_fetch.py (its dump step runs cp77_ads_dump.ps1; WolvenKit
+10.0.0-beta.1 or later on the installed game's tweakdb.bin, CP2077 2.5 or later). Converted levels are for local play only."""
 import argparse
 import collections
 import hashlib

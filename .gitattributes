@@ -28,3 +28,8 @@
 # Bot personality files (.jkb): the game's parser (ai_util.c GetValueGroup) finds a group only with CRLF
 # line endings; an LF file loads no personality at all and the bot falls back to default Force powers.
 *.jkb text eol=crlf
+
+# Level-port kit inputs (tools/levelport/areas/<area>/): kept byte for byte, so a kit's env pack and settings match
+# the earlier kits' by CRC (build_watson's pack comparison).
+tools/levelport/areas/**/*.xenv -text
+tools/levelport/areas/**/kit-openjk.cfg -text

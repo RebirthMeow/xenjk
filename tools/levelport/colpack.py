@@ -25,6 +25,10 @@ import struct
 
 import numpy as np
 
+import sys
+from pathlib import Path
+if __name__ == '__main__':      # (run as python -I, the script's own folder is not on the path)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 import colcook
 import slabwriter
 
