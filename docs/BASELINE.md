@@ -88,6 +88,13 @@ by hand.
 - From then on every workstream branches from `baseline/1`, and a fix lands in the converter or the tree, never as an
   overlay on a kit.
 
+## Shelved (2026-11-21 22:40)
+
+Owner: no more Night City or xenjk development for now. Cleanup (owner's choices: kit only, all 2.31 data trashed, run
+folders keep notes, the owner empties the trash): `<2.5 research root>/SHELVED.md` lists what stays and how to resume.
+Kept: kit 15cam (and kit 15), every tag's inputs, scripts, logs and driver records. In trash, 327 GB when emptied: the
+2.5 extraction and tiles, the 2.31 data and the D: archive. A resume is a fresh `--extract` build (about 5 hours).
+
 ## Resume here (2026-11-21 02:00)
 
 **Merged (owner 2026-11-21):** `build/tag12-prep2` into master (63db73990): 2.5 is the documented process, and the guide
