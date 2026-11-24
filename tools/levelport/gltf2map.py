@@ -377,7 +377,15 @@ class Compiler:
                 if not any(q @ n > 1 - 1e-4 and abs(e - d) < 0.05 for q, e in planes):
                     planes.append((n, d))
             self.stats['hull_brushes'] += 1
-        polys = [mapio_poly for mapio_poly in _brush_polys(planes)]
+        if self.pool is not None:
+            # the faces' polygons (each plane clipped by every other: most of a conversion's time on box and hull
+            # shapes) on the pool; run()'s resolve finishes the brush in queue order, so the output is unchanged
+            return _PendingBrush(self.pool.submit(_brush_polys, planes), (planes, faces, convex, visible, contents,
+                                                                          extras))
+        return self.brush_finish(planes, _brush_polys(planes), faces, convex, visible, contents, extras)
+
+    def brush_finish(self, planes, polys, faces, convex, visible, contents, extras):
+        """brush_text's second half: the sides from the planes' polygons, their shaders, the brush (text or records)."""
         sides = []
         for i, ((n, d), poly) in enumerate(zip(planes, polys)):
             if poly is None:
@@ -716,6 +724,11 @@ class Compiler:
                 for b in body:
                     if isinstance(b, (str, colcook.Recs)):
                         flat.append(b)
+                        continue
+                    if isinstance(b, _PendingBrush):
+                        txt = self.brush_finish(b.args[0], b.future.result(), *b.args[1:])
+                        if txt:
+                            flat.append(txt)
                         continue
                     texts, st = b.result()
                     if isinstance(texts, colcook.Recs):     # (--cook: one node's records)
@@ -1167,6 +1180,13 @@ def _brush_polys(planes):
     return q3bsp.brush_polygons([(n, d) for n, d in planes])
 
 
+class _PendingBrush:
+    """A box or hull brush whose polygons are on the pool (Compiler.brush_text); run()'s resolve finishes it."""
+
+    def __init__(self, future, args):
+        self.future, self.args = future, args
+
+
 def q3map2_exe(exact=False, cook=False):
     """the q3map2 to run (see Q3MAP2 above), resolved once; exits naming the variable to set"""
     global Q3MAP2
@@ -1327,7 +1347,22 @@ def main(argv=None):
     ap.add_argument('--no-pack', action='store_true',
                     help='--cook: stop after cooking (with --package: <package>.json holds the BSP\'s sha256 and size, '
                          'what the package expands to); no pack')
+    ap.add_argument('--cook-python', action='store_true',
+                    help='--cook (implies --exact-planes): the brushes from colbrushes.py, q3map2 -brushbin\'s steps in '
+                         'Python, byte for byte its tiles; no q3map2 process (the shader scripts read from the game '
+                         'folder and the stage, as q3map2 would)')
+    ap.add_argument('--cook-gate', action='store_true',
+                    help='--cook, a check: the tiles from both q3map2 -brushbin and colbrushes.py, every tile\'s '
+                         'shaders, planes, brushes and sides and the two chunk BSPs compared byte for byte into '
+                         '<out>/gate/colbrushes_gate.json (the records kept there as records.npz for colbrushes.py '
+                         'gate); the Python BSP goes on')
     a = ap.parse_args(argv)
+    if a.cook_python and a.cook_gate:
+        sys.exit('--cook-python or --cook-gate, not both')
+    if a.cook_python or a.cook_gate:
+        if not a.cook:
+            sys.exit('--cook-python and --cook-gate need --cook')
+        a.exact_planes = True
     if (a.package or a.package_only) and not a.cook:
         sys.exit('--package needs --cook')
     if a.package_only and not a.package:
@@ -1336,7 +1371,7 @@ def main(argv=None):
         sys.exit('--cook needs --col-chunk --exact-planes')
     if a.exact_planes:
         BSP_EXTRA[:] = EXACT_BSP_ARGS
-    if a.exact_planes or a.cook:
+    if (a.exact_planes or a.cook) and not a.cook_python:
         q3map2_exe(a.exact_planes, a.cook)       # (resolved now: the exact and cook builds come from their variables)
     out = Path(a.out or paths.LEVELPORT / 'build' / ('%s-%s' % (a.name, time.strftime('%Y%m%d-%H%M%S')))).resolve()
     if out.exists() and any(out.iterdir()):
@@ -1416,10 +1451,20 @@ def main(argv=None):
                 return pk
         if a.cook:
             t1 = time.time()
-            q = [str(q3map2_exe()), '-bsp', '-game', 'ja', '-fs_basepath', str(GAME), '-fs_basepath', str(root), '-meta',
-                 *BSP_EXTRA, str(mapfile)]       # q3map2()'s -bsp command, the .map it would read last
-            held, comp.cook_recs = [comp.cook_recs], None      # (cook frees the records once q3map2 has them)
-            cooked, rep = colcook.cook(held, comp.cook_ws, q, a.tile_brushes, a.slim_snap, log, str(q3map2_exe().parent))
+            by = 'python' if a.cook_python else 'gate' if a.cook_gate else 'q3map2'
+            exe = None if by == 'python' else q3map2_exe()
+            q = [str(exe or 'q3map2'), '-bsp', '-game', 'ja', '-fs_basepath', str(GAME), '-fs_basepath', str(root),
+                 '-meta', *BSP_EXTRA, str(mapfile)]       # q3map2()'s -bsp command, the .map it would read last
+            held, comp.cook_recs = [comp.cook_recs], None      # (cook frees the records once they are cooked)
+            cooked, rep = colcook.cook(held, comp.cook_ws, q, a.tile_brushes, a.slim_snap, log,
+                                       str(exe.parent) if exe else None, brushes=by, gate_dir=out / 'gate')
+            (out / 'cook_report.json').write_text(json.dumps(
+                {k: v for k, v in rep.items() if k != 'read_kept'}, indent=1, default=str), encoding='utf-8')
+            if 'gate' in rep:
+                g = rep['gate']
+                print('  gate    %s: %s; chunk BSP %s (%s)' % (
+                    'IDENTICAL' if g['identical'] else 'DIFFERENT', g['compared'],
+                    'identical' if g['bsp']['identical'] else 'different', out / 'gate' / 'colbrushes_gate.json'))
             if rep['world_brushes'] != world:
                 sys.exit('--cook: %d world brushes cooked, the converter made %d' % (rep['world_brushes'], world))
             a.slim_snap = None                   # (cook slims as the step below would)
@@ -1432,9 +1477,11 @@ def main(argv=None):
             if a.no_pack:
                 print('cooked: %s, %d bytes, no pack  total %.0f s' % (a.name, len(cooked), time.time() - t0))
                 return None
-            print('  %-7s %6.1f s  %d tiles of %s brushes, %d kept; q3map2 %.1f s, merge %.1f s, slim %.1f s' % (
+            sec = rep['seconds']
+            print('  %-7s %6.1f s  %d tiles of %s brushes, %d kept; %s merge %.1f s, slim %.1f s' % (
                 'cook', time.time() - t1, len(rep['tiles']), '/'.join(str(n) for n in rep['tiles']), rep['brushes'],
-                rep['seconds']['q3map2'], rep['seconds']['merge'], rep['seconds']['slim']))
+                ''.join('%s %.1f s, ' % (k, sec[k]) for k in ('q3map2', 'shaders', 'python') if k in sec),
+                sec['merge'], sec['slim']))
         elif a.tile_brushes and world > a.tile_brushes:
             # a chunk of more brushes than one q3map2 run should hold: tiles merged as a chunk (each tile's copy of the
             # shell dropped). With --exact-planes a tile compiled alone gives the whole compile's brushes bit for bit

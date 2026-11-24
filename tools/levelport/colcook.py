@@ -16,6 +16,8 @@ The result is the chunk BSP the text path writes, byte for byte (the gate: gltf2
 packs; docs/levelport-collision.md section 37: 195 of 195 chunks of one kit). Nothing is written to
 disk on the way: no .map, no tiles, no BSP but the one the caller packs.
 """
+import hashlib
+import json
 import struct
 import subprocess
 import threading
@@ -217,18 +219,10 @@ def entity_text(worldspawn):
     return ('{\n' + body + '}\n').encode('utf-8') + b'\0'
 
 
-def cook(r, worldspawn, q3map2_args, tile_brushes=500000, slim_snap=0.0, log=None, cwd=None, groups=None):
-    """The chunk BSP's bytes and a report. q3map2_args: the q3map2 command up to -brushbin (the exe, -bsp, -game,
-    basepaths, -meta, the exact-planes options) and the .map name it would read, last. groups: the tiles' brushes
-    given (a check), else colmerge.split's. r may be given as a one-item list, which cook empties: the records are
-    then freed once q3map2 has read them, before the merge."""
+def brushbin_tiles(r, groups, q3map2_args, log=None, cwd=None):
+    """q3map2 -brushbin on a pipe: per tile (shaders, planes, brushes, sides, (read, kept)), and the seconds.
+    q3map2_args: the q3map2 command up to -brushbin and the .map name it would read, last."""
     t0 = time.time()
-    if isinstance(r, list):
-        r = r.pop()
-    if groups is None:
-        groups, n_world, n_sky = tiles(r, tile_brushes)
-    else:
-        n_world, n_sky = None, None
     cmd = list(q3map2_args[:-1]) + ['-brushbin', '-', '-', q3map2_args[-1]]
     logf = open(log, 'a', encoding='utf-8') if log else subprocess.DEVNULL
     if log:
@@ -247,15 +241,13 @@ def cook(r, worldspawn, q3map2_args, tile_brushes=500000, slim_snap=0.0, log=Non
             err.append(e)
     th = threading.Thread(target=feed, daemon=True)
     th.start()
-    ent = entity_text(worldspawn)
-    parts, counts = [], []
+    out = []
     try:
         for _ in groups:
             if _read(p.stdout, 8) != b'XTILE001':
                 raise RuntimeError('q3map2 -brushbin: not a tile record')
             sh, pl, br, sd = _vec(p.stdout, SHADER), _vec(p.stdout, PLANE), _vec(p.stdout, BRUSH), _vec(p.stdout, SIDE)
-            counts.append(struct.unpack('<II', _read(p.stdout, 8)))
-            parts.append(tile_bsp(sh, pl, br, sd, ent))
+            out.append((sh, pl, br, sd, struct.unpack('<II', _read(p.stdout, 8))))
         if _read(p.stdout, 8) != b'XDONE001':
             raise RuntimeError('q3map2 -brushbin: no end record')
     except BaseException:
@@ -268,8 +260,21 @@ def cook(r, worldspawn, q3map2_args, tile_brushes=500000, slim_snap=0.0, log=Non
             logf.close()
     if rc or err:
         raise RuntimeError('q3map2 -brushbin exit %d %s (see %s)' % (rc, err[:1], log))
-    r = None                    # (the records, read: freed here unless the caller holds them)
+    return out, time.time() - t0
+
+
+def basepaths_of(q3map2_args):
+    """the -fs_basepath folders of a q3map2 command, in order"""
+    a = [str(x) for x in q3map2_args]
+    return [a[k + 1] for k in range(len(a) - 1) if a[k] == '-fs_basepath']
+
+
+def merge_tiles(tiles_out, worldspawn, slim_snap):
+    """the chunk BSP's bytes from -brushbin's tiles (colmerge.merge, colbsp.slim): (data, merge report, slim report,
+    merge seconds, slim seconds)"""
     t1 = time.time()
+    ent = entity_text(worldspawn)
+    parts = [tile_bsp(sh, pl, br, sd, ent) for sh, pl, br, sd, _ in tiles_out]
     base, replace, rep = colmerge.merge(None, parts, chunk=True)
     # the lumps merge copies from the base (its entities; lightmaps: none), the file laid out as the base's
     replace.update({i: base.lump(i, np.dtype(np.uint8)).copy() for i in range(colbsp.HEADER_LUMPS) if i not in replace})
@@ -284,7 +289,67 @@ def cook(r, worldspawn, q3map2_args, tile_brushes=500000, slim_snap=0.0, log=Non
         lumps, srep = colbsp.slim(b, slim_snap)
         data = colbsp.to_bytes(b, lumps)
         del b, lumps
+    return data, rep, srep, t2 - t1, time.time() - t2
+
+
+def cook(r, worldspawn, q3map2_args, tile_brushes=500000, slim_snap=0.0, log=None, cwd=None, groups=None,
+         brushes='q3map2', basepaths=None, gate_dir=None):
+    """The chunk BSP's bytes and a report. q3map2_args: the q3map2 command up to -brushbin (the exe, -bsp, -game,
+    basepaths, -meta, the exact-planes options) and the .map name it would read, last. groups: the tiles' brushes
+    given (a check), else colmerge.split's. r may be given as a one-item list, which cook empties: the records are
+    then freed once they are cooked, before the merge.
+
+    brushes: 'q3map2' (its -brushbin on a pipe), 'python' (colbrushes.py: the same tiles with no q3map2 process;
+    q3map2_args may be None, basepaths then the -fs_basepath folders whose shader scripts it reads) or 'gate' (both on
+    the same records: every tile's arrays and the two chunk BSPs compared byte for byte into
+    <gate_dir>/colbrushes_gate.json, the records and q3map2's tiles kept in <gate_dir>/records.npz for
+    `colbrushes.py gate`; the Python BSP is returned)."""
+    t0 = time.time()
+    if isinstance(r, list):
+        r = r.pop()
+    if groups is None:
+        groups, n_world, n_sky = tiles(r, tile_brushes)
+    else:
+        n_world, n_sky = None, None
+    if brushes not in ('q3map2', 'python', 'gate'):
+        raise ValueError('brushes: %r' % brushes)
+    if basepaths is None and q3map2_args is not None:
+        basepaths = basepaths_of(q3map2_args)
+    secs = {}
+    ref = got = grep = None
+    if brushes in ('q3map2', 'gate'):
+        ref, s = brushbin_tiles(r, groups, q3map2_args, log, cwd)
+        secs['q3map2'] = round(s, 2)
+    if brushes in ('python', 'gate'):
+        import colbrushes
+        t = time.time()
+        table = colbrushes.ShaderTable.from_basepaths(basepaths, cache=colbrushes.default_cache())
+        secs['shaders'] = round(time.time() - t, 2)
+        t = time.time()
+        got = colbrushes.cook_tiles(r, groups, table)
+        secs['python'] = round(time.time() - t, 2)
+    if brushes == 'gate':
+        gd = Path(gate_dir)
+        gd.mkdir(parents=True, exist_ok=True)
+        colbrushes.save_dump(gd / 'records.npz', r, groups, basepaths, ref)
+        grep = colbrushes.gate(ref, got)
+    use = got if got is not None else ref
+    counts = [t[4] for t in use]
+    r = None                    # (the records, read: freed here unless the caller holds them)
+    data, rep, srep, s_merge, s_slim = merge_tiles(use, worldspawn, slim_snap)
+    secs.update({'merge': round(s_merge, 1), 'slim': round(s_slim, 1)})
+    if grep is not None:
+        rdata = merge_tiles(ref, worldspawn, slim_snap)[0]
+        grep['bsp'] = {'identical': bytes(rdata) == bytes(data), 'bytes_python': len(data),
+                       'bytes_q3map2': len(rdata), 'sha256_python': hashlib.sha256(data).hexdigest(),
+                       'sha256_q3map2': hashlib.sha256(rdata).hexdigest()}
+        grep['identical'] = grep['identical'] and grep['bsp']['identical']
+        grep['seconds'] = dict(secs)
+        (gd / 'colbrushes_gate.json').write_text(json.dumps(grep, indent=1), encoding='utf-8')
+        del rdata
     rep.update({'tiles': [len(g) for g in groups], 'world_brushes': n_world, 'sky_brushes': n_sky,
-                'read_kept': counts, 'slim': srep, 'file_bytes': len(data),
-                'seconds': {'q3map2': round(t1 - t0, 1), 'merge': round(t2 - t1, 1), 'slim': round(time.time() - t2, 1)}})
+                'read_kept': counts, 'slim': srep, 'file_bytes': len(data), 'brushes_by': brushes,
+                'seconds': secs, 'total_seconds': round(time.time() - t0, 1)})
+    if grep is not None:
+        rep['gate'] = {k: grep[k] for k in ('identical', 'compared', 'bsp')}
     return data, rep
