@@ -880,6 +880,9 @@ class Materials:
         return name
 
 
+NO_TOP = set()      # round trees written without a baked top image (convert); write() reports them
+
+
 def convert(srt_path, srt, folder, mats, missing, img_root=None, bbn=None, bbc=None, tops=None):
     """One SRT JSON into glb primitives (with bbn and bbc, the billboard as a last LOD; tops: tops.json's entries).
     Returns (prims, slots, lods, stats)."""
@@ -943,7 +946,9 @@ def convert(srt_path, srt, folder, mats, missing, img_root=None, bbn=None, bbc=N
             parts = [('card', card_mesh(bb), dict(normal=bbc.add(src) if src else '', card=card),
                       {'part': 'card', 'views': n, 'spread': round(spread, 3)})]
             if top is None:
-                missing.add('top image of %s (run --bake-tops in Blender)' % srt_path)
+                # --bake-tops renders from the LOD 0 glbs this write produces, so a fresh work folder's first write has
+                # no tops: the billboard goes without its top card until the bake and a second write
+                NO_TOP.add(srt_path)
             else:
                 parts.append(('top', top_mesh(top), dict(images=(top['colour'], top['normal']), card={'type': 2}),
                               {'part': 'top', 'side': round(top['side'], 3), 'z': round(top['z'], 3)}))
@@ -1045,6 +1050,11 @@ def write(work, uncook, img_root=None, update=False, backup='pre-update', rebase
         for m in sorted(missing):
             print('   ', m)
         raise SystemExit(2)
+    if NO_TOP:
+        print('W3TREES %d trees have no top image yet (their billboards lack the top card): run --bake-tops in '
+              'Blender, then write again' % len(NO_TOP))
+        for p in sorted(NO_TOP):
+            print('   ', p)
 
     if update:
         keep = os.path.join(work, 'meshes', backup)

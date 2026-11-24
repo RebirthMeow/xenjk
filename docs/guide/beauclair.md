@@ -267,7 +267,8 @@ python tools/levelport/w3merge.py --work <work> --stage <stage> --tag <name> --d
 
 `w3trees` converts every `srt` placement into a `w2mesh` placement. Re-running starts from its `*.pre-trees.json`
 copies, so trees never stack. For billboards it bakes the top cards from LOD 0 in Blender (`--bake-tops [--trees
-a,b]`), then a plain-Python write (`python tools/levelport/w3trees.py --work <work> --update`) rewrites only the trees
+a,b]`). On a fresh work folder that takes three runs: a write (it reports the trees still without a top image), the
+bake from the LOD 0 glbs it wrote, and a second write. Afterwards a plain-Python write (`python tools/levelport/w3trees.py --work <work> --update`) rewrites only the trees
 on a work folder that later steps have built on. `w3flags` takes one cloth layer at a time (the castle's
 `palace/main/solid/flags/decorations_ns.w2l` is its default). Its `--drop box_cloth.w2mesh` removes the blockout
 boxes the game hides.
