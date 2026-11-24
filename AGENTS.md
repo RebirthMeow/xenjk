@@ -31,14 +31,29 @@ Update the handoff when the next action changes and the scorecard when results
 change; keep detailed evidence in dated records.
 
 Changes to the installed game require that task scope. Preserve native motion,
-resources and lifecycle except for declared fixture setup/interventions. Follow
-the inherited archive-only filesystem policy: cleanup is not permission for
-permanent deletion. Preserve failed evidence and unrelated working changes.
-Agents never delete research data. Cleanup moves regenerable bulk (world graph
-snapshots, bot-only world demos, binaries, build trees; a session a person
-played is never regenerable, its demos included) to `.codex-trash/` with
-`tools/research_shed.py`; only the owner empties it. Logs and results stay put.
-List live dependencies in `.codex-research/KEEP.txt`.
+resources and lifecycle except for declared fixture setup/interventions.
+Preserve failed evidence and unrelated working changes.
+
+Junk is cleaned out continuously (owner, 2026-11-24). Every file is one of:
+- **Keep:** what a person made or nothing can regenerate: sessions a person
+  played and their demos, the owner's screenshots and camera files, notes, logs,
+  results, scripts, finished videos, installed copies. Never trashed.
+- **Live:** each lane's newest checked build, anything installed, named by a
+  running process or `RUNNING` file, or listed in `.codex-research/KEEP.txt`.
+- **Junk:** regenerable bulk with no remaining use: a prior version whose only
+  significance is being a prior version, staging once its pack is written,
+  binaries, build trees, world graph snapshots, bot-only world demos, raw frames
+  once their sheet exists. A prior version still being compared against, or kept
+  as the backup while risky work goes on, is live, not junk.
+
+Junk is judged by use, not age, and by the work itself, not a standalone sweep:
+the session doing the work decides, as a step of that work, when something it
+made has served its purpose (a comparison settled, a risky change checked, a
+pack written, a version installed). Move it to `.codex-trash/<stamp>/` then, with `tools/research_shed.py` (research) or
+`tools/levelport/retain.py` (level-port builds); a stamp's `MANIFEST.tsv`
+restores it. Permanent deletion, emptying the trash included, always needs the
+owner's yes: say what goes and how much space it frees, then ask. Report a drive
+running low instead of filling it.
 
 ## Code contracts
 
