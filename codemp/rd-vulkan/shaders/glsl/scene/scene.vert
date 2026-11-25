@@ -35,7 +35,7 @@ layout(std430, set = 0, binding = 0) readonly buffer Visible { uint visible[]; }
 layout(std430, set = 0, binding = 1) readonly buffer Instances { Instance inst[]; };
 layout(std140, set = 0, binding = 5) uniform Frame { vec4 eye; vec4 gridOrigin; ivec4 gridDims; vec4 skyAmbient; } fr;
 	// scene.frag's frame block, its first members: the eye, w r_sceneHideScale while the hide and near distances fade (0:
-	// they pop); skyAmbient.w r_sceneProxyPush
+	// they pop); gridDims.w the fade's band (units, r_sceneHideBand); skyAmbient.w r_sceneProxyPush
 layout(std430, set = 0, binding = 19) readonly buffer Meshes { Mesh meshes[]; };
 
 layout(location = 0) out vec3 vPos;
@@ -69,12 +69,13 @@ layout(location = 14) flat out uint vCoarse;	// 1: the triangle shades coarse (V
 // (this module feeds the prepass and the lit pass alike), so the emissive one wins; the pixel's position is unchanged.
 const float EMISSIVE_PULL = 0.1, EMISSIVE_PULL_PER_UNIT = 0.001;	// game units, and per unit of distance
 // a mesh fades out over the band before its hide distance and a far proxy in over the band before its near distance
-// (scene_cull.comp draws it from there): 40 m, or half the distance when that is nearer, times r_sceneHideScale. On
+// (scene_cull.comp draws it from there): r_sceneHideBand (40 m), or half the distance when that is nearer, times r_sceneHideScale. On
 // Watson's scene-4 a building shell's hide most often equals its proxy's near (median 82 m past it): at equal distances
 // the two dithers are complementary, past them both are drawn, so only a hide short of the proxy's near leaves a hole
 // (as it does popped)
-const float HIDE_FADE = 40.0 * 37.5;
-float FadeBand( float x ) { return min( HIDE_FADE, 0.5 * x ) * fr.eye.w; }
+// The band's width is r_sceneHideBand (default 40 m), in units in fr.gridDims.w; at a long band an instance stood half
+// faded wherever the camera stopped in it (a parapet whose proxy shell lacked it showed as a ghost, Beauclair 2026-11-25)
+float FadeBand( float x ) { return min( float( fr.gridDims.w ), 0.5 * x ) * fr.eye.w; }
 
 // bit 27 of info.z (w3scene.py): a proxy's member. Bits 0-23 hold the proxy's centre as a signed byte an axis (x, y, z),
 // in 16-unit steps from this instance's centre: its hide distance is measured from there, as its proxy's near distance is

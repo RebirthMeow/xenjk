@@ -123,7 +123,10 @@ static cvar_t *r_sceneClusterStats;
 static cvar_t *r_sceneHideScale;
 static cvar_t *r_sceneHideFade;
 static cvar_t *r_sceneHideDither;
+static cvar_t *r_sceneHideBand;
 static cvar_t *r_sceneCardBlend;
+// r_sceneHideBand in units (scene.vert and scene_cull.comp: the hide and near distances' fade band)
+static int SceneHideBand( void ) { return (int)( MAX( r_sceneHideBand->value, 1.0f ) * 37.5f ); }
 static cvar_t *r_sceneCutoutCoverage;
 static cvar_t *r_sceneWaterBed;
 static cvar_t *r_sceneLitEqual;
@@ -7827,6 +7830,7 @@ void R_SceneVkBeginFrame( void )
 	fr->eye[3] = sc.fadeOn ? r_sceneHideScale->value : 0.0f;
 	Com_Memcpy( fr->gridOrigin, sc.gridOrigin, sizeof( fr->gridOrigin ) );
 	Com_Memcpy( fr->gridDims, sc.gridDims, sizeof( fr->gridDims ) );
+	fr->gridDims[3] = SceneHideBand();	// (scene.vert's fade band, units)
 	sscanf( Env( r_sceneAmbient )->string, "%f %f %f", &fr->skyAmbient[0], &fr->skyAmbient[1], &fr->skyAmbient[2] );
 	VectorScale( fr->skyAmbient, 0.35f, fr->groundAmbient );
 	fr->groundAmbient[3] = Com_Clamp( 0.0f, 0.95f, r_sceneFogLightKnee->value );	// (scene_fog.comp)
@@ -8253,7 +8257,7 @@ void R_SceneVkBeginFrame( void )
 		rv[16] = -sc.sunDir[0];
 		rv[17] = -sc.sunDir[1];
 		rv[18] = -sc.sunDir[2];
-		rv[19] = sc.fadeOn ? 1.0f : 0.0f;	// a far proxy drawn from within its near distance, fading in
+		rv[19] = sc.fadeOn ? (float)SceneHideBand() : 0.0f;	// a far proxy drawn from within its near distance (less the band), fading in
 		VectorCopy( sc.views[eyeView].origin, rv + 20 );	// every view's hide distances from the eye (r_sceneHideScale)
 		rv[23] = MAX( r_sceneHideScale->value, 0.0f );
 		rv[24] = (float)Com_Clamp( 0, 2, r_sceneProxyDebug->integer );	// a look check: 1 no far proxy, 2 every one at any distance
@@ -9458,6 +9462,7 @@ void R_SceneRegister( void )
 	r_sceneWaterBed		= ri.Cvar_Get( "r_sceneWaterBed",		"0",						CVAR_ARCHIVE_ND, "Render scene: the water's bed (its clarity and shore) from a full-size depth of each pixel's samples, their nearest and farthest and the share at the nearest, written by the occlusion pyramid's first dispatch (8 B a pixel: 32-bit floats, allocated when on at map load; the eye's view only); 0: the pyramid's half-size farthest" );
 	r_sceneCutoutCoverage = ri.Cvar_Get( "r_sceneCutoutCoverage", "1",				CVAR_ARCHIVE_ND, "Render scene: cutouts (leaves, chain-link fences, grates) cover each MSAA sample by their alpha there (alpha to coverage, from its gradient: softer, steadier edges) instead of one alpha test per pixel, which MSAA cannot smooth (GPU-driven draws, r_sceneLitEqual, MSAA 2, 4 or 8); the sun and light shadows keep the test. 0: one test per pixel" );
 	r_sceneHideDither	= ri.Cvar_Get( "r_sceneHideDither",		"2",						CVAR_ARCHIVE_ND, "Render scene, r_sceneHideFade: the fade's pattern; 0 interleaved gradient noise, whole pixels; 1 a blue noise tile, whole pixels; 2 (default) the depth prepass keeps that share of each pixel's MSAA samples, so the resolve blends the two (GPU-driven draws, r_sceneLitEqual and MSAA, else 1; whole-pixel patterns showed as a static checker on every mesh and proxy in a fade band)" );
+	r_sceneHideBand		= ri.Cvar_Get( "r_sceneHideBand",		"40",						0, "Render scene, r_sceneHideFade: the band in metres before an instance's hide distance (and a far proxy's near distance) over which it fades, or half the distance when that is nearer. A long band leaves everything in it half faded wherever the camera stops (a building whose proxy shell lacks its parapet shows it as a ghost); a short one fades like a quick pop while moving (at least 1). Not archived: a map's launcher sets its own (Beauclair 8)" );
 	r_sceneCardBlend	= ri.Cvar_Get( "r_sceneCardBlend",		"1",						CVAR_ARCHIVE_ND, "Render scene: a Witcher 3 SpeedTree billboard card turning between two of its stored views blends them (1) instead of picking one per pixel by a dither (0: a static checker of the two views on far trees, 2 x 2 under r_sceneVrs)" );
 	r_sceneLitEqual		= ri.Cvar_Get( "r_sceneLitEqual",		"1",						CVAR_ARCHIVE_ND, "Render scene: the GPU-driven lit pass tests depth EQUAL against the prepass (the same pixels as LESS_OR_EQUAL, bit for bit; a fragment the fade's dither discarded in the prepass is not shaded: Watson 0.14 ms a frame, up to 0.43); 0 LESS_OR_EQUAL" );
 	r_sceneDecals		= ri.Cvar_Get( "r_sceneDecals",		"1",						CVAR_ARCHIVE_ND, "Render scene: CP2077's mesh decals (the scene's blend materials flagged 0x40) project onto the surface behind them within their depth threshold, their albedo and normal blended into it before it is lit (a DBuffer after the eye's prepass); 0 drawn as blends over it. Read at map load" );
