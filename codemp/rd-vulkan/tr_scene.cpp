@@ -490,6 +490,8 @@ void RE_BeginScene( const refdef_t *fd ) {
 	// sun values as rend2 sets them (rend2 also needs r_depthPrepass, which rd-vulkan does not have); the shading
 	// is on for r_sunlightMode when a q3gl2_sun was read with r_sunShadows (tr.sunShadows) or r_forceSun, where
 	// rend2 renders its sun shadow cascades
+	if ( !( tr.refdef.rdflags & RDF_NOWORLDMODEL ) )
+		R_SceneCycle();	// the render scene's day/night cycle: its sun and look values by the clock (vk_scene.cpp)
 	VectorCopy( tr.sunDirection, tr.refdef.sunDir );
 	tr.refdef.sunDir[3] = 0.0f;
 	R_SceneSunDir( tr.refdef.sunDir );	// r_sceneMoonLight: at night from the render scene's moon (vk_scene.cpp)

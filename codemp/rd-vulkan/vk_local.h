@@ -1630,6 +1630,7 @@ void		vk_sun_shadow_attach( int layer );
 qboolean	vk_scene_view_skipped( int sceneView );
 qboolean	R_SceneCharSun( vec3_t col );
 void		R_SceneSunDir( vec4_t sunDir );
+void		R_SceneCycle( void );	// the render scene's day/night cycle, each world scene before its sun is read
 uint32_t	vk_scene_shadow_key( void );
 void		vk_begin_hair_map_render_pass( void );
 qboolean	vk_depth_extract_half( void );

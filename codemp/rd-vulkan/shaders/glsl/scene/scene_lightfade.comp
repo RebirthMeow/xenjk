@@ -22,7 +22,8 @@ layout(push_constant) uniform Push {
 					// light with none, per unit of its radius (0: none)
 	vec4 cap;		// x: that default's most (units); y: 1 when a light flagged allowDistantLight shows as a stand-in past its
 					// hide (r_sceneLightDistant: a plain point, scene_distant.comp and scene.frag); z: 1 when such a light
-					// keeps shining past its hide instead (r_sceneLightHideDistant)
+					// keeps shining past its hide instead (r_sceneLightHideDistant); w: the day/night cycle's night-only lamps'
+					// share now (vk_scene.cpp Scene_LampNight; -1 no cycle)
 } pc;
 
 void main()
@@ -57,6 +58,13 @@ void main()
 	}
 	// the stand-in takes over as the full light fades out (no pop), and only past where the full light starts fading;
 	// only a light that lights surfaces has one (a haze-only one would take one of the cell's few places for nothing)
-	lightFade[i] = vec4( fade, strength, distant && hide > 0.0 && ( lightKinds[i] & 1u ) != 0u ? 1.0 - fade : 0.0, 0.0 );
+	// the day/night cycle (cap.w: the night-only lamps' share now, 0..1; negative without a cycle): a night-only light
+	// (kind bit 2) at that share, a day-only one (bit 3) at the rest; its stand-in with it
+	float lit = 1.0;
+	if ( pc.cap.w >= 0.0 )
+		lit = ( lightKinds[i] & 4u ) != 0u ? pc.cap.w : ( lightKinds[i] & 8u ) != 0u ? 1.0 - pc.cap.w : 1.0;
+	const float standIn = distant && hide > 0.0 && ( lightKinds[i] & 1u ) != 0u ? 1.0 - fade : 0.0;
+	fade *= lit;
+	lightFade[i] = vec4( fade, strength, standIn * lit, 0.0 );
 	liveKinds[i] = fade > 0.0 ? lightKinds[i] : 0u;
 }

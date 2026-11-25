@@ -310,6 +310,8 @@ typedef struct {
 	float		skyGround[4];	// r_sceneSkyGround: rgb the distant land under the horizon (linear; all 0: the sky darkened, as
 								// before), w the power of the zenith-to-horizon blend (r_sceneSkyCurve)
 	float		cards[4];		// x: 1 when a SpeedTree card blends its two stored views (r_sceneCardBlend), 0 dithers them
+	float		skySide[4];		// r_sceneSkySunSide: the horizon's colour toward a low sun, w its share
+	float		skyGlow[4];		// r_sceneSkyGlow: the glow round the light (the moon by night), w its falloff
 } sceneFrame_t;
 
 // a traffic signal's cycle (maps/<map>.signals, cp2gltf SceneSignals): its group's program from its intersection's

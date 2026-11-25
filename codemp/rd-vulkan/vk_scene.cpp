@@ -258,6 +258,9 @@ static cvar_t *r_sceneMoonPath;
 static cvar_t *r_sceneMoonLight;
 static cvar_t *r_sceneMoonImage;
 static cvar_t *r_sceneClock;
+static cvar_t *r_sceneCycle;
+static cvar_t *r_sceneSkySunSide;
+static cvar_t *r_sceneSkyGlow;
 static image_t *sceneMoonImage;	// r_sceneMoonImage's, found at the scene's load (NULL: no moon)
 cvar_t *r_sceneReflectSteps;
 cvar_t *r_sceneReflectFar;
@@ -6607,6 +6610,14 @@ Scene environments: maps/<map>.xenv, version 1 (or the file r_sceneEnv names), r
   sun <r> <g> <b> <intensity> <yaw> <elevation>   the sun in place of the map's q3gl2_sun (its order; degrees)
   <cvar> <value>    one of the look cvars (Scene_LoadEnv's list): its value while the map is loaded; set again after
                     the load, the cvar's own wins (the console's)
+The day/night cycle (tools/levelport/w3env.py --hours), after the lines above:
+  cycle <hour>      the clock's hour as the map loads (r_sceneClock -1); r_sceneCycle runs it (real minutes a game day)
+  lamps <on> <off> <fade>   the night-only lights (type bit 20; maps/<map>.xlt marks them) light from <on> and go out
+                    from <off> (hours), over <fade> hours; the day-only ones (bit 21) the other way round. With a cycle
+                    no light is dropped at the load: the clock fades them (scene_lightfade.comp)
+  hour <h>          a keyframe: the `sun` and look values after it, up to the next `hour`, are the environment at h; the
+                    clock blends the two keyframes around it (each look value both give as numbers, the sun's light and
+                    direction; the direction steps once a game minute so the far cascade's cache holds between steps)
 The look values are read through Env( cvar ), which gives the environment's while the cvar is as it was at the load.
 */
 #define SCENE_ENV_VARS	64	// (more than the look values, 50: a line each; was 32)
@@ -6619,6 +6630,19 @@ typedef struct {
 static sceneEnvVar_t	sceneEnvVars[SCENE_ENV_VARS];
 static int				sceneEnvCount;
 static qboolean			sceneEnvDay;
+typedef struct {	// a day/night cycle's keyframe (`hour`)
+	float		hour;
+	qboolean	hasSun;
+	vec3_t		sunLight, sunDir;	// as a `sun` line sets tr.sunLight and tr.sunDirection
+	int			num[SCENE_ENV_VARS];	// per sceneEnvVars entry: how many numbers this keyframe gives (0 none)
+	float		val[SCENE_ENV_VARS][4];
+} sceneEnvKey_t;
+static std::vector<sceneEnvKey_t>	sceneEnvKeys;	// sorted by hour; empty: no cycle
+static float			sceneCycleStart;
+static float			sceneLampOn = -1.0f, sceneLampOff, sceneLampFade;	// (sceneLampOn < 0: no lamps line)
+static int				sceneCycleT0 = INT_MIN;	// the refdef time the clock started from (the first frame after the load)
+static float			sceneLampNow = -1.0f;	// the night-only lamps' share this frame (-1: no cycle)
+static char				sceneEnvMap[MAX_QPATH];	// the map whose environment was read (its .xlt beside it)
 
 const cvar_t *Scene_Env( const cvar_t *cv )
 {
@@ -6632,12 +6656,18 @@ const cvar_t *Scene_Env( const cvar_t *cv )
 // `scene` names) in sceneMap
 static void Scene_LoadEnv( const char *bspName, char *sceneMap, int size )
 {
-	static cvar_t **const look[] = { &r_sceneSun, &r_sceneAmbient, &r_sceneExposure, &r_sceneEmissive, &r_sceneGlow, &r_sceneGlowThreshold, &r_sceneTonemap, &r_sceneFog, &r_sceneFogDensity, &r_sceneFogHeight, &r_sceneFogMax, &r_sceneFogLight, &r_sceneFogPhase, &r_sceneFogAlbedo, &r_sceneFogFar, &r_sceneFogStart, &r_sceneFogMoon, &r_sceneGradeExposure, &r_sceneLightScale, &r_sceneGrade, &r_sceneFogLightMax, &r_sceneDayLamps, &r_sceneSky, &r_sceneSkyZenith, &r_sceneSkyHorizon, &r_sceneSkySun, &r_sceneSkyGround, &r_sceneSkyCurve, &r_sceneCharSun, &r_sceneNightOnlyByDay, &r_sceneDayOnlyAtNight, &r_sceneWet, &r_sceneFoliage, &r_sceneFoliageWrap, &r_sceneFoliageTrans, &r_sceneFoliageAO, &r_sceneAO, &r_sceneAORadius, &r_sceneShadowSoft, &r_sceneShadowFar, &r_sceneClouds, &r_sceneCloudScale, &r_sceneCloudEdge, &r_sceneCloudLight, &r_sceneCloudWind, &r_sceneEmissiveExposure, &r_sceneEmissiveRef, &r_sceneMoon, &r_sceneMoonSize, &r_sceneMoonGlow, &r_sceneMoonPath, &r_sceneMoonLight, &r_sceneClock, &r_sceneAutoExposure, &r_sceneExposureWindow, &r_sceneWindowExposure };
+	static cvar_t **const look[] = { &r_sceneSun, &r_sceneAmbient, &r_sceneExposure, &r_sceneEmissive, &r_sceneGlow, &r_sceneGlowThreshold, &r_sceneTonemap, &r_sceneFog, &r_sceneFogDensity, &r_sceneFogHeight, &r_sceneFogMax, &r_sceneFogLight, &r_sceneFogPhase, &r_sceneFogAlbedo, &r_sceneFogFar, &r_sceneFogStart, &r_sceneFogMoon, &r_sceneGradeExposure, &r_sceneLightScale, &r_sceneGrade, &r_sceneFogLightMax, &r_sceneDayLamps, &r_sceneSky, &r_sceneSkyZenith, &r_sceneSkyHorizon, &r_sceneSkySun, &r_sceneSkyGround, &r_sceneSkyCurve, &r_sceneCharSun, &r_sceneNightOnlyByDay, &r_sceneDayOnlyAtNight, &r_sceneWet, &r_sceneFoliage, &r_sceneFoliageWrap, &r_sceneFoliageTrans, &r_sceneFoliageAO, &r_sceneAO, &r_sceneAORadius, &r_sceneShadowSoft, &r_sceneShadowFar, &r_sceneClouds, &r_sceneCloudScale, &r_sceneCloudEdge, &r_sceneCloudLight, &r_sceneCloudWind, &r_sceneEmissiveExposure, &r_sceneEmissiveRef, &r_sceneMoon, &r_sceneMoonSize, &r_sceneMoonGlow, &r_sceneMoonPath, &r_sceneMoonLight, &r_sceneClock, &r_sceneSkySunSide, &r_sceneSkyGlow, &r_sceneAutoExposure, &r_sceneExposureWindow, &r_sceneWindowExposure };
 	char name[MAX_QPATH];
 	char *buf = NULL;
 
 	sceneEnvCount = 0;
 	sceneEnvDay = qfalse;
+	sceneEnvKeys.clear();
+	sceneCycleStart = 0.0f;
+	sceneLampOn = -1.0f;
+	sceneCycleT0 = INT_MIN;
+	sceneLampNow = -1.0f;
+	Q_strncpyz( sceneEnvMap, bspName, sizeof( sceneEnvMap ) );
 	Q_strncpyz( sceneMap, bspName, size );
 	if ( r_sceneEnv->string[0] ) {
 		Q_strncpyz( name, r_sceneEnv->string, sizeof( name ) );
@@ -6684,6 +6714,33 @@ static void Scene_LoadEnv( const char *bspName, char *sceneMap, int size )
 			Com_sprintf( sceneMap, size, "maps/%s.bsp", value.c_str() );
 		} else if ( key == "time" ) {
 			sceneEnvDay = !Q_stricmp( value.c_str(), "day" ) ? qtrue : qfalse;
+		} else if ( key == "cycle" ) {
+			sceneCycleStart = fmodf( MAX( (float)atof( value.c_str() ), 0.0f ), 24.0f );
+		} else if ( key == "lamps" ) {
+			if ( sscanf( value.c_str(), "%f %f %f", &sceneLampOn, &sceneLampOff, &sceneLampFade ) != 3 ) {
+				ri.Printf( PRINT_WARNING, "WARNING: %s line %d: lamps takes on off fade (hours)\n", name, lineNum );
+				sceneLampOn = -1.0f;
+				bad++;
+			}
+		} else if ( key == "hour" ) {
+			sceneEnvKey_t k;
+			Com_Memset( &k, 0, sizeof( k ) );
+			k.hour = fmodf( MAX( (float)atof( value.c_str() ), 0.0f ), 24.0f );
+			sceneEnvKeys.push_back( k );
+		} else if ( key == "sun" && !sceneEnvKeys.empty() ) {
+			vec3_t c;
+			float intensity, yaw, elevation;
+			sceneEnvKey_t &k = sceneEnvKeys.back();
+			if ( sscanf( value.c_str(), "%f %f %f %f %f %f", &c[0], &c[1], &c[2], &intensity, &yaw, &elevation ) == 6 ) {
+				VectorNormalize2( c, k.sunLight );
+				VectorScale( k.sunLight, intensity, k.sunLight );
+				const float a = DEG2RAD( yaw ), b = DEG2RAD( elevation );
+				VectorSet( k.sunDir, cosf( a ) * cosf( b ), sinf( a ) * cosf( b ), sinf( b ) );
+				k.hasSun = qtrue;
+			} else {
+				ri.Printf( PRINT_WARNING, "WARNING: %s line %d: sun takes r g b intensity yaw elevation\n", name, lineNum );
+				bad++;
+			}
 		} else if ( key == "sun" ) {
 			vec3_t c;
 			float intensity, yaw, elevation;
@@ -6702,6 +6759,26 @@ static void Scene_LoadEnv( const char *bspName, char *sceneMap, int size )
 			const int numLook = (int)ARRAY_LEN( look );
 			while ( i < numLook && Q_stricmp( ( *look[i] )->name, key.c_str() ) )
 				i++;
+			if ( i < numLook && !sceneEnvKeys.empty() ) {	// a keyframe's value: into the cvar's entry (made here if none)
+				int j = 0;
+				while ( j < sceneEnvCount && sceneEnvVars[j].cv != *look[i] )
+					j++;
+				if ( j == sceneEnvCount && sceneEnvCount < SCENE_ENV_VARS ) {
+					sceneEnvVar_t *e = &sceneEnvVars[sceneEnvCount++];
+					e->cv = *look[i];
+					e->count = e->cv->modificationCount;
+					Q_strncpyz( e->str, value.c_str(), sizeof( e->str ) );
+					Com_Memcpy( &e->shadow, e->cv, sizeof( e->shadow ) );
+					e->shadow.string = e->str;
+					e->shadow.value = (float)atof( e->str );
+					e->shadow.integer = atoi( e->str );
+				}
+				if ( j < sceneEnvCount ) {
+					sceneEnvKey_t &k = sceneEnvKeys.back();
+					k.num[j] = MAX( sscanf( value.c_str(), "%f %f %f %f", &k.val[j][0], &k.val[j][1], &k.val[j][2], &k.val[j][3] ), 0 );
+					continue;
+				}
+			}
 			if ( i == numLook || sceneEnvCount == SCENE_ENV_VARS ) {
 				if ( i == numLook )
 					ri.Printf( PRINT_WARNING, "WARNING: %s line %d: %s is not a look value a scene environment sets\n", name, lineNum, key.c_str() );
@@ -6721,8 +6798,84 @@ static void Scene_LoadEnv( const char *bspName, char *sceneMap, int size )
 		}
 	}
 	const qboolean other = Q_stricmp( sceneMap, bspName ) ? qtrue : qfalse;
+	std::stable_sort( sceneEnvKeys.begin(), sceneEnvKeys.end(), []( const sceneEnvKey_t &x, const sceneEnvKey_t &y ) { return x.hour < y.hour; } );
 	ri.Printf( PRINT_ALL, "scene environment %s: %s, %d look values%s%s%s\n", name, sceneEnvDay ? "day" : "night", sceneEnvCount,
 		other ? ", the scene of " : "", other ? sceneMap : "", bad ? " (lines ignored: see the warnings)" : "" );
+	if ( !sceneEnvKeys.empty() )
+		ri.Printf( PRINT_ALL, "scene environment: a day/night cycle, %u keyframes, from %.2f h; lamps %.2f to %.2f\n",
+			(unsigned)sceneEnvKeys.size(), sceneCycleStart, sceneLampOn, sceneLampOff );
+}
+
+/*
+maps/<map>.xlt, version 1 (tools/levelport/w3lighttime.py), read with a day/night cycle: `xlt 1`, then `night x y z` or
+`day x y z` per light (the scene's units). The scene light at that point (within a unit) gets type bit 20 (night only)
+or 21 (day only), which the cycle's lamps line fades.
+*/
+static void Scene_LoadLightTimes( xscnLight_t *lights, const uint32_t numLights )
+{
+	char name[MAX_QPATH];
+	char *buf = NULL;
+	COM_StripExtension( sceneEnvMap, name, sizeof( name ) );
+	Q_strcat( name, sizeof( name ), ".xlt" );
+	const int len = ri.FS_ReadFile( name, (void **)&buf );
+	if ( len <= 0 || !buf )
+		return;
+	std::string text( buf, len );
+	ri.FS_FreeFile( buf );
+	// the lights by their 8-unit cell
+	auto cellKey = []( const float x, const float y, const float z ) {
+		return ( (uint64_t)(uint32_t)(int)floorf( x / 8.0f ) * 73856093u ) ^ ( (uint64_t)(uint32_t)(int)floorf( y / 8.0f ) * 19349663u )
+			^ ( (uint64_t)(uint32_t)(int)floorf( z / 8.0f ) * 83492791u );
+	};
+	std::unordered_multimap<uint64_t, uint32_t> cells;
+	cells.reserve( numLights );
+	for ( uint32_t i = 0; i < numLights; i++ )
+		cells.emplace( cellKey( lights[i].origin[0], lights[i].origin[1], lights[i].origin[2] ), i );
+	uint32_t night = 0, day = 0, unmatched = 0, entries = 0;
+	size_t at = 0;
+	qboolean first = qtrue;
+	while ( at < text.size() ) {
+		size_t end = text.find( '\n', at );
+		if ( end == std::string::npos )
+			end = text.size();
+		const std::string line = text.substr( at, end - at );
+		at = end + 1;
+		if ( first ) {
+			first = qfalse;
+			if ( line.compare( 0, 5, "xlt 1" ) ) {
+				ri.Printf( PRINT_WARNING, "WARNING: %s is not a version 1 light time file: ignored\n", name );
+				return;
+			}
+			continue;
+		}
+		char kind[16];
+		vec3_t p;
+		if ( line.empty() || line[0] == '#' || sscanf( line.c_str(), "%15s %f %f %f", kind, &p[0], &p[1], &p[2] ) != 4 )
+			continue;
+		const int bit = !Q_stricmp( kind, "night" ) ? 1 << 20 : !Q_stricmp( kind, "day" ) ? 1 << 21 : 0;
+		if ( !bit )
+			continue;
+		entries++;
+		uint32_t matched = 0;
+		for ( int dz = -1; dz <= 1; dz++ )
+			for ( int dy = -1; dy <= 1; dy++ )
+				for ( int dx = -1; dx <= 1; dx++ ) {
+					const auto range = cells.equal_range( cellKey( p[0] + dx * 8.0f, p[1] + dy * 8.0f, p[2] + dz * 8.0f ) );
+					for ( auto it = range.first; it != range.second; ++it ) {
+						xscnLight_t &L = lights[it->second];
+						if ( fabsf( L.origin[0] - p[0] ) <= 1.0f && fabsf( L.origin[1] - p[1] ) <= 1.0f && fabsf( L.origin[2] - p[2] ) <= 1.0f
+							&& !( (int)L.type & ( 3 << 20 ) ) ) {
+							L.type = (float)( (int)L.type | bit );
+							matched++;
+						}
+					}
+				}
+		if ( !matched )
+			unmatched++;
+		( bit == 1 << 20 ? night : day ) += matched;
+	}
+	ri.Printf( PRINT_ALL, "scene light times %s: %u entries, %u lights night only, %u day only, %u entries without a light\n",
+		name, entries, night, day, unmatched );
 }
 
 /*
@@ -6736,7 +6889,105 @@ clock: r_sceneClock, -1 the scene's own (01:00 at night, 13:00 by day).
 static float Scene_Clock( void )
 {
 	const float c = Env( r_sceneClock )->value;
-	return c >= 0.0f ? fmodf( c, 24.0f ) : sceneEnvDay ? 13.0f : 1.0f;
+	if ( c >= 0.0f )
+		return fmodf( c, 24.0f );
+	if ( !sceneEnvKeys.empty() ) {	// the cycle: its start, run by r_sceneCycle (real minutes a game day) on the refdef's clock
+		const float minutes = r_sceneCycle->value;
+		if ( minutes <= 0.0f || sceneCycleT0 == INT_MIN )
+			return sceneCycleStart;
+		const double t = (double)( tr.refdef.time - sceneCycleT0 ) / 60000.0;
+		return (float)fmod( sceneCycleStart + 24.0 * t / minutes + 2400.0, 24.0 );
+	}
+	return sceneEnvDay ? 13.0f : 1.0f;
+}
+
+// the cycle's night-only lamps' share at a clock hour: up from `on` over the fade, down from `off`
+static float Scene_LampNight( const float clock )
+{
+	if ( sceneLampOn < 0.0f )
+		return sceneEnvDay ? 0.0f : 1.0f;
+	const float fade = MAX( sceneLampFade, 1e-3f );
+	const float since = fmodf( clock - sceneLampOn + 48.0f, 24.0f ), night = fmodf( sceneLampOff - sceneLampOn + 48.0f, 24.0f );
+	return since < night ? MIN( since / fade, 1.0f ) : MAX( 1.0f - ( since - night ) / fade, 0.0f );
+}
+
+// a light's share now under the cycle (type bit 20 night only, 21 day only); 1 without one
+static float Scene_LightTime( const int type )
+{
+	if ( sceneLampNow < 0.0f )
+		return 1.0f;
+	return ( type & ( 1 << 20 ) ) ? sceneLampNow : ( type & ( 1 << 21 ) ) ? 1.0f - sceneLampNow : 1.0f;
+}
+
+/*
+R_SceneCycle: the day/night cycle, each world scene before its sun is read (tr_scene.cpp): the two keyframes around
+the clock blended into the environment's look values (their shadows, read through Env) and the sun (tr.sunLight,
+tr.sunDirection), and the lamps' share for scene_lightfade.comp and R_SceneLightPoint.
+*/
+void R_SceneCycle( void )
+{
+	if ( sceneEnvKeys.empty() || !r_scene || !r_scene->integer )
+		return;
+	if ( sceneCycleT0 == INT_MIN )
+		sceneCycleT0 = tr.refdef.time;
+	const float clock = Scene_Clock();
+	sceneLampNow = Scene_LampNight( clock );
+	const size_t n = sceneEnvKeys.size();
+	// the keyframes around a clock hour and the later one's share
+	auto around = [n]( float h, size_t *a, size_t *b ) {
+		size_t k = 0;
+		while ( k < n && sceneEnvKeys[k].hour <= h )
+			k++;
+		*b = k % n;
+		*a = ( k + n - 1 ) % n;
+		const float h0 = sceneEnvKeys[*a].hour;
+		float h1 = sceneEnvKeys[*b].hour;
+		if ( h1 <= h0 )
+			h1 += 24.0f;
+		if ( h < h0 )
+			h += 24.0f;
+		return h1 > h0 ? Com_Clamp( 0.0f, 1.0f, ( h - h0 ) / ( h1 - h0 ) ) : 0.0f;
+	};
+	size_t a, b;
+	const float f = around( clock, &a, &b );
+	const sceneEnvKey_t &A = sceneEnvKeys[a], &B = sceneEnvKeys[b];
+	for ( int j = 0; j < sceneEnvCount; j++ ) {
+		const int m = MIN( A.num[j], B.num[j] );
+		if ( m <= 0 )
+			continue;
+		sceneEnvVar_t *e = &sceneEnvVars[j];
+		float v[4];
+		for ( int c = 0; c < m; c++ )
+			v[c] = A.val[j][c] + ( B.val[j][c] - A.val[j][c] ) * f;
+		if ( m == 1 )
+			Com_sprintf( e->str, sizeof( e->str ), "%g", v[0] );
+		else if ( m == 2 )
+			Com_sprintf( e->str, sizeof( e->str ), "%g %g", v[0], v[1] );
+		else if ( m == 3 )
+			Com_sprintf( e->str, sizeof( e->str ), "%g %g %g", v[0], v[1], v[2] );
+		else
+			Com_sprintf( e->str, sizeof( e->str ), "%g %g %g %g", v[0], v[1], v[2], v[3] );
+		e->shadow.value = v[0];
+		e->shadow.integer = (int)v[0];
+	}
+	// the sun: its light by the clock; its direction by the clock's whole game minute (the far cascade's cache keys on
+	// it); across a swap of sun and moon (the keyframes' directions far apart) the nearer keyframe's
+	size_t qa, qb;
+	const float fq = around( floorf( clock * 60.0f ) / 60.0f, &qa, &qb );
+	const sceneEnvKey_t &QA = sceneEnvKeys[qa], &QB = sceneEnvKeys[qb];
+	if ( A.hasSun && B.hasSun )
+		for ( int c = 0; c < 3; c++ )
+			tr.sunLight[c] = A.sunLight[c] + ( B.sunLight[c] - A.sunLight[c] ) * f;
+	if ( QA.hasSun && QB.hasSun ) {
+		vec3_t d;
+		if ( DotProduct( QA.sunDir, QB.sunDir ) < 0.7f )
+			VectorCopy( fq < 0.5f ? QA.sunDir : QB.sunDir, d );
+		else
+			for ( int c = 0; c < 3; c++ )
+				d[c] = QA.sunDir[c] + ( QB.sunDir[c] - QA.sunDir[c] ) * fq;
+		if ( VectorNormalize( d ) > 0.0f )
+			VectorCopy( d, tr.sunDirection );
+	}
 }
 
 static void Scene_MoonAt( const float clock, vec3_t dir, vec4_t col )
@@ -6794,6 +7045,10 @@ static void Scene_FreeCpuState( void )
 	sceneOceanWhole = qfalse;
 	sceneEnvCount = 0;
 	sceneEnvDay = qfalse;
+	sceneEnvKeys.clear();
+	sceneLampOn = -1.0f;
+	sceneLampNow = -1.0f;
+	sceneCycleT0 = INT_MIN;
 }
 
 static qboolean Scene_TubeShaped( const float type )
@@ -6883,7 +7138,10 @@ void R_SceneLoad( const char *mapBsp )
 	{	// the scene's time (maps/<map>.xenv): in a day scene the night-only lights (type bit 20) at
 		// r_sceneNightOnlyByDay of their power, at night the day-only ones (bit 21) at r_sceneDayOnlyAtNight; 0 drops
 		// them, their boxes with them; before anything reads the lights
-		const int out = sceneEnvDay ? 1 << 20 : 1 << 21;
+		// (a day/night cycle drops none: its clock fades them; maps/<map>.xlt marks its night-only and day-only lights)
+		if ( !sceneEnvKeys.empty() )
+			Scene_LoadLightTimes( lights, h->count[XS_LIGHTS] );
+		const int out = !sceneEnvKeys.empty() ? 0 : sceneEnvDay ? 1 << 20 : 1 << 21;
 		const float scale = MAX( Env( sceneEnvDay ? r_sceneNightOnlyByDay : r_sceneDayOnlyAtNight )->value, 0.0f );
 		const uint32_t numIn = h->count[XS_LIGHTS];
 		byte *boxes = h->count[XS_BOXES] == numIn ? buf + h->ofs[XS_BOXES] : NULL;
@@ -7462,7 +7720,8 @@ void R_SceneLoad( const char *mapBsp )
 		for ( uint32_t i = 0; i < sc.numLights; i++ ) {
 			VectorCopy( lights[i].origin, &bounds[i * 4] );
 			bounds[i * 4 + 3] = lights[i].radius;
-			kinds[i] = ( ( (int)lights[i].type & 2 ) == 0 ? 1u : 0u ) | ( lights[i].fog > 0.0f ? 2u : 0u );
+			kinds[i] = ( ( (int)lights[i].type & 2 ) == 0 ? 1u : 0u ) | ( lights[i].fog > 0.0f ? 2u : 0u )
+				| ( ( (int)lights[i].type & ( 1 << 20 ) ) ? 4u : ( (int)lights[i].type & ( 1 << 21 ) ) ? 8u : 0u );	// (the cycle's)
 		}
 		ok = ( Scene_StaticBuffer( &sc.lightBounds, bounds.data(), (VkDeviceSize)bounds.size() * 4, ssbo, "scene light bounds" )
 			&& Scene_StaticBuffer( &sc.lightKinds, kinds.data(), (VkDeviceSize)kinds.size() * 4, ssbo, "scene light kinds" ) ) ? qtrue : qfalse;
@@ -8027,6 +8286,14 @@ void R_SceneVkBeginFrame( void )
 	fr->fx2[3] = (float)vkSamples;
 	fr->cards[0] = r_sceneCardBlend->integer ? 1.0f : 0.0f;
 	fr->cards[1] = fr->cards[2] = fr->cards[3] = 0.0f;
+	Com_Memset( fr->skySide, 0, sizeof( fr->skySide ) );
+	Com_Memset( fr->skyGlow, 0, sizeof( fr->skyGlow ) );
+	if ( sc.skyOn ) {
+		sscanf( Env( r_sceneSkySunSide )->string, "%f %f %f %f", &fr->skySide[0], &fr->skySide[1], &fr->skySide[2], &fr->skySide[3] );
+		sscanf( Env( r_sceneSkyGlow )->string, "%f %f %f %f", &fr->skyGlow[0], &fr->skyGlow[1], &fr->skyGlow[2], &fr->skyGlow[3] );
+		fr->skySide[3] = Com_Clamp( 0.0f, 1.0f, fr->skySide[3] );
+		fr->skyGlow[3] = MAX( fr->skyGlow[3], 0.0f );
+	}
 	fr->surface2[0] = Com_Clamp( 0.0f, 1.0f, r_sceneSpecAA->value );
 	fr->surface2[1] = r_sceneWindowCell->integer ? 1.0f : 0.0f;
 	fr->surface2[2] = Com_Clamp( 0.0f, 1.0f, r_sceneProbeSky->value );
@@ -8101,7 +8368,7 @@ void R_SceneVkBeginFrame( void )
 		pc[8] = 80.0f * 37.5f;	// that default's most: 80 m
 		pc[9] = ( r_sceneLightDistant->integer && sc.distantPipe ) ? 1.0f : 0.0f;
 		pc[10] = r_sceneLightHideDistant->integer ? 1.0f : 0.0f;
-		pc[11] = 0.0f;
+		pc[11] = sceneLampNow;	// the day/night cycle's night-only lamps' share (-1: none)
 		qvkCmdBindPipeline( cb, VK_PIPELINE_BIND_POINT_COMPUTE, sc.lightFadePipe );
 		qvkCmdBindDescriptorSets( cb, VK_PIPELINE_BIND_POINT_COMPUTE, sc.lightFadePipeLayout, 0, 1, &sc.lightFadeSet[f], 0, NULL );
 		qvkCmdPushConstants( cb, sc.lightFadePipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( pc ), pc );
@@ -8472,7 +8739,7 @@ else from the map's q3gl2_sun as before. tr_scene.cpp, each scene: refdef's sun 
 */
 void R_SceneSunDir( vec4_t sunDir )
 {
-	if ( !sc.loaded || !r_scene->integer || sceneEnvDay || !Env( r_sceneMoonLight )->integer )
+	if ( !sc.loaded || !r_scene->integer || sceneEnvDay || !sceneEnvKeys.empty() || !Env( r_sceneMoonLight )->integer )
 		return;
 	vec3_t dir;
 	vec4_t col;
@@ -8588,7 +8855,7 @@ qboolean R_SceneLightPoint( const vec3_t P, vec3_t ambient, vec3_t directed, vec
 			}
 			if ( att <= 0.0f )
 				continue;
-			const float e = L->power * att * scale;
+			const float e = L->power * att * scale * Scene_LightTime( type );
 			const float w = e * ( 0.2126f * L->color[0] + 0.7152f * L->color[1] + 0.0722f * L->color[2] );
 			VectorMA( sum, e, L->color, sum );
 			VectorMA( dirSum, w, l, dirSum );
@@ -9580,6 +9847,9 @@ void R_SceneRegister( void )
 	r_sceneMoonPath		= ri.Cvar_Get( "r_sceneMoonPath",		"35 -2.5 23.85",		CVAR_ARCHIVE_ND, "Render scene, r_sceneMoon: its path, latitude, declination (degrees) and its transit's hour on r_sceneClock (CP2077's, from ref09)" );
 	r_sceneMoonLight	= ri.Cvar_Get( "r_sceneMoonLight",		"0",					CVAR_ARCHIVE_ND, "Render scene: 1: at night the map's sun (the moon: its shadows, its light in the haze) comes from the moon's disc (r_sceneMoonPath at r_sceneClock; with r_sceneFogMoon 0.4 to keep ref09's haze); 0 the map's q3gl2_sun" );
 	r_sceneMoonImage	= ri.Cvar_Get( "r_sceneMoonImage",		"textures/skies/moon",	CVAR_ARCHIVE_ND, "Render scene, r_sceneMoon: the moon's image (alpha its disc), at the map's load; none found: no moon" );
+	r_sceneSkySunSide	= ri.Cvar_Get( "r_sceneSkySunSide",		"0 0 0 0",				CVAR_ARCHIVE_ND, "Render scene, r_sceneSky: the horizon's colour toward a low sun (linear rgb) and its share 0..1 (The Witcher 3's sunColorHorizon; w3env.py's cycle keyframes set it); 0 none" );
+	r_sceneSkyGlow		= ri.Cvar_Get( "r_sceneSkyGlow",			"0 0 0 0",				CVAR_ARCHIVE_ND, "Render scene, r_sceneSky: a glow round the scene's light (linear rgb) and its falloff, the power of the angle's cosine (The Witcher 3's moon glow by night); 0 none" );
+	r_sceneCycle		= ri.Cvar_Get( "r_sceneCycle",			"0",					CVAR_ARCHIVE_ND, "Render scene, a day/night cycle (maps/<map>.xenv hour keyframes): the real minutes a game day takes; 0 the clock stays at the environment's hour (r_sceneClock 0..24 sets one)" );
 	r_sceneClock		= ri.Cvar_Get( "r_sceneClock",			"-1",					CVAR_ARCHIVE_ND, "Render scene: the hour on the game's clock (0..24) the moon's place and colour follow; -1 the scene's own (01:00 at night, 13:00 by day)" );
 	r_sceneHoloBloom	= ri.Cvar_Get( "r_sceneHoloBloom",		"0.3",					CVAR_ARCHIVE_ND, "Render scene: the share of the holograms' light (a blend material with a masked glow: CP2077's particles_hologram) that goes into the bloom pass, so their bright strokes halo as neons do; 0 none, as before" );
 	r_sceneHoloGain		= ri.Cvar_Get( "r_sceneHoloGain",		"1",					CVAR_ARCHIVE_ND, "Render scene: multiplies the holograms' glow (lit and bloom alike); a calibration aid, 1 as the data says" );

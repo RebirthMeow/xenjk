@@ -109,6 +109,9 @@ layout(std140, set = 0, binding = 5) uniform Frame {
 	vec4 waterWaves2;	// x: each cascade's slope variance, y: its texels across
 	vec4 skyGround;		// r_sceneSkyGround: rgb the distant land under the horizon (0: none), w r_sceneSkyCurve
 	vec4 cards;			// x: 1 when a SpeedTree card blends its two stored views (r_sceneCardBlend), 0 dithers them
+	vec4 skySide;		// r_sceneSkySunSide: rgb the horizon's colour on the sun's side (linear), w its share (0 none)
+	vec4 skyGlow;		// r_sceneSkyGlow: rgb the glow round the scene's light (the moon by night; linear), w its
+						// falloff (the power of the angle's cosine; 0 none)
 } fr;
 layout(set = 0, binding = 26) uniform sampler2DArray waveTex;	// the water's waves (scene_water.comp): x, y the slopes
 // scene_occ.comp's far-depth pyramids (linear view depth): the water's bed (fr.waterBed)
@@ -633,6 +636,13 @@ vec3 moonSky( const vec3 d )
 vec3 skyRadiance( const vec3 d, const vec3 moon )
 {
 	vec3 c = mix( fr.skyZenith.rgb, fr.skyHorizon.rgb, pow( 1.0 - clamp( d.z, 0.0, 1.0 ), fr.skyGround.w ) );
+	if ( fr.skySide.w > 0.0 ) {	// the horizon toward a low sun (The Witcher 3's sunColorHorizon): by the bearing, low down
+		const vec2 sh = fr.sunDir.xy / max( length( fr.sunDir.xy ), 1e-4 ), dh = d.xy / max( length( d.xy ), 1e-4 );
+		const float side = pow( clamp( 0.5 + 0.5 * dot( sh, dh ), 0.0, 1.0 ), 3.0 ) * pow( 1.0 - clamp( d.z, 0.0, 1.0 ), 2.0 * fr.skyGround.w );
+		c = mix( c, fr.skySide.rgb, clamp( side * fr.skySide.w, 0.0, 1.0 ) );
+	}
+	if ( fr.skyGlow.w > 0.0 )	// the glow round the light (by night the moon's: moonColorSky over moonAreaSkySize)
+		c += fr.skyGlow.rgb * pow( max( dot( d, normalize( fr.sunDir.xyz ) ), 0.0 ), fr.skyGlow.w );
 	if ( d.z < 0.0 ) {
 		// under the horizon: the distant land where the map gives one (r_sceneSkyGround; the haze's band below blends
 		// it into the horizon), else the sky darkened
