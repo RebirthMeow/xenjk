@@ -95,6 +95,8 @@ def main(argv=None):
     ap.add_argument('--viewpos', action='append', default=[],
                     help='"x y z yaw [pitch]": a view of your own in place of the spawns (pitch in degrees, up positive)')
     ap.add_argument('--player', action='store_true', help='look as a player (body and saber in view) instead of a spectator')
+    ap.add_argument('--bin64', action='store_true', help="the 64-bit client (GameData/bin64, the Play_*.bat one): a "
+                    "scene whose file is larger than the 32-bit client can allocate")
     ap.add_argument('--png', action='store_true', help='lossless screenshots (a debug view read per pixel)')
     a = ap.parse_args(argv)
     out = Path(a.out or paths.LEVELPORT / 'look' / ('%s-%s' % (a.map, time.strftime('%Y%m%d-%H%M%S')))).resolve()
@@ -131,7 +133,11 @@ def main(argv=None):
         lines += ['wait 200', 'viewpos', ('screenshot_png v%02d' if a.png else 'screenshot v%02d') % k, 'wait 60']
     lines += ['echo LOOK done', 'wait 30', 'quit']
     (base / 'look.cfg').write_text('\n'.join(lines) + '\n', encoding='utf-8')
-    args = [str(rb.ASSETS / 'xenjk.x86.exe'), '+set', 'fs_basepath', str(rb.ASSETS), '+set', 'fs_homepath',
+    if a.bin64:
+        exe, cwd = rb.ASSETS / 'bin64' / 'xenjk.x86_64.exe', rb.ASSETS / 'bin64'
+    else:
+        exe, cwd = rb.ASSETS / 'xenjk.x86.exe', rb.ASSETS
+    args = [str(exe), '+set', 'fs_basepath', str(rb.ASSETS), '+set', 'fs_homepath',
             str(out / 'home'), '+set', 'fs_game', 'base', '+set', 'logfile', '1', '+set', 'sv_cheats', '1',
             '+set', 'cl_renderer', a.renderer,
             '+set', 'in_mouse', '0', '+set', 'in_nograb', '1']   # (the look client would otherwise grab the mouse)
@@ -139,7 +145,7 @@ def main(argv=None):
         args += ['+set', *c.split('=', 1)]
     args += ['+exec', 'look.cfg']
     fg = rb.foreground_window()
-    proc = rb.client_popen(args, str(rb.ASSETS))
+    proc = rb.client_popen(args, str(cwd))
     t0, status = time.time(), 'timeout'
     while time.time() - t0 < a.timeout:
         rb.hide_client_windows(proc.pid, fg)
