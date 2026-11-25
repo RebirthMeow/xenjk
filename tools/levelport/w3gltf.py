@@ -139,6 +139,25 @@ def material_nodes(m):
     return out
 
 
+def material_record(m):
+    """materials.json's record of a Blender material the add-on made"""
+    imgs = []
+    if m.node_tree:
+        for n in m.node_tree.nodes:
+            if n.type == 'TEX_IMAGE' and n.image:
+                imgs.append({'node': n.name, 'label': n.label, 'image': n.image.name,
+                             'file': n.image.filepath, 'colorspace': n.image.colorspace_settings.name})
+    return {'base': plain(m.get('witcher3_mat_base')),
+            'params': plain(m.get('witcher3_mat_params')),
+            'source': plain(m.get('witcher3_mat_source_path')),
+            'source_mesh': plain(m.get('w3_source_mesh_path')),
+            'groups': sorted({n.node_tree.name for n in (m.node_tree.nodes if m.node_tree else [])
+                              if n.type == 'GROUP' and n.node_tree}),
+            'blend_method': getattr(m, 'blend_method', None),
+            'nodes': material_nodes(m),
+            'images': imgs}
+
+
 def is_collision(o):
     while o is not None:
         if o.get('witcher_layer_visibility_kind') == 'collision':
@@ -186,7 +205,68 @@ def main():
 
     layers = layer_paths(a.layers)
 
-    # ---- 1. the add-on imports the layers
+    # ---- 1-2. the add-on imports each layer; its objects are read back and removed before the next layer
+    # (2026-11-24: a scene of thousands of objects slows the add-on: one layer took 16 min in a filled scene, 6.4 in a
+    # fresh one; Blender helpers such as Object.children scan every object). Meshes and materials stay for reuse.
+    placements, lights, fx, shapes = [], [], [], []
+    materials = {}
+    skipped = collections.Counter()
+    blender_nv = {}
+
+    def readback(objs):
+        for o in objs:
+            lay = o.get('lp_layer')
+            M = [list(map(float, r)) for r in o.matrix_world]
+            if o.type == 'LIGHT':
+                L = o.data
+                rec = {'layer': lay, 'name': o.name, 'type': L.type, 'matrix': M, 'color': list(L.color),
+                       'energy': float(L.energy), 'props': {k: plain(o[k]) for k in o.keys() if k.startswith('witcher')}}
+                if L.type == 'SPOT':
+                    rec['spot_size'] = float(L.spot_size)
+                    rec['spot_blend'] = float(L.spot_blend)
+                lights.append(rec)
+                continue
+            if o.type == 'EMPTY' or o.get('witcher_particle_system') is not None:
+                # particle systems: placeholder empties and the add-on's preview meshes (embers, smoke, flames)
+                if o.get('witcher_particle_view_root') or o.get('witcher_particle_system') is not None or \
+                        'Particle' in o.name:
+                    fx.append({'layer': lay, 'name': o.name, 'matrix': M,
+                               'props': {k: plain(o[k]) for k in o.keys() if k.startswith('witcher')}})
+                continue
+            if o.type != 'MESH':
+                skipped['type ' + o.type] += 1
+                continue
+            if is_collision(o):
+                me = o.data
+                W = np.array([(o.matrix_world @ v.co)[:] for v in me.vertices], dtype=np.float64)
+                shapes.append({'layer': lay, 'name': o.name, 'kind': shape_kind(o),
+                               'mat': me.materials[0].name.split('.')[0] if me.materials and me.materials[0] else None,
+                               'verts': W.round(4).tolist(), 'faces': [list(f.vertices) for f in me.polygons]})
+                continue
+            path = depot(o.get('witcher_path')) or depot(o.get('witcher_resolved_mesh_path')) or depot(o.get('repo_path'))
+            if not path:
+                skipped['mesh without a source path'] += 1
+                continue
+            kind = path.rsplit('.', 1)[-1]
+            slots = []
+            for s in o.material_slots:
+                m = s.material
+                if m is None:
+                    slots.append(None)
+                    continue
+                slots.append(m.name)
+                # read once every layer is in (material_record): the add-on completes some materials' node
+                # graphs while it imports later layers (79 of 473 read early lacked their graph's inputs)
+                materials.setdefault(m.name, None)
+            placements.append({'mesh': path, 'kind': kind, 'layer': lay, 'name': o.name, 'matrix': M,
+                               'entity': depot(o.get('witcher_entity_path')), 'component': o.get('witcher_type'),
+                               'expected_materials': o.get('witcher_expected_material_count'), 'slots': slots,
+                               'leaf_cards': any(md.type == 'NODES' and md.node_group and
+                                                 md.node_group.name.startswith('Leaf_Card') for md in o.modifiers),
+                               'cast_shadows': plain(o.get('witcher_drawableFlags_has_DF_CastShadows'))})
+            if kind == 'w2mesh':
+                blender_nv.setdefault(path, len(o.data.vertices))
+
     bpy.ops.wm.read_homefile(use_empty=True)
     t0 = time.time()
     status = {}
@@ -203,83 +283,17 @@ def main():
             st = 'fail ' + repr(e)[:300]
         rel = lay[len(CITY):] if lay.lower().startswith(CITY) else lay
         new = [n for n in bpy.data.objects.keys() if n not in before]
-        for n in new:
-            bpy.data.objects[n]['lp_layer'] = rel
+        objs = [bpy.data.objects[n] for n in new]
+        for o in objs:
+            o['lp_layer'] = rel
+        readback(objs)
+        bpy.data.batch_remove(objs)
         status[rel] = {'status': st, 'objects': len(new), 'seconds': round(time.time() - t, 1)}
         print(f'W3GLTF layer {i + 1}/{len(layers)} {rel} {st[:60]} objects={len(new)} {time.time() - t:.0f}s',
               flush=True)
     t_import = time.time() - t0
-
-    # ---- 2. read the scene back out
-    placements, lights, fx, shapes = [], [], [], []
-    materials = {}
-    skipped = collections.Counter()
-    blender_nv = {}
-    for o in bpy.data.objects:
-        lay = o.get('lp_layer')
-        M = [list(map(float, r)) for r in o.matrix_world]
-        if o.type == 'LIGHT':
-            L = o.data
-            rec = {'layer': lay, 'name': o.name, 'type': L.type, 'matrix': M, 'color': list(L.color),
-                   'energy': float(L.energy), 'props': {k: plain(o[k]) for k in o.keys() if k.startswith('witcher')}}
-            if L.type == 'SPOT':
-                rec['spot_size'] = float(L.spot_size)
-                rec['spot_blend'] = float(L.spot_blend)
-            lights.append(rec)
-            continue
-        if o.type == 'EMPTY' or o.get('witcher_particle_system') is not None:
-            # particle systems: placeholder empties and the add-on's preview meshes (embers, smoke, flames)
-            if o.get('witcher_particle_view_root') or o.get('witcher_particle_system') is not None or \
-                    'Particle' in o.name:
-                fx.append({'layer': lay, 'name': o.name, 'matrix': M,
-                           'props': {k: plain(o[k]) for k in o.keys() if k.startswith('witcher')}})
-            continue
-        if o.type != 'MESH':
-            skipped['type ' + o.type] += 1
-            continue
-        if is_collision(o):
-            me = o.data
-            W = np.array([(o.matrix_world @ v.co)[:] for v in me.vertices], dtype=np.float64)
-            shapes.append({'layer': lay, 'name': o.name, 'kind': shape_kind(o),
-                           'mat': me.materials[0].name.split('.')[0] if me.materials and me.materials[0] else None,
-                           'verts': W.round(4).tolist(), 'faces': [list(f.vertices) for f in me.polygons]})
-            continue
-        path = depot(o.get('witcher_path')) or depot(o.get('witcher_resolved_mesh_path')) or depot(o.get('repo_path'))
-        if not path:
-            skipped['mesh without a source path'] += 1
-            continue
-        kind = path.rsplit('.', 1)[-1]
-        slots = []
-        for s in o.material_slots:
-            m = s.material
-            if m is None:
-                slots.append(None)
-                continue
-            slots.append(m.name)
-            if m.name not in materials:
-                imgs = []
-                if m.node_tree:
-                    for n in m.node_tree.nodes:
-                        if n.type == 'TEX_IMAGE' and n.image:
-                            imgs.append({'node': n.name, 'label': n.label, 'image': n.image.name,
-                                         'file': n.image.filepath, 'colorspace': n.image.colorspace_settings.name})
-                materials[m.name] = {'base': plain(m.get('witcher3_mat_base')),
-                                     'params': plain(m.get('witcher3_mat_params')),
-                                     'source': plain(m.get('witcher3_mat_source_path')),
-                                     'source_mesh': plain(m.get('w3_source_mesh_path')),
-                                     'groups': sorted({n.node_tree.name for n in (m.node_tree.nodes if m.node_tree else [])
-                                                       if n.type == 'GROUP' and n.node_tree}),
-                                     'blend_method': getattr(m, 'blend_method', None),
-                                     'nodes': material_nodes(m),
-                                     'images': imgs}
-        placements.append({'mesh': path, 'kind': kind, 'layer': lay, 'name': o.name, 'matrix': M,
-                           'entity': depot(o.get('witcher_entity_path')), 'component': o.get('witcher_type'),
-                           'expected_materials': o.get('witcher_expected_material_count'), 'slots': slots,
-                           'leaf_cards': any(md.type == 'NODES' and md.node_group and
-                                             md.node_group.name.startswith('Leaf_Card') for md in o.modifiers),
-                           'cast_shadows': plain(o.get('witcher_drawableFlags_has_DF_CastShadows'))})
-        if kind == 'w2mesh':
-            blender_nv.setdefault(path, len(o.data.vertices))
+    for name in materials:
+        materials[name] = material_record(bpy.data.materials[name])
 
     # ---- 3. every placed .w2mesh read raw, all LODs
     dcm._srgb2lin_vec = lambda s: s          # keep the game's colour bytes (blend weights, not colours)

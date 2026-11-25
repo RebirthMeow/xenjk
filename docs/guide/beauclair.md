@@ -228,7 +228,8 @@ You need:
   | `W3_DOBOZ` | `w3bundle.py` | the add-on's `CR2W/witcher_cache/Bundles/native/Doboz.dll`, for the bundle files compressed with doboz |
   | `Q3MAP2` | `gltf2map.py` | the patched q3map2 |
 
-Run everything from the repo root. One Blender at a time: parallel imports race on the shared uncook files.
+Run everything from the repo root. Blender processes that share an uncook folder race on the files they
+materialize: run one at a time, or dump in parallel with `w3par.py` (below), which gives each its own folder.
 
 ### 1. Choose the layers
 
@@ -251,10 +252,24 @@ blender -b --python tools/levelport/w3gltf.py -- --layers <layers.txt> --work <w
 blender -b --python tools/levelport/w3_preview.py -- --work <work> [--lod 0] [--colors] [--res 1600]
 ```
 
-`w3gltf` imports each layer with the add-on (meshes, collision, rigid bodies; cloth off), reads the scene back, and
-reads every placed `.w2mesh` again with the add-on's raw reader for every LOD, both UV sets and the raw colour.
-`--save-blend` also saves the imported scene, which is large. The castle took 10 minutes. A 124-layer district took
-over an hour, because the add-on slows down as the scene fills. `w3_preview` renders top, perspective and collision-only views from the dump
+`w3gltf` imports each layer with the add-on (meshes, collision, rigid bodies; cloth off), reads that layer's objects
+back and removes them before the next layer (meshes and materials stay for reuse; materials are read once every layer
+is in, since the add-on completes some node graphs while importing later layers), then reads every placed `.w2mesh`
+again with the add-on's raw reader for every LOD, both UV sets and the raw colour. `--save-blend` saves the last
+scene only. Clearing each layer keeps every import at fresh-scene speed: the add-on slows as a scene fills (Blender
+helpers scan every object), and the upper city's 124 layers in one filled scene took 356 minutes (2026-11-17).
+
+Several lists at once, each Blender with its own uncook folder, merged into the shared one afterwards (the parts'
+JSON paths rewritten to it); a part whose `summary.json` exists is skipped:
+
+```
+python tools/levelport/w3par.py --root <workers folder> --uncook <shared uncook> --workers 3 \
+    --work-prefix <dir>/work-d- --part upper_west1=<list> --part upper_west2=<list> ...
+```
+
+Keep parts to about 20-30 layers. The 2026-11-24 extraction (remaster 5.0): 11 parts on 3 workers in 66 minutes
+(the heaviest, 29-31 layers, 42-46 minutes); the whole city, from the first dump to the hide distances, about 3 hours
+with half of it on the old path. `w3_preview` renders top, perspective and collision-only views from the dump
 alone. Check them against the add-on's own import.
 
 Then the trees, cloth and the hide distances:
