@@ -309,6 +309,7 @@ typedef struct {
 	float		waterWaves2[4];	// x: each cascade's slope variance, y: its texels across (256)
 	float		skyGround[4];	// r_sceneSkyGround: rgb the distant land under the horizon (linear; all 0: the sky darkened, as
 								// before), w the power of the zenith-to-horizon blend (r_sceneSkyCurve)
+	float		cards[4];		// x: 1 when a SpeedTree card blends its two stored views (r_sceneCardBlend), 0 dithers them
 } sceneFrame_t;
 
 // a traffic signal's cycle (maps/<map>.signals, cp2gltf SceneSignals): its group's program from its intersection's

@@ -108,6 +108,7 @@ layout(std140, set = 0, binding = 5) uniform Frame {
 	vec4 waterWaves;	// x: 1 when waveTex holds this frame's waves (r_sceneWaterWaves), yzw: the cascades' patches (m)
 	vec4 waterWaves2;	// x: each cascade's slope variance, y: its texels across
 	vec4 skyGround;		// r_sceneSkyGround: rgb the distant land under the horizon (0: none), w r_sceneSkyCurve
+	vec4 cards;			// x: 1 when a SpeedTree card blends its two stored views (r_sceneCardBlend), 0 dithers them
 } fr;
 layout(set = 0, binding = 26) uniform sampler2DArray waveTex;	// the water's waves (scene_water.comp): x, y the slopes
 // scene_occ.comp's far-depth pyramids (linear view depth): the water's bed (fr.waterBed)
@@ -1265,6 +1266,7 @@ void main()
 	vec2 mUV = vUV;
 	float flowAlpha = 1.0;
 	float bbFade = 0.0;	// (a billboard card's lost share of the pitch band, below)
+	float bbMix = 0.0;	// (a turning card's share of its next stored view, blended: r_sceneCardBlend)
 	bool bbCard = false;	// (a billboard card: the sun wraps round it, below)
 	vec4 bbFix = vec4( 1.0 );	// (a billboard card's match to its 3D tree, cardmatch.py: its ambient light's rgb and its sun light's multipliers)
 	{
@@ -1278,20 +1280,29 @@ void main()
 		// Witcher 3 SpeedTree billboards (.xw3b version 3: -9 the card turned to the viewer, -10 the top card): over the
 		// pitch band the top card takes the share vCol.y: each card's alpha is lowered by its lost share, so it thins
 		// through its own leaves' alpha (a screen dither showed as dots); the turning card reads the stored
-		// view nearest the viewer (vUV) or, for the share vCol.x, the next (vUV1, a dither by the pixel alone). The
-		// prepass, the cascades and the lit pass compute the same
+		// view nearest the viewer (vUV) and, for the share vCol.x, the next (vUV1): blended (r_sceneCardBlend 1),
+		// or picked per pixel by a dither (0: a static checker of the two views on every far tree between them,
+		// 2 x 2 under r_sceneVrs). The prepass, the cascades and the lit pass compute the same
 		if ( fd.x == -9.0 || fd.x == -10.0 ) {
 			bbFade = 0.51 * ( fd.x == -9.0 ? vCol.y : 1.0 - vCol.y );
 			bbCard = true;
 			if ( fd.z > 0.5 )
 				bbFix = materialDetail[uint( fd.y ) + uint( fd.z + 0.5 )];
-			if ( fd.x == -9.0 && fract( 52.9829189 * fract( dot( gl_FragCoord.xy + vec2( 17.0, 59.0 ), vec2( 0.06711056, 0.00583715 ) ) ) ) < vCol.x )
-				mUV = vUV1;
+			if ( fd.x == -9.0 && vCol.x > 0.0 ) {
+				if ( fr.cards.x > 0.5 )
+					bbMix = vCol.x;
+				else if ( fract( 52.9829189 * fract( dot( gl_FragCoord.xy + vec2( 17.0, 59.0 ), vec2( 0.06711056, 0.00583715 ) ) ) ) < vCol.x )
+					mUV = vUV1;
+			}
 		}
 #endif
 	}
 	// a screen with a maps/<map>.xscr record: its flipbook's frame now (one frame of a whole sheet)
 	vec4 base = ( gInfo.y & 1u ) != 0u ? texture( ALBEDO_TEX, screenRec() ? screenTile( mUV ) : mUV, COARSE_BIAS ) : vec4( 1.0 );
+#ifdef GPU_DRIVEN
+	if ( bbMix > 0.0 && ( gInfo.y & 1u ) != 0u )
+		base = mix( base, texture( ALBEDO_TEX, vUV1, COARSE_BIAS ), bbMix );
+#endif
 	base *= gTint;
 	base.a *= flowAlpha;
 	base.a -= bbFade;
@@ -1383,7 +1394,11 @@ void main()
 	}
 
 	vec3 albedo = toLinear( base.rgb );
-	const vec3 orm = ( gInfo.y & 4u ) != 0u ? texture( ORM_TEX, mUV, COARSE_BIAS ).rgb : vec3( 1.0, 0.7, 0.0 );
+	vec3 orm = ( gInfo.y & 4u ) != 0u ? texture( ORM_TEX, mUV, COARSE_BIAS ).rgb : vec3( 1.0, 0.7, 0.0 );
+#ifdef GPU_DRIVEN
+	if ( bbMix > 0.0 && ( gInfo.y & 4u ) != 0u )
+		orm = mix( orm, texture( ORM_TEX, vUV1, COARSE_BIAS ).rgb, bbMix );
+#endif
 	float ao = water ? 1.0 : orm.r;	// (a leaf's: times its depth in the canopy, below)
 	float metal = water ? 0.0 : clamp( orm.b, 0.0, 1.0 );
 	float rough = clamp( orm.g, 0.05, 1.0 );
@@ -1751,7 +1766,11 @@ void main()
 	} else if ( w3 || ( gInfo.y & 2u ) != 0u || detailSlope != vec2( 0.0 ) ) {
 		const vec3 T = tangentOf( vTan.xyz, Ng );
 		const vec3 B = cross( Ng, T ) * vTan.w * side;
-		const vec3 n = w3 ? w3n : ( gInfo.y & 2u ) != 0u ? texture( NORMAL_TEX, mUV, COARSE_BIAS ).xyz * 2.0 - 1.0 : vec3( 0.0, 0.0, 1.0 );
+		vec3 n = w3 ? w3n : ( gInfo.y & 2u ) != 0u ? texture( NORMAL_TEX, mUV, COARSE_BIAS ).xyz * 2.0 - 1.0 : vec3( 0.0, 0.0, 1.0 );
+#ifdef GPU_DRIVEN
+		if ( bbMix > 0.0 && !w3 && ( gInfo.y & 2u ) != 0u )
+			n = mix( n, texture( NORMAL_TEX, vUV1, COARSE_BIAS ).xyz * 2.0 - 1.0, bbMix );
+#endif
 		N = normalize( T * ( n.x + detailSlope.x ) + B * ( n.y + detailSlope.y ) + Ng * max( n.z, 0.05 ) );
 	}
 #ifndef DECAL

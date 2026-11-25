@@ -123,6 +123,7 @@ static cvar_t *r_sceneClusterStats;
 static cvar_t *r_sceneHideScale;
 static cvar_t *r_sceneHideFade;
 static cvar_t *r_sceneHideDither;
+static cvar_t *r_sceneCardBlend;
 static cvar_t *r_sceneCutoutCoverage;
 static cvar_t *r_sceneWaterBed;
 static cvar_t *r_sceneLitEqual;
@@ -8020,6 +8021,8 @@ void R_SceneVkBeginFrame( void )
 	fr->fx2[1] = sceneSurfaceTubes ? 1.0f : 0.0f;
 	fr->fx2[2] = (float)sc.hideDither;
 	fr->fx2[3] = (float)vkSamples;
+	fr->cards[0] = r_sceneCardBlend->integer ? 1.0f : 0.0f;
+	fr->cards[1] = fr->cards[2] = fr->cards[3] = 0.0f;
 	fr->surface2[0] = Com_Clamp( 0.0f, 1.0f, r_sceneSpecAA->value );
 	fr->surface2[1] = r_sceneWindowCell->integer ? 1.0f : 0.0f;
 	fr->surface2[2] = Com_Clamp( 0.0f, 1.0f, r_sceneProbeSky->value );
@@ -9454,7 +9457,8 @@ void R_SceneRegister( void )
 	r_sceneHideFade		= ri.Cvar_Get( "r_sceneHideFade",		"1",						CVAR_ARCHIVE_ND, "Render scene: an instance fades out over the 40 m before its hide distance and a far proxy (scene version 5) in over the 40 m before its near distance (half the distance when nearer), dithered, in the eye's views, scaled with r_sceneHideScale: a mesh and its proxy at one distance complement each other; 0: they pop" );
 	r_sceneWaterBed		= ri.Cvar_Get( "r_sceneWaterBed",		"0",						CVAR_ARCHIVE_ND, "Render scene: the water's bed (its clarity and shore) from a full-size depth of each pixel's samples, their nearest and farthest and the share at the nearest, written by the occlusion pyramid's first dispatch (8 B a pixel: 32-bit floats, allocated when on at map load; the eye's view only); 0: the pyramid's half-size farthest" );
 	r_sceneCutoutCoverage = ri.Cvar_Get( "r_sceneCutoutCoverage", "1",				CVAR_ARCHIVE_ND, "Render scene: cutouts (leaves, chain-link fences, grates) cover each MSAA sample by their alpha there (alpha to coverage, from its gradient: softer, steadier edges) instead of one alpha test per pixel, which MSAA cannot smooth (GPU-driven draws, r_sceneLitEqual, MSAA 2, 4 or 8); the sun and light shadows keep the test. 0: one test per pixel" );
-	r_sceneHideDither	= ri.Cvar_Get( "r_sceneHideDither",		"0",						CVAR_ARCHIVE_ND, "Render scene, r_sceneHideFade: the fade's pattern; 0 interleaved gradient noise, whole pixels; 1 a blue noise tile, whole pixels; 2 the depth prepass keeps that share of each pixel's MSAA samples (GPU-driven draws, r_sceneLitEqual and MSAA, else 1)" );
+	r_sceneHideDither	= ri.Cvar_Get( "r_sceneHideDither",		"2",						CVAR_ARCHIVE_ND, "Render scene, r_sceneHideFade: the fade's pattern; 0 interleaved gradient noise, whole pixels; 1 a blue noise tile, whole pixels; 2 (default) the depth prepass keeps that share of each pixel's MSAA samples, so the resolve blends the two (GPU-driven draws, r_sceneLitEqual and MSAA, else 1; whole-pixel patterns showed as a static checker on every mesh and proxy in a fade band)" );
+	r_sceneCardBlend	= ri.Cvar_Get( "r_sceneCardBlend",		"1",						CVAR_ARCHIVE_ND, "Render scene: a Witcher 3 SpeedTree billboard card turning between two of its stored views blends them (1) instead of picking one per pixel by a dither (0: a static checker of the two views on far trees, 2 x 2 under r_sceneVrs)" );
 	r_sceneLitEqual		= ri.Cvar_Get( "r_sceneLitEqual",		"1",						CVAR_ARCHIVE_ND, "Render scene: the GPU-driven lit pass tests depth EQUAL against the prepass (the same pixels as LESS_OR_EQUAL, bit for bit; a fragment the fade's dither discarded in the prepass is not shaded: Watson 0.14 ms a frame, up to 0.43); 0 LESS_OR_EQUAL" );
 	r_sceneDecals		= ri.Cvar_Get( "r_sceneDecals",		"1",						CVAR_ARCHIVE_ND, "Render scene: CP2077's mesh decals (the scene's blend materials flagged 0x40) project onto the surface behind them within their depth threshold, their albedo and normal blended into it before it is lit (a DBuffer after the eye's prepass); 0 drawn as blends over it. Read at map load" );
 	r_sceneProxyDebug	= ri.Cvar_Get( "r_sceneProxyDebug",	"0",						CVAR_TEMP | CVAR_CHEAT, "Render scene, a look check: 1 draws no far proxy (scene version 5), 2 draws every one at any distance (its near distance ignored, the hide fade off); 0 as authored" );
