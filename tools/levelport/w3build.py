@@ -259,6 +259,9 @@ def main():
     ap.add_argument('--spawn-radius', type=float, default=60.0)
     ap.add_argument('--spawns', type=int, default=16)
     ap.add_argument('--spawn-sky', type=float, default=6.0, help='metres clear above a spawn')
+    ap.add_argument('--spawn-above-water', type=float, default=0.5,
+                    help="metres a spawn's ground stands above the game's water there (w3water.water_level: "
+                         "<work>/water_shapes.json's shapes, the sea elsewhere)")
     ap.add_argument('--terrain-step', type=int, default=2, help='terrain collision every Nth vertex (~1 m apart)')
     ap.add_argument('--terrain-tol', type=float, default=0.15,
                     help='metres: a terrain cell splits (down to every vertex) where its triangles miss the full '
@@ -437,6 +440,13 @@ def main():
     up = (nrm[:, 1] / np.maximum(area, 1e-9) > 0.9) & (area > 0.5)
     cand = T[up].mean(1)
     cand = cand[np.hypot(cand[:, 0] - scg[0], cand[:, 2] - scg[1]) < a.spawn_radius]
+    # not under the game's water (its water shapes' levels, the sea elsewhere): a harbour riverbed spawned players
+    # 8 m under the surface. Candidates are glTF (x, z, -y) about the origin; game metres back
+    import w3water
+    wl = w3water.water_level(w3water.load_shapes(work), cand[:, 0] + origin[0], origin[1] - cand[:, 2])
+    dry = cand[:, 1] + origin[2] >= wl + a.spawn_above_water
+    stats['spawn_wet_candidates'] = int((~dry).sum())
+    cand = cand[dry]
     cand = cand[np.lexsort(cand.T[::-1])]
     if len(cand) > 4000:
         cand = cand[np.random.default_rng(1).choice(len(cand), 4000, replace=False)]
