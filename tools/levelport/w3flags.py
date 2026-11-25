@@ -8,7 +8,8 @@ CClothComponent each, pointing at two cloth resources:
 
 A .redcloth (CR2W) names its .apb (APEX ClothingAsset, binary NvParameterized) and its materials. The add-on converts
 the .apb to an .apx (XML) with NVIDIA ParamTool (`tools/apex14/ParamToolNU.cmd -nu`, set as io_mesh_apx's
-`apex_sdk_cli`), and io_mesh_apx builds the graphical mesh (LOD 0; the add-on trims the other graphical LODs and the
+`apex_sdk_cli`); when that tool is not configured (or with --apb-python) w3patches.use_w3apb() makes it write the
+same .apx with w3apb.py instead. io_mesh_apx builds the graphical mesh (LOD 0; the add-on trims the other graphical LODs and the
 physical meshes), a one-bone armature and a geometry-nodes ClothSimulation modifier that it leaves switched off. The
 add-on's layer importer does this when called with do_import_Redcloth / do_import_Redapex (w3gltf.py calls it with both
 off, and skips the armatures, so the dump had only the poles). The 8 flag_racing_pole.w2mesh poles share each pennant
@@ -18,7 +19,7 @@ This script imports that layer with cloth on, takes each cloth resource's graphi
 data as authored: the armature's one bone sits at rest and the cloth solver stays off, so this is the pose the APEX
 asset was built in; the script measures the armature-evaluated mesh against it), and writes the work-folder shape:
 
-    blender -b --python tools/levelport/w3flags.py -- --out DIR [--layer L]
+    blender -b --python tools/levelport/w3flags.py -- --out DIR [--layer L] [--apb-python] [--uncook U]
     blender -b --python tools/levelport/w3flags.py -- --out DIR --render --work WORK3   (verification only)
 
 Writes, under --out (one space: Witcher 3 game space, metres, +Z up; meshes mesh-local in the same axes, as w3gltf):
@@ -170,6 +171,10 @@ def dump(a):
     import addon_utils
     if not addon_utils.check('io_mesh_apx')[1]:
         addon_utils.enable('io_mesh_apx', default_set=True)
+    if a.uncook:
+        os.makedirs(a.uncook, exist_ok=True)
+        bpy.context.preferences.addons[PKG].preferences.uncook_path = a.uncook
+    apx_used = w3patches.use_w3apb(force=a.apb_python)
 
     lay = a.layer.replace(w3gltf.BS, '/')
     full = lay if lay.lower().startswith('dlc/') else CITY + lay
@@ -250,7 +255,7 @@ def dump(a):
                'layer_w2mesh': dict(collections.Counter(p['mesh'] for p in poles))}
     write('summary.json', summary)
     print('W3FLAGS_DONE', json.dumps({k: summary[k] for k in ('placements', 'by_resource', 'bind_pose_max_error_m',
-                                                              'skipped')}), flush=True)
+                                                              'skipped')}), 'apx', json.dumps(apx_used), flush=True)
 
 
 def render(a):
@@ -423,6 +428,11 @@ def main():
     ap.add_argument('--layer', default=LAYER)
     ap.add_argument('--w3', help='--render: a research folder whose uncook/ holds the pole texture (default '
                     '$W3_UNCOOK, else $W3_RESEARCH/uncook; see w3paths.py)')
+    ap.add_argument('--apb-python', action='store_true',
+                    help='convert the cloth .apb to .apx with w3apb.py even when ParamTool is configured (without '
+                    'ParamTool w3apb.py is used anyway)')
+    ap.add_argument('--uncook', help="set the add-on's uncook folder for this session (a folder of its own, so "
+                    'parallel imports do not race on the files they materialize)')
     ap.add_argument('--render', action='store_true', help='verification render from the staged files')
     ap.add_argument('--work', help='work folder whose meshes/index.json has the pole glbs (--render)')
     a = ap.parse_args(argv)

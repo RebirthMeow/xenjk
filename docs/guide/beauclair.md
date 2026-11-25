@@ -89,7 +89,8 @@ New converter files (copy whole; all under `tools/levelport/`):
 | `tools/levelport/w3foliage.py` | Blender: the world's terrain foliage (vineyards, pines, grass, lilies) under a box as `srt` placements; `--merge` appends them |
 | `tools/levelport/w3flags.py` | Blender: APEX cloth (flags, banners, laundry) in its bind pose as static meshes in a staging folder |
 | `tools/levelport/w3merge.py` | merge a staging folder (flags, water layers) into a work folder, idempotent by `--tag` |
-| `tools/levelport/w3city.py` | several work folders (districts) into one |
+| `tools/levelport/w3city.py` | several work folders (districts) into one; layer classes dropped, outside layers trimmed to the box |
+| `tools/levelport/w3census.py` | every world layer's content inside the box against the work folder (the extraction gate) |
 | `tools/levelport/w3autohide.py` | Blender: the game's hide distances into `<work>/autohide.json` |
 | `tools/levelport/w3build.py` | the gameplay glb and build record for `gltf2map.py` |
 | `tools/levelport/w3scene.py` | the render scene pack (`.xscn`, `.xw3b`, `.xw3t`, `.xwat`, DDS) |
@@ -100,6 +101,7 @@ New converter files (copy whole; all under `tools/levelport/`):
 | `tools/levelport/w3grade.py` | Blender: the display transform to `maps/<map>.xlut` and `zz_<map>_grade.pk3` |
 | `tools/levelport/w3fx_dump.py` | Blender: `.w2p` particle systems to an emitter JSON |
 | `tools/levelport/w3bundle.py` | plain Python: any depot file straight from the `.bundle` files |
+| `tools/levelport/w3apb.py` | plain Python: APEX cloth assets (`.apb`, binary NvParameterized) from `collision.cache`, read without ParamTool; writes ParamTool's `.apx` XML or returns a LOD's render mesh (class definitions in `w3apb_schema.py`) |
 | `tools/levelport/w3emitter.py` | plain Python: decodes the cooked emitter modules (life, size, motion, curves, spawn shapes) |
 | `tools/levelport/w3fx.py` | the water effects as `maps/<map>.xfx` and `zz_<map>_fx.pk3` |
 | `tools/levelport/w3_preview.py` | Blender: rebuild a work folder from its own files and render check views |
@@ -205,15 +207,16 @@ You need:
 - **Witcher3-Blender-Tools 1.1.0** (dingdio), installed as a Blender *extension* in the default user repository, so
   that it imports as `bl_ext.user_default.witcher3_tools`. In its preferences, set the game path (the folder that holds
   `witcher3.exe`; it auto-detects one) and the uncook path.
-- **io_mesh_srt** (SpeedTree import) for trees and foliage; **io_mesh_apx** and NVIDIA's ParamTool (built from PhysX
-  3.4 source) only for cloth (`w3flags.py`).
+- **io_mesh_srt** (SpeedTree import) for trees and foliage; **io_mesh_apx** only for cloth (`w3flags.py`). NVIDIA's
+  ParamTool is optional: without it (or with `w3flags.py --apb-python`) `w3apb.py` writes the cloth `.apx` instead.
 - **The add-on's uncook folder** (its "uncook path" preference): `$W3_UNCOOK`, or `$W3_RESEARCH/uncook` for a
   research folder laid out that way (`--w3 <research>` on `w3trees.py`, `w3flags.py --render`, `w3scene.py` and
   `w3fx.py` overrides both). `w3trees.py` reads `.srt` and their JSON from it, `w3scene.py` and `w3fx.py` the water
   textures. `tools/levelport/w3paths.py` lists every location the W3 tools read.
 - **`tools/levelport/w3patches.py`**: runtime patches to the add-on, applied by every Blender script before it
   imports. It unwraps CR2W-wrapped `.srt` files to their raw `SRT 07` blob before the SpeedTree JSON converter sees
-  them, and it drops the unsupported `BufferV1` per-instance override that made door layers abort.
+  them, and it drops the unsupported `BufferV1` per-instance override that made door layers abort. `w3flags.py` also
+  applies `use_w3apb()`: the add-on's `.apb` to `.apx` step goes through `w3apb.py` when ParamTool is not configured.
 - **q3map2**: xenjk's patched build, which `gltf2map.py` finds through `Q3MAP2` ([levelport.md](levelport.md)); there
   is no default location.
 - **Environment.** Every location outside the checkout comes from an argument or a variable (`w3paths.py`); there is
@@ -222,7 +225,7 @@ You need:
 
   | Variable | Used by | Meaning |
   | --- | --- | --- |
-  | `W3_GAME` | `w3bundle.py`, `w3emitter.py` (`--game`) | the game folder, the one holding `bin/` and `content/`; `W3_ROOT` is read when it is not set |
+  | `W3_GAME` | `w3bundle.py`, `w3emitter.py` (`--game`), `w3apb.py` | the game folder, the one holding `bin/` and `content/`; `W3_ROOT` is read when it is not set |
   | `W3_UNCOOK` | `w3trees.py`, `w3scene.py`, `w3fx.py`, `w3flags.py` | the add-on's uncook folder (its "uncook path" preference); else `$W3_RESEARCH/uncook` |
   | `W3_RESEARCH` | the same | a research folder whose `uncook/` is that folder; the tools' `--w3 <research>` overrides it |
   | `W3_DOBOZ` | `w3bundle.py` | the add-on's `CR2W/witcher_cache/Bundles/native/Doboz.dll`, for the bundle files compressed with doboz |
@@ -239,11 +242,31 @@ A layer list is a text file with one `.w2l` path a line, relative to
 - **Castle pilot:** the `palace/main/**` layers (29 visual layers: `upper_palace`, `lower_palace`, `tower_cell`,
   `room_with_mirror`, the castle-hill `cliffs`, the two castle roads) plus `palace/main/lights/lights_exterior.w2l` and
   `lights_interior.w2l`. That is about 250 x 235 m, 4,200 placements, 5,184 collision shapes, and one q3map2 run.
-- **The city:** about 280 more layers outside the castle, grouped into districts (palace grounds, upper city, lower
-  city, harbour, lights, minor locations). Leave out blockout, proxy-only, temp, quest (`q70x`, `qq70x`), `navi`,
-  `volumes` and `dimmers` layers; keep the light layers. Add the water layers too: `palace/main/solid/fx/water`,
-  `palace/bridge/fx/water`, `palace/gardens/blockout/water` and the world's `fx/rivers/bob_river*` layers. Dump
-  them as their own district.
+- **The city:** every other layer under `city_of_beauclair` (823 in the remaster), grouped into parts of 20-45
+  layers for `w3par.py`. Folders named `blockout` hold finished exteriors and interiors, not placeholders (the game's
+  placeholder meshes, `blockout_base`, are hidden by name in `w3scene`), so they go in; so do the interior sets
+  (`deco_generic_interiors`), loot and dimmer layers. Keep the city in its free-roam state before the story's events
+  with a `--drop-layers` file for `w3city` (`city_drop_layers.txt` in the run folder): a quest's later states go
+  (`q701` festival, `qq704` banquet, massacre and barricades, `after_attack`, `after_mq7021`, the `q705` epilogue's
+  restoration and mourning), and its default dressing stays (`_to_hide`, `before_`, `intact`, `_normal` layers: the
+  game hides those when the quest starts). Proxy and temp layers go too. Dump the water layers as their own district:
+  `palace/main/solid/fx/water`, `palace/bridge/fx/water`, `palace/gardens/blockout/water` and the world's
+  `fx/rivers/bob_river*` layers.
+- **Around the city:** layers of other folders reach into the city's box: the vineyards to the north, the Gorgona
+  foothills to the south and west, the Sansretour marsh cliffs. Dump the `locations/**` layers with meshes in the box
+  (`w3census.py` lists them) and merge them with `w3city --trim-box <box> --trimmed <their work folders>`, which keeps
+  only what lies inside. Quest (`quests/**`), community and living-world layers stay out: event dressing and the
+  props of NPC scenes.
+- **Check the choice:** `w3census.py` reads every layer of the world straight from the bundles (about 12 s) and counts
+  what each holds inside the box against the work folder's placements:
+
+  ```
+  python tools/levelport/w3census.py --box -960 -1725 -110 -930 --work <city> --drop-layers <file> --gate
+  ```
+
+  `--gate` fails when a `city_of_beauclair` layer with meshes in the box is neither dumped nor dropped. The first
+  city (Install 98) failed it: the "leave out blockout" rule of this guide's earlier version had dropped 178 layers
+  and 37,348 meshes, a third of the city.
 
 ### 2. Dump the layers (Blender)
 
@@ -294,7 +317,7 @@ For the city, merge the districts (castle first; a layer given twice keeps the f
 terrain under the city's box, the far ring and the foliage:
 
 ```
-python tools/levelport/w3city.py --out <city> <castle work> <district work> ...
+python tools/levelport/w3city.py --out <city> --drop-layers <file> [--trim-box <box> --trimmed <work> ...] <castle work> <district work> ...
 blender -b --python tools/levelport/w3terrain.py -- --work <city> --box -900 -1620 -130 -950
 blender -b --python tools/levelport/w3terrain.py -- --work <city> --box -1740 -2490 740 -10 --sub terrain_far
     (the far ring: render only)

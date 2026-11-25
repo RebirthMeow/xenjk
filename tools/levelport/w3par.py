@@ -123,7 +123,7 @@ def main(argv=None):
             t = time.time()
             with open(work + '.log', 'w', encoding='utf-8') as log:
                 r = subprocess.run([BLENDER, '-b', '-noaudio', '--python', str(runner), '--', '--uncook', norm(unc) + '/',
-                                    '--tool', a.tool, '--layers', lst, '--work', work], cwd=str(REPO), stdout=log,
+                                    '--tool', a.tool, '--layers', lst, '--work', work], cwd=str(REPO), stdin=subprocess.DEVNULL, stdout=log,
                                    stderr=subprocess.STDOUT)
             tail = ''
             for ln in open(work + '.log', encoding='utf-8', errors='replace'):

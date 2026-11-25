@@ -708,6 +708,8 @@ def main():
     inst = []
     inst_layer, inst_veg, inst_name = [], [], []
     seen_twins = set()
+    dropped_meshes = Counter()      # (mesh, its slots' material bases) of placements that draw nothing
+    mats_src = mats.src
     for p in pl['placements']:
         if p['kind'] != 'w2mesh':
             stats['placements_' + p['kind']] += 1
@@ -731,7 +733,10 @@ def main():
         seen_twins.add(twin)
         mi = scene_mesh(p['mesh'], p['slots'])
         if mi is None:
+            # every part's material skipped or slot empty: the placement draws nothing (scene.json lists them)
             stats['placements_no_material'] += 1
+            dropped_meshes[(p['mesh'], tuple(s if s is None else (mats_src.get(s) or {}).get('base') for s in
+                                             (p['slots'] or [])))] += 1
             continue
         W = np.zeros((3, 4))
         W[:, :3] = upm * M[:3, :3]
@@ -1013,9 +1018,9 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     pk3 = out / ('zz_%s_scene.pk3' % a.map)
     images.flush()
+    shards = []
     with pk3write.writing(pk3, allowZip64=False) as zf:
         zf.writestr(zipfile.ZipInfo('maps/%s.xscn' % a.map), blob, compress_type=zipfile.ZIP_DEFLATED, compresslevel=1)
-        images.write(zf)
         if mats.blend or mats.card or xw3t is not None:
             # maps/<map>.xw3b (vk_scene.cpp Scene_LoadW3Blend): header, the stream (12 B a vertex), 1248 B a material;
             # version 3 (with billboard cards) then the card records
@@ -1063,16 +1068,40 @@ def main():
             zf.writestr(zipfile.ZipInfo('maps/%s.xwat' % a.map),
                         struct.pack('<4sIII', b'XWAT', 1, 1, 0) + struct.pack('<I9f', mats.index['w3_water'], *W3_WATER_XWAT)
                         + bytes(64))
+        # the images last, rolling over into zz_<map>_scene2.pk3, 3, ... before a pack passes pk3write.LIMIT: the
+        # engine's pack reader has no zip64, and a scene past 2 GB in one pack (scene-20, 3.57 GB) stored 971 of its
+        # files at zip64 offsets it cannot read
+        images.write(_Rollover(zf, out, a.map, shards))
+    for s in shards:
+        s.close()
+        os.replace(s.filename, s.filename[:-len('.tmp')])
     (out / 'materials.json').write_text(json.dumps(mats.names, indent=0), encoding='utf-8')
     stats['missing_images'] = len(mats.tex.missing)
     (out / 'scene.json').write_text(json.dumps({'origin': origin.tolist(), 'box': build['box'],
-                                                'missing_images': sorted(mats.tex.missing), **stats}, indent=1),
+                                                'missing_images': sorted(mats.tex.missing),
+                                                'dropped_meshes': [[m, list(b), n] for (m, b), n in
+                                                                   dropped_meshes.most_common()], **stats}, indent=1),
                                     encoding='utf-8')
     tris0 = sum(parts[lods[fl][0] + k][1] // 3 for c, r, fl, nl in meshes for k in range(lods[fl][1]))
     print(f'w3scene -> {pk3} ({pk3.stat().st_size / 1e6:.0f} MB): {len(inst)} instances of {len(meshes)} meshes, '
           f'{len(I) // 3:,} triangles over all LODs ({tris0:,} at LOD 0), {len(mats.recs)} materials, '
           f'{len(images.todo)} images, {len(lrecs)} lights')
     print('  ' + ', '.join(f'{k} {v}' for k, v in sorted(stats.items())))
+
+
+class _Rollover:
+    """writestr into the scene's pack while it stays under pk3write.LIMIT, then into zz_<map>_scene<N>.pk3 shards
+    (written as .tmp; main renames them once closed)"""
+
+    def __init__(self, first, out, mapname, shards):
+        self.w, self.out, self.map, self.shards = first, Path(out), mapname, shards
+
+    def writestr(self, info, data, compress_type=zipfile.ZIP_STORED):
+        if self.w.fp.tell() + len(data) + 4096 > pk3write.LIMIT:
+            name = self.out / ('zz_%s_scene%d.pk3.tmp' % (self.map, len(self.shards) + 2))
+            self.w = zipfile.ZipFile(name, 'w', allowZip64=False)
+            self.shards.append(self.w)
+        self.w.writestr(info, data, compress_type=compress_type)
 
 
 if __name__ == '__main__':

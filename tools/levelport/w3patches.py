@@ -24,10 +24,16 @@ it; the add-on's own files are not changed.
 2. Door entities: the opaque per-instance runtime state (`BufferV1`) is dropped from an entity's overrides instead
    of aborting the whole layer (importers.import_blender_fun._entity_instance_override_shape_error).
 
-apply() prints W3PATCHES_APPLIED."""
+apply() prints W3PATCHES_APPLIED.
+
+use_w3apb(force) is applied separately (w3flags.py): APEX cloth without NVIDIA ParamTool. The add-on converts each
+cloth .apb to .apx with ParamTool (external_addon_tools.ensure_apx_from_apb, io_mesh_apx's `apex_sdk_cli`); the
+replacement writes the same .apx with w3apb.py when that tool is missing (or always, with force), and keeps the
+add-on's result shape, so the rest of its import is unchanged. Prints W3PATCHES_W3APB."""
 import importlib
 import os
 import struct
+import sys
 
 PKG = "bl_ext.user_default.witcher3_tools"
 
@@ -78,3 +84,62 @@ def apply():
 
     ibf._entity_instance_override_shape_error = shape_err
     print("W3PATCHES_APPLIED")
+
+
+def use_w3apb(force=False):
+    """3) Cloth .apb -> .apx with w3apb.py instead of ParamTool (when ParamTool is not configured, or force)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import w3apb
+
+    eat = importlib.import_module(PKG + ".external_addon_tools")
+    orig = eat.ensure_apx_from_apb
+    used = {"w3apb": 0, "paramtool": 0}
+
+    def ensure_apx_from_apb(context, apb_path, overwrite=False):
+        status = eat.get_apx_addon_status(context)
+        if status["sdk_ready"] and not force:
+            used["paramtool"] += 1
+            return orig(context, apb_path, overwrite)
+        apb_path = os.path.normpath(apb_path or "")
+        apx_path = os.path.splitext(apb_path)[0] + ".apx" if apb_path else ""
+        result = {"status": "invalid_input", "apb_path": apb_path, "apx_path": apx_path, "returncode": None,
+                  "message": ""}
+        if not apb_path or os.path.splitext(apb_path)[1].lower() != ".apb":
+            result["message"] = "Input is not an .apb file."
+            return result
+        if not os.path.isfile(apb_path):
+            result["status"] = "missing_apb"
+            result["message"] = "APB file does not exist."
+            return result
+        if not status["enabled"]:
+            result["status"] = "apx_addon_disabled"
+            result["message"] = "io_mesh_apx addon is not enabled."
+            return result
+        existed = os.path.isfile(apx_path)
+        if existed and not overwrite:
+            result["status"] = "exists"
+            result["message"] = "APX already exists."
+            return result
+        try:
+            with open(apb_path, "rb") as fh:
+                data = fh.read()
+            o = data.find(struct.pack(">I", w3apb.MAGIC))
+            w3apb.to_apx(data[max(o, 0):], apx_path)
+            used["w3apb"] += 1
+            result["returncode"] = 0
+            result["status"] = "updated" if existed else "converted"
+        except Exception as exc:  # the add-on reports and skips the cloth, as for a ParamTool failure
+            result["status"] = "failed"
+            result["message"] = "w3apb: %s" % exc
+        return result
+
+    eat.ensure_apx_from_apb = ensure_apx_from_apb
+    for mod in (".ui.ui_file_browser", ".ui.ui_cache_export"):
+        try:
+            m = importlib.import_module(PKG + mod)
+        except Exception:
+            continue
+        if getattr(m, "ensure_apx_from_apb", None) is orig:
+            m.ensure_apx_from_apb = ensure_apx_from_apb
+    print("W3PATCHES_W3APB force=%s" % bool(force))
+    return used
