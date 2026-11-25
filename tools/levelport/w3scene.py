@@ -52,7 +52,7 @@ from cp2gltf import (SCENE_KIND, SCENE_VERT, SceneImages, snorm8, vertex_frame, 
                      xscn_rebuild)
 
 TAN_HALF_VFOV = 0.75        # JKA's 90 degree horizontal view at 4:3
-SKIP_TREES = ('Invisible', 'm_fountain_cascade', 'transparent_reflective')
+SKIP_TREES = ('Invisible', 'transparent_reflective')
 # helpers the game never draws, wired by the add-on as ordinary main materials (shadow-blocking
 # shells drawn as grey blocks and fighting the walls they sit in, debug bars up to 145 m long, checkerboard collision
 # boxes, a fake sky plane). (The river and waterfall meshes stay, opaque, until water is converted: skipped, scene-5's
@@ -79,6 +79,10 @@ W3_FLOW['m_river_vertex_offset.w2mg'] = {
     # water, ripples on world XY) these shallow streams read as dry beds
     'tex': r'environment\water\global_ocean\wave_med_n.dds', 'speed': (0.6, 0.0), 'tile': (3.0, 5.0), 'alpha': 0.7,
     'colour': (30, 60, 50)}
+W3_FLOW['m_fountain_cascade.w2mg'] = {
+    # the fountains' falling sheets (fountain_splash.w2mesh): waterfall_1 (a normal map, its alpha the sheet) at the
+    # cooked instance's texture_coord (3, 0.25) scrolled by its texture_speed (0, -0.2); its alpha ramp thins the sheet
+    'tex': r'fx\textures\water\waterfall_1.dds', 'speed': (0.0, -0.2), 'tile': (3.0, 0.25), 'alpha': 0.6}
 W3_FLOW_MATERIALS = {'waterfall_strips_3_3_Material0': {'tile': (1.0, 1.5)}}
 W3_WATER_TINT = (24, 52, 50)        # sRGB: the colour in the water (Toussaint's green rivers; no source value read)
 # maps/<map>.xwat (cp2gltf WATER_XWAT_FIELDS): visibility, shore, ripple tile, speed, heading, roughness (0: the ORM's),
@@ -892,7 +896,16 @@ def main():
     # lit bed where it is above it (the renderer's water mode); under the ground the depth test hides it
     if not a.no_water:
         import w3water
-        surfaces = [(w3water.SEA, w3water.sea_rects(tiles), 'sea')]
+        # the game's local water shapes (w3watershapes.py): rivers and lakes at their own levels, and the inland
+        # hollows under the sea's level kept dry
+        shapes = w3water.load_shapes(work)
+        stats['water_shapes'] = len(shapes)
+        if not shapes:
+            print('w3scene: no %s (w3watershapes.py): the water is the sea and the lily lakes only'
+                  % (work / 'water_shapes.json'))
+        surfaces = [(w3water.SEA, w3water.sea_rects(tiles, shapes=shapes), 'sea')]
+        for level, Q, _s in w3water.shape_quads(tiles, shapes):
+            surfaces.append((Q, None, 'shape'))
         # the walls that hold the lakes back (w3water.wall_cells): the triangles of the placed solid meshes (not
         # vegetation) whose instance box reaches the lakes' heights, as boxes in game metres
         lz = [np.array(p['matrix'])[2, 3] for p in pl['placements']
@@ -913,25 +926,33 @@ def main():
                                                  T[..., 2:].max(1)], 1))
             walls = np.concatenate(boxes) if boxes else None
             stats['water_wall_triangles'] = 0 if walls is None else len(walls)
-        lakes, dropped = w3water.lake_rects(tiles, pl['placements'], walls)
+        lakes, dropped = w3water.lake_rects(tiles, pl['placements'], walls, shapes)
         surfaces += [(L, rects, 'lake') for L, rects, _rep in lakes]
         stats['water_lakes'] = len(lakes)
         stats['water_lake_groups_dropped'] = len(dropped)
         wm = mats.water()
         for level, rects, what in surfaces:
-            R = np.array(rects, dtype=np.float64).reshape(-1, 4)
+            if what == 'shape':
+                # (a shape's quads carry each corner's level: x0 y0 x1 y1 z00 z10 z11 z01)
+                R8 = np.asarray(level, dtype=np.float64).reshape(-1, 8)
+            else:
+                R = np.array(rects, dtype=np.float64).reshape(-1, 4)
+                R8 = np.c_[R, np.full((len(R), 4), level)]
+            R = R8[:, :4]
             if not len(R):
                 continue
             key = np.floor((R[:, :2] + R[:, 2:]) / 2 / 250.0).astype(int)
             for k in np.unique(key, axis=0):
-                B = R[(key == k).all(1)]
+                sel = (key == k).all(1)
+                B = R[sel]
+                Bz = R8[sel, 4:]
                 n = len(B)
                 V = np.zeros((n * 4, 3))
                 V[0::4, :2] = B[:, [0, 1]]
                 V[1::4, :2] = B[:, [2, 1]]
                 V[2::4, :2] = B[:, [2, 3]]
                 V[3::4, :2] = B[:, [0, 3]]
-                V[:, 2] = level
+                V[0::4, 2], V[1::4, 2], V[2::4, 2], V[3::4, 2] = Bz[:, 0], Bz[:, 1], Bz[:, 2], Bz[:, 3]
                 c = V.mean(0)
                 pos = V - c
                 q = 4 * np.arange(n)[:, None]

@@ -49,14 +49,203 @@ def runs(wet, xs, ys):
     return out
 
 
-def sea_rects(tiles, near_step=2, far_step=8):
-    """Rectangles at sea level over every tile's cells with a corner under it."""
+SHAPE_STEP = 2.0     # m: the shapes' water cells
+
+
+def load_shapes(work):
+    """The game's local water shapes (w3watershapes.py's <work>/water_shapes.json), each with its triangulation;
+    [] without the file"""
+    f = Path(work) / 'water_shapes.json'
+    if not f.exists():
+        return []
+    import json
+    out = []
+    for s in json.load(open(f, encoding='utf-8'))['shapes']:
+        P = np.array(s['points'], np.float64)
+        if len(P) > 3 and np.allclose(P[0, :2], P[-1, :2]):
+            P = P[:-1]
+        out.append(dict(s, P=P, tris=ear_clip(P[:, :2])))
+    return out
+
+
+def ear_clip(xy):
+    """The triangles (index triples) of a simple polygon"""
+    n = len(xy)
+    idx = list(range(n))
+    area = 0.5 * np.sum(xy[:, 0] * np.roll(xy[:, 1], -1) - np.roll(xy[:, 0], -1) * xy[:, 1])
+    if area < 0:
+        idx.reverse()
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    tris, guard = [], 0
+    while len(idx) > 3 and guard < 10 * n * n:
+        guard += 1
+        m = len(idx)
+        for k in range(m):
+            i0, i1, i2 = idx[k - 1], idx[k], idx[(k + 1) % m]
+            a, b, c = xy[i0], xy[i1], xy[i2]
+            if cross(a, b, c) <= 1e-9:
+                continue
+            inside = False
+            for j in idx:
+                if j in (i0, i1, i2):
+                    continue
+                p = xy[j]
+                if cross(a, b, p) >= 0 and cross(b, c, p) >= 0 and cross(c, a, p) >= 0:
+                    inside = True
+                    break
+            if not inside:
+                tris.append((i0, i1, i2))
+                idx.pop(k)
+                break
+        else:
+            break       # (degenerate: the rest as a fan)
+    for k in range(1, len(idx) - 1):
+        tris.append((idx[0], idx[k], idx[k + 1]))
+    return np.array(tris, np.int64).reshape(-1, 3)
+
+
+def in_shapes(shapes, X, Y):
+    from matplotlib.path import Path as MPath
+    pts = np.c_[np.ravel(X), np.ravel(Y)]
+    m = np.zeros(len(pts), bool)
+    for s in shapes:
+        P = s['P']
+        lo, hi = P[:, :2].min(0), P[:, :2].max(0)
+        c = ~m & (pts[:, 0] >= lo[0]) & (pts[:, 0] <= hi[0]) & (pts[:, 1] >= lo[1]) & (pts[:, 1] <= hi[1])
+        if c.any():
+            m[c] = MPath(P[:, :2]).contains_points(pts[c])
+    return m.reshape(np.shape(X))
+
+
+def shape_level(s, X, Y):
+    """A shape's water level at points (its triangulation, linear in each triangle; a point outside every triangle
+    takes the nearest point's level)"""
+    P, T = s['P'], s['tris']
+    X, Y = np.ravel(X), np.ravel(Y)
+    L = np.full(len(X), np.nan)
+    if s.get('flat'):
+        L[:] = P[0, 2]
+        return L
+    for a, b, c in T:
+        A, B, C = P[a], P[b], P[c]
+        d = (B[1] - C[1]) * (A[0] - C[0]) + (C[0] - B[0]) * (A[1] - C[1])
+        if abs(d) < 1e-12:
+            continue
+        w0 = ((B[1] - C[1]) * (X - C[0]) + (C[0] - B[0]) * (Y - C[1])) / d
+        w1 = ((C[1] - A[1]) * (X - C[0]) + (A[0] - C[0]) * (Y - C[1])) / d
+        w2 = 1 - w0 - w1
+        ok = np.isnan(L) & (w0 >= -1e-6) & (w1 >= -1e-6) & (w2 >= -1e-6)
+        L[ok] = w0[ok] * A[2] + w1[ok] * B[2] + w2[ok] * C[2]
+    miss = np.isnan(L)
+    if miss.any():
+        k = np.argmin((X[miss, None] - P[None, :, 0]) ** 2 + (Y[miss, None] - P[None, :, 1]) ** 2, axis=1)
+        L[miss] = P[k, 2]
+    return L
+
+
+def water_level(shapes, X, Y):
+    """The game's water level at points: a shape's level inside it (the first that holds the point), else the sea's.
+    (For spawns and checks: a point under it is under water. The lily lakes, outside every shape, are not counted.)"""
+    X, Y = np.ravel(np.asarray(X, np.float64)), np.ravel(np.asarray(Y, np.float64))
+    L = np.full(len(X), SEA)
+    done = np.zeros(len(X), bool)
+    for s in shapes:
+        m = ~done & in_shapes([s], X, Y)
+        if m.any():
+            L[m] = shape_level(s, X[m], Y[m])
+            done |= m
+    return L
+
+
+def height_sampler(tiles):
+    """Terrain height at points (the near tiles before the far ring; nearest grid point; +inf off the terrain)"""
+    order = sorted(tiles, key=lambda t: t[-1])
+
+    def h(X, Y):
+        X, Y = np.ravel(X), np.ravel(Y)
+        Z = np.full(len(X), np.inf)
+        for key, G, props, lattice, b, far in order:
+            m = np.isinf(Z) & (X >= b[0]) & (X <= b[2]) & (Y >= b[1]) & (Y <= b[3])
+            if not m.any():
+                continue
+            gx0, gy0 = G[0, 0, 0], G[0, 0, 1]
+            dx, dy = G[0, 1, 0] - gx0, G[1, 0, 1] - gy0
+            j = np.clip(np.rint((X[m] - gx0) / dx).astype(int), 0, G.shape[1] - 1)
+            i = np.clip(np.rint((Y[m] - gy0) / dy).astype(int), 0, G.shape[0] - 1)
+            Z[m] = G[i, j, 2]
+        return Z
+    return h
+
+
+def shape_quads(tiles, shapes, step=SHAPE_STEP):
+    """Each shape's water: cells of `step` inside it whose ground (a corner or the centre) lies under its level there,
+    as (x0, y0, x1, y1, z at (x0,y0), (x1,y0), (x1,y1), (x0,y1)) rows, a flat run of cells merged into one. Not
+    flooded from anywhere: the game draws the shape's surface wherever it is over the ground (the depth test hides it
+    under the ground), so nothing in the water (a boat's hull, a jetty's posts) holds it back.
+    Returns [(level or None for sloped, quads (n, 8), shape)]."""
+    h = height_sampler(tiles)
+    out = []
+    for s in shapes:
+        P = s['P']
+        lo, hi = np.floor(P[:, :2].min(0) / step) * step, np.ceil(P[:, :2].max(0) / step) * step
+        xs = np.arange(lo[0], hi[0] + step / 2, step)
+        ys = np.arange(lo[1], hi[1] + step / 2, step)
+        if len(xs) < 2 or len(ys) < 2:
+            continue
+        GX, GY = np.meshgrid(xs, ys)
+        Hc = h(GX, GY).reshape(GX.shape)                         # ground at the corners
+        cx, cy = (GX[:-1, :-1] + GX[1:, 1:]) / 2, (GY[:-1, :-1] + GY[1:, 1:]) / 2
+        Hm = h(cx, cy).reshape(cx.shape)
+        Lc = shape_level(s, GX, GY).reshape(GX.shape)           # level at the corners
+        Lm = shape_level(s, cx, cy).reshape(cx.shape)
+        low = np.minimum(np.minimum(Hc[:-1, :-1], Hc[1:, :-1]), np.minimum(Hc[:-1, 1:], Hc[1:, 1:]))
+        wet = in_shapes([s], cx, cy) & ((np.minimum(low, Hm) < Lm))
+        if not wet.any():
+            continue
+        if s.get('flat'):
+            R = np.array(runs(wet, xs, ys)).reshape(-1, 4)
+            Q = np.c_[R, np.full((len(R), 4), P[0, 2])]
+            out.append((float(P[0, 2]), Q, s))
+            continue
+        i, j = np.nonzero(wet)
+        z = np.stack([Lc[i, j], Lc[i, j + 1], Lc[i + 1, j + 1], Lc[i + 1, j]], 1)
+        Q = np.c_[xs[j], ys[i], xs[j + 1], ys[i + 1], z]
+        # merge row runs of cells whose four corners share one level (most of a river is flat between its points)
+        flat = np.ptp(z, axis=1) < 1e-4
+        keep = [Q[~flat]]
+        if flat.any():
+            F = Q[flat]
+            order = np.lexsort((F[:, 0], F[:, 4], F[:, 1]))
+            F = F[order]
+            merged, cur = [], F[0].copy()
+            for r in F[1:]:
+                if r[1] == cur[1] and r[4] == cur[4] and abs(r[0] - cur[2]) < 1e-6:
+                    cur[2] = r[2]
+                else:
+                    merged.append(cur)
+                    cur = r.copy()
+            merged.append(cur)
+            keep.append(np.array(merged))
+        out.append((None, np.concatenate(keep), s))
+    return out
+
+
+def sea_rects(tiles, near_step=2, far_step=8, shapes=None):
+    """Rectangles at sea level over every tile's cells with a corner under it, except inside a local water shape
+    (shapes: load_shapes()): the shape sets the level there (the game's inland hollows under the sea's level are
+    shapes with a level under their ground: dry)."""
     out = []
     for key, G, props, lattice, bounds, far in tiles:
         g = G[::far_step, ::far_step] if far else G[::near_step, ::near_step]
         z = g[..., 2]
         low = np.minimum(np.minimum(z[:-1, :-1], z[1:, :-1]), np.minimum(z[:-1, 1:], z[1:, 1:]))
         wet = low < SEA
+        if shapes and wet.any():
+            cx = (g[:-1, :-1, 0] + g[1:, 1:, 0]) / 2
+            cy = (g[:-1, :-1, 1] + g[1:, 1:, 1]) / 2
+            wet &= ~in_shapes(shapes, cx, cy)
         if wet.any():
             out += runs(wet, g[0, :, 0], g[:, 0, 1])
     return out
@@ -119,7 +308,7 @@ def lily_groups(placements):
     return groups
 
 
-def lake_rects(tiles, placements, walls=None):
+def lake_rects(tiles, placements, walls=None, shapes=None):
     """The lakes: (level, rectangles, report) per body. Each lily group (most lilies first) floods; one that overlaps a
     body within MERGE_M of its level joins it (one river at slightly different heights along its course: the body takes
     the median of all its lilies), one that overlaps a body at another level is dropped (a raised pool: Beauclair's
@@ -137,6 +326,15 @@ def lake_rects(tiles, placements, walls=None):
         else:
             keep.append(g)
     groups = keep
+    if shapes:
+        # (lilies in a game water shape float on that shape's water: w3scene draws the shape, shape_quads)
+        keep = []
+        for g in groups:
+            if in_shapes(shapes, g['pts'][:, 0], g['pts'][:, 1]).mean() > 0.5:
+                dropped.append(dict(g, note='in a water shape'))
+            else:
+                keep.append(g)
+        groups = keep
     for L, body, g in _flood(tiles, groups, walls, land_plants(placements)):
         if body is None:
             dropped.append(dict(g, note='no wet cell under the lilies'))

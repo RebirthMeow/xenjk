@@ -94,7 +94,8 @@ New converter files (copy whole; all under `tools/levelport/`):
 | `tools/levelport/w3autohide.py` | Blender: the game's hide distances into `<work>/autohide.json` |
 | `tools/levelport/w3build.py` | the gameplay glb and build record for `gltf2map.py` |
 | `tools/levelport/w3scene.py` | the render scene pack (`.xscn`, `.xw3b`, `.xw3t`, `.xwat`, DDS) |
-| `tools/levelport/w3water.py` | sea level, the lakes (levelled from floating lilies) and water meshes; used by `w3scene`, or run alone for a report |
+| `tools/levelport/w3watershapes.py` | the game's local water shapes (`CWaterComponent` in `local_water_volumes.w2l`, `water/*.w2l` and a few location layers) read from the bundles to `<work>/water_shapes.json`; run it once per work folder before `w3scene` |
+| `tools/levelport/w3water.py` | the water surfaces: each game water shape at its level (the extrusion's lower face; sloped rivers triangulated), the sea outside the shapes, lily-levelled lakes only where no shape lies, and `water_level()` for spawn checks; used by `w3scene`, or run alone for a report |
 | `tools/levelport/vcache.c`, `vcache.py` | vertex-cache triangle order, compiled on first use (no compiler: order left alone) |
 | `tools/levelport/w3decals.py` | Blender `read` stage, plain `build` stage: the layers' packed decals to `.xdcl` |
 | `tools/levelport/w3env.py` | Blender: daylight to `maps/<map>.xenv` and `zz_<map>_env.pk3` |
