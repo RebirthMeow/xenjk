@@ -5,6 +5,8 @@
 // scene.frag's tone curve to the light that curve was given, then through the LUT, and leaves sRGB-encoded. On a float
 // colour target the render scene's light past white comes back too (scene.frag's toDisplay). GRADE_COMPUTE: the same
 // grade as a compute shader over the resolved frame in place (r_sceneGradeCompute: a storage colour image, no copy).
+// A day's grades (XLUT version 2) stack in the LUT's depth, one n^3 block per hour: the two around the clock are
+// blended (p.w: the earlier one's index plus the later one's share; vk_scene_post.cpp's Scene_GradeSlice).
 
 #ifdef GRADE_COMPUTE
 layout(local_size_x = 8, local_size_y = 8) in;
@@ -12,10 +14,11 @@ layout(set = 0, binding = 0, rgba16f) uniform image2D frameImg;	// the resolved 
 #else
 layout(set = 0, binding = 0) uniform sampler2D frameTex;	// a copy of the resolved frame
 #endif
-layout(set = 0, binding = 1) uniform sampler3D lutTex;		// r along x, g along y, b along z; linear filtering
+layout(set = 0, binding = 1) uniform sampler3D lutTex;		// r along x, g along y, b along z (an hour's block each n); linear filtering
 
 layout(push_constant) uniform Push {
-	vec4 p;		// x: scene.frag's tone curve (0 exponential, 1 filmic), y: the LUT's input scale, z: strength (0 off .. 1)
+	vec4 p;		// x: scene.frag's tone curve (0 exponential, 1 filmic), y: the LUT's input scale, z: strength (0 off .. 1),
+				// w: the hour blocks' blend (block floor(w) to the next by fract(w); 0 with one block)
 } pc;
 
 #ifndef GRADE_COMPUTE
@@ -49,6 +52,15 @@ vec3 logC( const vec3 x )
 	return mix( lin, lg, greaterThan( x, vec3( cut ) ) );
 }
 
+vec3 lutAt( const vec3 uvw )
+{
+#ifdef GRADE_COMPUTE
+	return textureLod( lutTex, uvw, 0.0 ).rgb;	// (one level)
+#else
+	return texture( lutTex, uvw ).rgb;
+#endif
+}
+
 void main()
 {
 #ifdef GRADE_COMPUTE
@@ -59,13 +71,14 @@ void main()
 #else
 	const vec4 src = texelFetch( frameTex, ivec2( gl_FragCoord.xy ), 0 );
 #endif
-	const float n = float( textureSize( lutTex, 0 ).x );
+	const ivec3 size = textureSize( lutTex, 0 );
+	const float n = float( size.x ), blocks = max( 1.0, floor( float( size.z ) / n + 0.5 ) );
 	const vec3 t = clamp( logC( curveInput( src.rgb ) * pc.p.y ), 0.0, 1.0 );
-#ifdef GRADE_COMPUTE
-	const vec3 graded = textureLod( lutTex, t * ( ( n - 1.0 ) / n ) + 0.5 / n, 0.0 ).rgb;	// (one level)
-#else
-	const vec3 graded = texture( lutTex, t * ( ( n - 1.0 ) / n ) + 0.5 / n ).rgb;
-#endif
+	const vec3 cell = t * ( ( n - 1.0 ) / n ) + 0.5 / n;	// texel centres of one block
+	const float k0 = clamp( floor( pc.p.w ), 0.0, blocks - 1.0 ), k1 = mod( k0 + 1.0, blocks ), share = fract( pc.p.w );
+	vec3 graded = lutAt( vec3( cell.xy, ( k0 + cell.z ) / blocks ) );
+	if ( blocks > 1.5 && share > 0.0 )
+		graded = mix( graded, lutAt( vec3( cell.xy, ( k1 + cell.z ) / blocks ) ), share );
 	// the source's frame is sRGB-encoded: near black its linear segment keeps the LUT's black (0.0034) at 11/255,
 	// where gamma 2.2 would lift it to 19
 	const vec3 g = clamp( graded, 0.0, 1.0 );

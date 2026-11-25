@@ -544,6 +544,8 @@ typedef struct {
 	VkImage					gradeLut, gradeCopy;
 	VkDeviceMemory			gradeLutMem, gradeCopyMem;
 	VkImageView				gradeLutView, gradeCopyView;
+	uint32_t				gradeHourCount;		// LUTs stacked in the LUT's depth, one per hour (XLUT version 2; 1: one grade)
+	float					gradeHours[96];		// their hours, ascending
 	VkDescriptorSetLayout	gradeLayout;
 	VkPipelineLayout		gradePipeLayout;
 	VkPipeline				gradePipe;
@@ -819,6 +821,7 @@ qboolean		Scene_FxPlaced( void );	// the map has particle placements (maps/<map>
 
 // vk_scene_post.cpp
 qboolean		Scene_LoadGrade( const char *scnName );
+float			Scene_ClockHour( void );	// the scene's hour now 0..24 (the cycle's clock, r_sceneClock, or the env's day/night)
 void			Scene_FreeGrade( void );
 void			Scene_MeterDestroy( void );
 float			Scene_Exposure( void );

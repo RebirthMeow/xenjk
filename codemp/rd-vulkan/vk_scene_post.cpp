@@ -27,14 +27,37 @@ and AO's capture and trace (vk_scene_capture), the auto exposure's meter (r_scen
 
 static qboolean Scene_CreateGradeCompute( void );
 
-// maps/<name>.xlut (tools/levelport/cp2gltf.py --grade): this header, then size^3 rgba16f texels (r fastest, then g,
-// then b) of display light for scene light encoded by `input` (1: ARRI LogC v3 at EI 800)
+// maps/<name>.xlut (tools/levelport/cp2gltf.py --grade, w3grade.py): this header, then size^3 rgba16f texels (r
+// fastest, then g, then b) of display light for scene light encoded by `input` (1: ARRI LogC v3 at EI 800). Version 2
+// (w3grade.py --hours, a day's grades): after the header a uint32 count and count float hours ascending, then count
+// such LUTs; they stack in one 3D texture's depth and the grade blends the two around the scene's clock.
 typedef struct {
 	char		ident[4];	// XLUT
-	uint32_t	version;	// 1
+	uint32_t	version;	// 1 or 2
 	uint32_t	size;
 	uint32_t	input;
 } xlutHeader_t;
+#define XLUT_MAX_HOURS	96
+
+// the grade's push p.w: the LUT before the clock hour plus the share of the next (wrapping past midnight)
+static float Scene_GradeSlice( void )
+{
+	const uint32_t n = sc.gradeHourCount;
+	if ( n <= 1 )
+		return 0.0f;
+	const float hour = Scene_ClockHour();
+	uint32_t a = n - 1;
+	for ( uint32_t i = 0; i + 1 < n; i++ )
+		if ( hour >= sc.gradeHours[i] && hour < sc.gradeHours[i + 1] ) {
+			a = i;
+			break;
+		}
+	const uint32_t b = ( a + 1 ) % n;
+	float span = sc.gradeHours[b] - sc.gradeHours[a], d = hour - sc.gradeHours[a];
+	if ( span <= 0.0f ) span += 24.0f;
+	if ( d < 0.0f ) d += 24.0f;
+	return (float)a + Com_Clamp( 0.0f, 0.9999f, d / MAX( span, 1e-3f ) );
+}
 
 static qboolean Scene_GradeImage( VkImage *image, VkDeviceMemory *mem, VkImageView *view, qboolean lut, uint32_t w, uint32_t h,
 	uint32_t d, VkFormat format, const char *name )
@@ -171,12 +194,40 @@ qboolean Scene_LoadGrade( const char *scnName )
 	if ( len <= 0 || !buf )
 		return qtrue;
 	xlutHeader_t h;
+	Com_Memset( &h, 0, sizeof( h ) );
 	Com_Memcpy( &h, buf, MIN( len, (int)sizeof( h ) ) );
-	if ( len < (int)sizeof( h ) || memcmp( h.ident, "XLUT", 4 ) || h.version != 1 || h.input != 1 || h.size < 2 || h.size > 128
-		|| (uint64_t)len < sizeof( h ) + (uint64_t)h.size * h.size * h.size * 8 ) {
-		ri.Printf( PRINT_WARNING, "WARNING: %s is not a version 1 LogC colour grade: not used\n", name );
+	uint32_t count = 1;
+	size_t texelsAt = sizeof( h );
+	if ( h.version == 2 && len >= (int)sizeof( h ) + 4 ) {
+		Com_Memcpy( &count, buf + sizeof( h ), 4 );
+		texelsAt = sizeof( h ) + 4 + (size_t)MIN( count, (uint32_t)XLUT_MAX_HOURS ) * 4;
+	}
+	VkPhysicalDeviceProperties props;
+	qvkGetPhysicalDeviceProperties( vk.physical_device, &props );
+	if ( len < (int)sizeof( h ) || memcmp( h.ident, "XLUT", 4 ) || ( h.version != 1 && h.version != 2 ) || h.input != 1 || h.size < 2 || h.size > 128
+		|| count < 1 || count > XLUT_MAX_HOURS || (uint64_t)len < texelsAt + (uint64_t)h.size * h.size * h.size * 8 * count ) {
+		ri.Printf( PRINT_WARNING, "WARNING: %s is not a version 1 or 2 LogC colour grade: not used\n", name );
 		ri.FS_FreeFile( buf );
 		return qfalse;
+	}
+	if ( h.size * count > props.limits.maxImageDimension3D ) {
+		ri.Printf( PRINT_WARNING, "WARNING: %s: %u hours of %u^3 exceed the device's 3D image depth %u: not used\n", name,
+			count, h.size, props.limits.maxImageDimension3D );
+		ri.FS_FreeFile( buf );
+		return qfalse;
+	}
+	sc.gradeHourCount = count;
+	for ( uint32_t i = 0; i < count; i++ ) {
+		if ( h.version == 2 )
+			Com_Memcpy( &sc.gradeHours[i], buf + sizeof( h ) + 4 + i * 4, 4 );
+		else
+			sc.gradeHours[i] = 0.0f;
+		if ( i && !( sc.gradeHours[i] > sc.gradeHours[i - 1] ) ) {
+			ri.Printf( PRINT_WARNING, "WARNING: %s: its hours do not ascend: not used\n", name );
+			sc.gradeHourCount = 0;
+			ri.FS_FreeFile( buf );
+			return qfalse;
+		}
 	}
 	if ( !vk.msaaActive || !vk.render_pass.post1x.handle ) {
 		ri.Printf( PRINT_ALL, "scene grade %s: needs MSAA (the post 1x pass), not used\n", name );
@@ -185,8 +236,8 @@ qboolean Scene_LoadGrade( const char *scnName )
 	}
 
 	const uint32_t n = h.size;
-	const VkDeviceSize bytes = (VkDeviceSize)n * n * n * 8;
-	qboolean ok = ( Scene_GradeImage( &sc.gradeLut, &sc.gradeLutMem, &sc.gradeLutView, qtrue, n, n, n, VK_FORMAT_R16G16B16A16_SFLOAT, "scene grade lut" )
+	const VkDeviceSize bytes = (VkDeviceSize)n * n * n * 8 * count;
+	qboolean ok = ( Scene_GradeImage( &sc.gradeLut, &sc.gradeLutMem, &sc.gradeLutView, qtrue, n, n, n * count, VK_FORMAT_R16G16B16A16_SFLOAT, "scene grade lut" )
 		&& Scene_GradeImage( &sc.gradeCopy, &sc.gradeCopyMem, &sc.gradeCopyView, qfalse, glConfig.vidWidth, glConfig.vidHeight, 1, vk.color_format, "scene grade frame" ) ) ? qtrue : qfalse;
 	if ( ok ) {
 		sceneBuffer_t staging;
@@ -195,7 +246,7 @@ qboolean Scene_LoadGrade( const char *scnName )
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, "scene grade staging" );
 		if ( ok ) {
 			VK_CHECK( qvkMapMemory( vk.device, staging.mem, 0, VK_WHOLE_SIZE, 0, &p ) );
-			memcpy( p, buf + sizeof( h ), (size_t)bytes );
+			memcpy( p, buf + texelsAt, (size_t)bytes );
 			qvkUnmapMemory( vk.device, staging.mem );
 			VkCommandBuffer cmd = vk_begin_command_buffer();
 			Scene_ImageBarrier( cmd, sc.gradeLut, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -204,7 +255,8 @@ qboolean Scene_LoadGrade( const char *scnName )
 			Com_Memset( &region, 0, sizeof( region ) );
 			region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 			region.imageSubresource.layerCount = 1;
-			region.imageExtent.width = region.imageExtent.height = region.imageExtent.depth = n;
+			region.imageExtent.width = region.imageExtent.height = n;
+			region.imageExtent.depth = n * count;
 			qvkCmdCopyBufferToImage( cmd, staging.buf, sc.gradeLut, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region );
 			Scene_ImageBarrier( cmd, sc.gradeLut, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 				VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT );
@@ -959,7 +1011,7 @@ void vk_scene_grade( void )
 
 	VkCommandBuffer cb = vk.cmd->command_buffer;
 	vk_end_render_pass();	// the colour image back in SHADER_READ_ONLY
-	const vec4_t push = { (float)Env( r_sceneTonemap )->integer, MAX( Env( r_sceneGradeExposure )->value, 0.0f ), Com_Clamp( 0.0f, 1.0f, Env( r_sceneGrade )->value ), 0.0f };
+	const vec4_t push = { (float)Env( r_sceneTonemap )->integer, MAX( Env( r_sceneGradeExposure )->value, 0.0f ), Com_Clamp( 0.0f, 1.0f, Env( r_sceneGrade )->value ), Scene_GradeSlice() };
 
 	if ( sc.gradeCompReady && vk.colorStorage && r_sceneGradeCompute->integer ) {
 		// in place: each pixel graded where it is, then the pass begins again (colour loaded)

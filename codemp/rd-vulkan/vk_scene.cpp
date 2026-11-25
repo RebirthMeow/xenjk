@@ -6943,6 +6943,8 @@ static float Scene_LightTime( const int type )
 	return ( type & ( 1 << 20 ) ) ? sceneLampNow : ( type & ( 1 << 21 ) ) ? 1.0f - sceneLampNow : 1.0f;
 }
 
+float Scene_ClockHour( void ) { return Scene_Clock(); }
+
 /*
 R_SceneCycle: the day/night cycle, each world scene before its sun is read (tr_scene.cpp): the two keyframes around
 the clock blended into the environment's look values (their shadows, read through Env) and the sun (tr.sunLight,
