@@ -76,7 +76,7 @@ def split_glb(src, hub, col):
 def run(cmd, log):
     t = time.time()
     with open(log, 'w', encoding='utf-8') as f:
-        r = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)
+        r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT)  # (a detached chain has no stdin)
     print('  %-6s %7.1f s  exit %d  (%s)' % (Path(log).stem, time.time() - t, r.returncode, log), flush=True)
     if r.returncode:
         sys.exit('colmap: %s failed, see %s' % (Path(log).stem, log))

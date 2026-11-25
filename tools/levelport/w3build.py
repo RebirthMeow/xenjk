@@ -7,13 +7,14 @@ terrain/tiles.npz, and writes <work>/<name>-<tag>.glb in the levelport conventio
 - every game collision shape as a collision node with its JKA surface material (footsteps, impacts):
   boxes and convex hulls as one brush; spheres and capsules as the hull of their 26 support points; PhysX triangle
   meshes as slabs ("shape": "mesh");
-- the terrain inside --box as slabs on a --terrain-step metre grid;
+- the terrain inside --box as slabs: --terrain-step cells, split down to every vertex where they miss the
+  heightfield by more than --terrain-tol;
 - a playerclip wall around --box and a lid at --top;
 - the source's lights as q3map2 lights (they only fill the light grid characters are lit by);
 - spawns on up-facing collision under open sky near --spawn-centre, spread out.
 
     python tools/levelport/w3build.py --work DIR --name castle --tag 1 --box MINX MINY MAXX MAXY
-        [--spawn-centre X Y] [--spawn-radius 60] [--spawns 16] [--terrain-step 2] [--top Z]
+        [--spawn-centre X Y] [--spawn-radius 60] [--spawns 16] [--terrain-step 2] [--terrain-tol 0.15] [--top Z]
 """
 import argparse
 import json
@@ -89,6 +90,48 @@ def solid_share(lattice, bounds, xy):
     solid = (lattice != 0).astype(np.float64)
     return (solid[cy, cx] * (1 - fx) * (1 - fy) + solid[cy, cx + 1] * fx * (1 - fy) +
             solid[cy + 1, cx] * (1 - fx) * fy + solid[cy + 1, cx + 1] * fx * fy)
+
+
+def square_error(Z, s):
+    """Per step-s cell of height grid Z (rows +y, columns +x): the largest height miss of the full-resolution
+    vertices inside it against the cell's two triangles (split a-c, as the slabs: (a, b, c), (a, c, d))."""
+    n, m = (Z.shape[0] - 1) // s, (Z.shape[1] - 1) // s
+    a = Z[0:n * s:s, 0:m * s:s]
+    b = Z[0:n * s:s, s:m * s + 1:s]
+    c = Z[s:n * s + 1:s, s:m * s + 1:s]
+    d = Z[s:n * s + 1:s, 0:m * s:s]
+    err = np.zeros((n, m))
+    for u in range(s + 1):              # u: rows (+y, fy), v: columns (+x, fx)
+        for v in range(s + 1):
+            fy, fx = u / s, v / s
+            p = a + fx * (b - a) + fy * (c - b) if fx >= fy else a + fy * (d - a) + fx * (c - d)
+            err = np.maximum(err, np.abs(Z[u:u + n * s:s, v:v + m * s:s] - p))
+    return err
+
+
+def terrain_cells(Z, step, tol):
+    """The terrain as cells (row, column, size) in full-resolution grid steps: step-sized cells, each split in four
+    until its two triangles miss no full-resolution height by more than tol (down to single grid steps). A uniform
+    step-4 grid (3.9 m) cuts 45 degree slopes across street edges and wall feet, a metre under the street a player
+    sinks into. Seams between sizes leave height steps under tol; the slabs are thicker."""
+    out = []
+    want = None                         # cells of this size that the bigger size split
+    s = step
+    while s >= 1:
+        n, m = (Z.shape[0] - 1) // s, (Z.shape[1] - 1) // s
+        split = square_error(Z, s) > tol if s > 1 else np.zeros((n, m), bool)
+        here = ~split if want is None else want & ~split
+        ii, jj = np.nonzero(here)
+        out.extend(zip((ii * s).tolist(), (jj * s).tolist(), [s] * len(ii)))
+        live = split if want is None else want & split
+        if s == 1 or not live.any():
+            break
+        h = s // 2
+        nn, mm = (Z.shape[0] - 1) // h, (Z.shape[1] - 1) // h
+        want = np.zeros((nn, mm), bool)
+        want[:2 * n, :2 * m] = np.repeat(np.repeat(live, 2, 0), 2, 1)
+        s = h
+    return out
 
 
 def terrain_tiles(work, sub='terrain'):
@@ -217,6 +260,9 @@ def main():
     ap.add_argument('--spawns', type=int, default=16)
     ap.add_argument('--spawn-sky', type=float, default=6.0, help='metres clear above a spawn')
     ap.add_argument('--terrain-step', type=int, default=2, help='terrain collision every Nth vertex (~1 m apart)')
+    ap.add_argument('--terrain-tol', type=float, default=0.15,
+                    help='metres: a terrain cell splits (down to every vertex) where its triangles miss the full '
+                         'heightfield by more; 0 or less: the plain every-Nth-vertex grid')
     ap.add_argument('--terrain-material', default='dirt')
     ap.add_argument('--top', type=float, help='lid height, game metres (default: highest collision + 40)')
     ap.add_argument('--light-scale', type=float, default=1.0)
@@ -286,19 +332,38 @@ def main():
     tmin = 1e9
     jm = a.terrain_material
     k = 0
-    for key, G, props, lattice, bounds in terrain_tiles(work):
-        G = G[::a.terrain_step, ::a.terrain_step]
+    st = a.terrain_step
+    for key, Gfull, props, lattice, bounds in terrain_tiles(work):
+        adaptive = a.terrain_tol > 0 and all((d - 1) % st == 0 for d in Gfull.shape[:2])
+        if adaptive:
+            cells = np.array(terrain_cells(Gfull[..., 2], st, a.terrain_tol), dtype=np.int64).reshape(-1, 3)
+            stats['terrain_cells'] = stats.get('terrain_cells', {})
+            for s_, c_ in zip(*np.unique(cells[:, 2], return_counts=True)):
+                stats['terrain_cells'][str(s_)] = stats['terrain_cells'].get(str(s_), 0) + int(c_)
+            G = Gfull
+            span = 16 * st                  # a node per 16 step-sized cells, as the plain grid
+        else:
+            G = Gfull[::st, ::st]
+            span = 16
         n, m = G.shape[:2]
-        for i0 in range(0, n - 1, 16):
-            for j0 in range(0, m - 1, 16):
-                S = G[i0:i0 + 17, j0:j0 + 17]
+        for i0 in range(0, n - 1, span):
+            for j0 in range(0, m - 1, span):
+                S = G[i0:i0 + span + 1, j0:j0 + span + 1]
                 if S[..., 0].max() < x0 or S[..., 0].min() > x1 or S[..., 1].max() < y0 or S[..., 1].min() > y1:
                     continue
                 sn, sm = S.shape[:2]
-                ii, jj = np.meshgrid(np.arange(sn - 1), np.arange(sm - 1), indexing='ij')
-                q = (ii * sm + jj).ravel()
-                # rows run along +X and step +Y: (q, q+1, q+sm+1) winds counter-clockwise seen from above
-                F = np.concatenate([np.stack([q, q + 1, q + sm + 1], 1), np.stack([q, q + sm + 1, q + sm], 1)])
+                if adaptive:
+                    k_ = cells[(cells[:, 0] >= i0) & (cells[:, 0] < i0 + span) &
+                               (cells[:, 1] >= j0) & (cells[:, 1] < j0 + span)]
+                    r_, c_, z_ = k_[:, 0] - i0, k_[:, 1] - j0, k_[:, 2]
+                    qa, qb = r_ * sm + c_, r_ * sm + c_ + z_
+                    qc, qd = (r_ + z_) * sm + c_ + z_, (r_ + z_) * sm + c_
+                    F = np.concatenate([np.stack([qa, qb, qc], 1), np.stack([qa, qc, qd], 1)])
+                else:
+                    ii, jj = np.meshgrid(np.arange(sn - 1), np.arange(sm - 1), indexing='ij')
+                    q = (ii * sm + jj).ravel()
+                    # rows run along +X and step +Y: (q, q+1, q+sm+1) winds counter-clockwise seen from above
+                    F = np.concatenate([np.stack([q, q + 1, q + sm + 1], 1), np.stack([q, q + sm + 1, q + sm], 1)])
                 V = S.reshape(-1, 3)
                 if lattice is not None:
                     keep = solid_share(lattice, bounds, V[F].mean(1)[:, :2]) >= 0.5
@@ -306,8 +371,11 @@ def main():
                     F = F[keep]
                 if not len(F):
                     continue
+                used, F = np.unique(F, return_inverse=True)
+                F = F.reshape(-1, 3)
+                V = V[used]
                 P = g(V)
-                tmin = min(tmin, float(S[..., 2].min()))
+                tmin = min(tmin, float(V[:, 2].min()))
                 T_all.append(P[F])
                 stats['terrain_tris'] += len(F)
                 w.node('terrain%d' % k, mesh=w.mesh('terrain%d' % k, [{
