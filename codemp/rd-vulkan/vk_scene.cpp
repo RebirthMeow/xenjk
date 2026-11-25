@@ -263,6 +263,8 @@ static cvar_t *r_sceneMoonLight;
 static cvar_t *r_sceneMoonImage;
 static cvar_t *r_sceneClock;
 static cvar_t *r_sceneCycle;
+static cvar_t *r_sceneHour;
+static float sceneHourShown = -1.0f;	// the hour last written to r_sceneHour
 static cvar_t *r_sceneSkySunSide;
 static cvar_t *r_sceneSkyGlow;
 static image_t *sceneMoonImage;	// r_sceneMoonImage's, found at the scene's load (NULL: no moon)
@@ -6680,6 +6682,8 @@ static void Scene_LoadEnv( const char *bspName, char *sceneMap, int size )
 	sceneEnvCount = 0;
 	sceneEnvDay = qfalse;
 	sceneEnvKeys.clear();
+	sceneHourShown = -1.0f;
+	ri.Cvar_Set( "r_sceneHour", "" );	// no clock until a cycle runs
 	sceneCycleStart = 0.0f;
 	sceneLampOn = -1.0f;
 	sceneCycleT0 = INT_MIN;
@@ -6949,6 +6953,10 @@ void R_SceneCycle( void )
 		sceneCycleT0 = tr.refdef.time;
 	const float clock = Scene_Clock();
 	sceneLampNow = Scene_LampNight( clock );
+	if ( fabsf( clock - sceneHourShown ) >= 1.0f / 60.0f ) {	// the clock for the rest of the game (cgame's ambience)
+		sceneHourShown = clock;
+		ri.Cvar_Set( "r_sceneHour", va( "%.3f", clock ) );
+	}
 	const size_t n = sceneEnvKeys.size();
 	// the keyframes around a clock hour and the later one's share
 	auto around = [n]( float h, size_t *a, size_t *b ) {
@@ -9882,6 +9890,7 @@ void R_SceneRegister( void )
 	r_sceneMoonImage	= ri.Cvar_Get( "r_sceneMoonImage",		"textures/skies/moon",	CVAR_ARCHIVE_ND, "Render scene, r_sceneMoon: the moon's image (alpha its disc), at the map's load; none found: no moon" );
 	r_sceneSkySunSide	= ri.Cvar_Get( "r_sceneSkySunSide",		"0 0 0 0",				CVAR_ARCHIVE_ND, "Render scene, r_sceneSky: the horizon's colour toward a low sun (linear rgb) and its share 0..1 (The Witcher 3's sunColorHorizon; w3env.py's cycle keyframes set it); 0 none" );
 	r_sceneSkyGlow		= ri.Cvar_Get( "r_sceneSkyGlow",			"0 0 0 0",				CVAR_ARCHIVE_ND, "Render scene, r_sceneSky: a glow round the scene's light (linear rgb) and its falloff, the power of the angle's cosine (The Witcher 3's moon glow by night); 0 none" );
+	r_sceneHour			= ri.Cvar_Get( "r_sceneHour",			"",						CVAR_ROM, "Render scene: the day/night cycle's hour now 0..24, written by the renderer each game minute (r_sceneCycle; empty without a cycle); the client's ambience reads it" );
 	r_sceneCycle		= ri.Cvar_Get( "r_sceneCycle",			"0",					CVAR_ARCHIVE_ND, "Render scene, a day/night cycle (maps/<map>.xenv hour keyframes): the real minutes a game day takes; 0 the clock stays at the environment's hour (r_sceneClock 0..24 sets one)" );
 	r_sceneClock		= ri.Cvar_Get( "r_sceneClock",			"-1",					CVAR_ARCHIVE_ND, "Render scene: the hour on the game's clock (0..24) the moon's place and colour follow; -1 the scene's own (01:00 at night, 13:00 by day)" );
 	r_sceneHoloBloom	= ri.Cvar_Get( "r_sceneHoloBloom",		"0.3",					CVAR_ARCHIVE_ND, "Render scene: the share of the holograms' light (a blend material with a masked glow: CP2077's particles_hologram) that goes into the bloom pass, so their bright strokes halo as neons do; 0 none, as before" );
