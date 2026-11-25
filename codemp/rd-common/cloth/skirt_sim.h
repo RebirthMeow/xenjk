@@ -285,6 +285,7 @@ typedef struct {
 	float kEdge, kBend, kArea, kTether, kAD, dAD, dampF;
 	int adUseMap;
 	float coneCos, coneAxis[3]; /* flare cone (axis in the frame the particles live in) */
+	float windL[3];             /* the air's own velocity (wind, SkirtSim_SetWind) in the sim frame */
 } skirt_frame_t;
 
 /* The frame part of the next step. The first call (or the first after SkirtSim_Invalidate) is a reset.
@@ -299,6 +300,9 @@ and angular velocity are then measured over poseDt, so they stay the real ones, 
 the felt displacement at the frame boundary is the felt velocity over dt, the rest of the motion carries the cloth
 rigidly. 0 (or never called) = dt. */
 void SkirtSim_SetPoseDt(skirt_sim_t *sim, double poseDt);
+/* The air's velocity (wind) in component space (the frame mats are in; cm/s), from the next step on; 0 = still air.
+The aero term (drag and lift) then sees each triangle's velocity relative to that air. */
+void SkirtSim_SetWind(skirt_sim_t *sim, const double windW[3]);
 /* A pose between two (mats as SkirtSim_Step takes them: nBones*16, row-vector, rows 0..2 the axes, 12..14 the origin)
 for a step that falls between two frames: the reference bone's frame is lerped (origin straight, axes lerped and
 re-orthonormalised) and every bone is lerped in that frame, then put back. Lerping the world matrices themselves

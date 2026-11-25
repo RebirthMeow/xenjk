@@ -672,6 +672,14 @@ static void Cloth_DumpStep( clothInst_t *ci, int now, float dt, const float *mat
 	ri.FS_Write( &ci->out[0], N * 3 * (int)sizeof( float ), clothDumpFile );
 }
 
+// the scene's wind (tr_sim.h) for the next step: the solver's component space is world cm
+static void Cloth_SetWind( clothInst_t *ci ) {
+	float w[3];
+	R_SimWindMs( w );
+	const double cm[3] = { w[0] * 100.0, w[1] * 100.0, w[2] * 100.0 };
+	SkirtSim_SetWind( ci->sim, cm );
+}
+
 // GPU solver: G maps the solver state (sim frame) into the pelvis frame of the step pose, as Cloth_StoreRel does
 static void Cloth_GpuRelMatrix( clothInst_t *ci, const float *mats, float G[12] ) {
 	float Fs[16];
@@ -699,6 +707,7 @@ static bool Cloth_GpuStep( clothInst_t *ci, float dt, const float *mats, int slo
 	float capOld[CLOTH_GPU_MAX_CAPS * 6], capNew[CLOTH_GPU_MAX_CAPS * 6];
 	float G[12];
 	if ( dt <= 0.0f ) SkirtSim_Invalidate( ci->sim );
+	Cloth_SetWind( ci );
 	if ( !SkirtSim_StepFrame( ci->sim, (skirt_real)dt, mats, &fr, capOld, capNew ) ) return true;
 	Cloth_GpuRelMatrix( ci, mats, G );
 	return R_ClothRBGpuStep( ci, &fr, capOld, capNew, mats, G, slot );
@@ -922,6 +931,7 @@ static void Cloth_Advance( clothInst_t *ci, int now ) {
 			continue;
 		}
 		const double t0 = ClothNowMs();
+		Cloth_SetWind( ci );
 		SkirtSim_Step( ci->sim, (skirt_real)step, mats );
 		const double ms = ClothNowMs() - t0;
 		clothStats.steps++;

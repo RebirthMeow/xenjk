@@ -827,6 +827,12 @@ static void Hair_Advance( hairInst_t *hi, int now ) {
 		hcSim &s = hi->sim;
 		// a stretched step covers more pose time than it integrates: the solver measures the frame's velocity over it
 		HC_SetWorldScale( &s, r_hairWorldScale->integer ? (hc_real)hi->worldScale : 1 );
+		{	// the scene's wind (tr_sim.h), world units/s
+			float w[3];
+			R_SimWindMs( w );
+			const hc_real wu[3] = { w[0] * SIM_UNITS_PER_M, w[1] * SIM_UNITS_PER_M, w[2] * SIM_UNITS_PER_M };
+			HC_SetWind( &s, wu );
+		}
 		HC_BeginFrameDt( &s, Ws, ++hi->stepCounter, (hc_real)Sim_StepPoseDt( &plan ) );
 		Hair_SetInputs( hi, Hs, &Gs[0] );
 		{

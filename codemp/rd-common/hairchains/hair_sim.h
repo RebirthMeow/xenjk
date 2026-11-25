@@ -132,6 +132,7 @@ typedef struct {
 	hcFlow flow;
 	int *parentCone;          /* per cone: the cone whose child is this cone's parent particle, -1 at a root */
 	hc_real frameVel[3];      /* reference frame: the entity's velocity through the air (felt when carrying) */
+	hc_real windW[3];         /* the air's own velocity (wind, HC_SetWind): world units/s */
 	hc_real (*pos)[3], (*prev)[3];
 	/* per-frame inputs, reference frame; filled by the caller after HC_BeginFrame */
 	hc_real (*target)[3];     /* where the animation puts each particle */
@@ -178,6 +179,9 @@ void HC_Step(hcSim *s);
 void HC_SetFeel(hcSim *s, const hcFeel *f);
 /* the chain model (hcFlow); all zero = Route A */
 void HC_SetFlow(hcSim *s, const hcFlow *f);
+/* The air's velocity (wind) in world units per second, from the next step on; flow.airDrag then drags each particle
+ * toward it instead of toward still air. NULL or zero: still air. */
+void HC_SetWind(hcSim *s, const hc_real windW[3]);
 /* Bone frames from the solved particles: each cone's parent bone is turned (minimal rotation about its head) to aim
  * at the solved child, root to tip, then each mirror target takes its driver's local rotation delta.
  * anim: nBones animated world matrices (reference frame); posed: output, same layout. */

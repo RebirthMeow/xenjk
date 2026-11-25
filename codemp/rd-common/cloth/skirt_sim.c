@@ -591,6 +591,7 @@ struct skirt_sim {
 	double D[9], Dfull[9];
 	double VL[3], OL[3], Vs[3], Os[3], VsOld[3], OsOld[3], kickV[3], kickO[3];
 	double carryV[3];                /* model B: linear kick beyond maxFeltAcc, carried rigidly */
+	double windW[3], windL[3];       /* the air's velocity (SkirtSim_SetWind): component space, and the sim frame */
 	int carry;
 	double Oc[3], OcOld[3];          /* frame angular velocity after the maxFeltAngAcc rate limit (raw scale) */
 	double coneAxisL[3], coneAxisW[3];   /* flare cone axis: bind-pose down in the reference frame / component space */
@@ -1504,6 +1505,7 @@ static void frameKinematics(skirt_sim_t *S, double dt)
 	VL[0] = (F[0] * dox + F[1] * doy + F[2] * doz) / pdt;
 	VL[1] = (F[3] * dox + F[4] * doy + F[5] * doz) / pdt;
 	VL[2] = (F[6] * dox + F[7] * doy + F[8] * doz) / pdt;
+	for (i = 0; i < 3; i++) S->windL[i] = F[i * 3] * S->windW[0] + F[i * 3 + 1] * S->windW[1] + F[i * 3 + 2] * S->windW[2];
 	/* teleport clamps */
 	vm = hypot3(VL[0], VL[1], VL[2]); om = hypot3(OL[0], OL[1], OL[2]);
 	teleport = 0;
@@ -2062,6 +2064,7 @@ static void aero(skirt_sim_t *S, skirt_real h)
 	const skirt_real aa = (skirt_real)S->aeroAng[0];
 	const skirt_real fvx = (skirt_real)S->aeroLin[0] * (skirt_real)S->VL[0], fvy = (skirt_real)S->aeroLin[1] * (skirt_real)S->VL[1], fvz = (skirt_real)S->aeroLin[2] * (skirt_real)S->VL[2];
 	const skirt_real ox = aa * (skirt_real)S->OL[0], oy = aa * (skirt_real)S->OL[1], oz = aa * (skirt_real)S->OL[2];
+	const skirt_real wlx = (skirt_real)S->windL[0], wly = (skirt_real)S->windL[1], wlz = (skirt_real)S->windL[2];
 	int t, k;
 	for (t = 0; t < S->NT; t++) {
 		const uint32_t a = tri[t * 3], b = tri[t * 3 + 1], c = tri[t * 3 + 2];
@@ -2069,10 +2072,10 @@ static void aero(skirt_sim_t *S, skirt_real h)
 		skirt_real rx, ry, rz, ux, uy, uz, q2, q, qx, qy, qz, e1x, e1y, e1z, e2x, e2y, e2z, nx, ny, nz, n2, area, cth, base, fd, fx, fy, fz, lx, ly, lz, ll, s3;
 		if (w[a] == 0 && w[b] == 0 && w[c] == 0) continue;
 		rx = (x[A] + x[B] + x[C]) / 3; ry = (x[A + 1] + x[B + 1] + x[C + 1]) / 3; rz = (x[A + 2] + x[B + 2] + x[C + 2]) / 3;
-		/* triangle velocity relative to still air */
-		ux = (v[A] + v[B] + v[C]) / 3 + fvx + (oy * rz - oz * ry);
-		uy = (v[A + 1] + v[B + 1] + v[C + 1]) / 3 + fvy + (oz * rx - ox * rz);
-		uz = (v[A + 2] + v[B + 2] + v[C + 2]) / 3 + fvz + (ox * ry - oy * rx);
+		/* triangle velocity relative to the air (still, or the wind's) */
+		ux = (v[A] + v[B] + v[C]) / 3 + fvx + (oy * rz - oz * ry) - wlx;
+		uy = (v[A + 1] + v[B + 1] + v[C + 1]) / 3 + fvy + (oz * rx - ox * rz) - wly;
+		uz = (v[A + 2] + v[B + 2] + v[C + 2]) / 3 + fvz + (ox * ry - oy * rx) - wlz;
 		q2 = ux * ux + uy * uy + uz * uz;
 		if (q2 < K(1e-6)) continue;
 		q = SQRT(q2); qx = -ux / q; qy = -uy / q; qz = -uz / q;
@@ -2700,6 +2703,11 @@ static void capsFrame(skirt_sim_t *S, const float *mats)
 void SkirtSim_Invalidate(skirt_sim_t *S) { S->ready = 0; }
 
 void SkirtSim_SetPoseDt(skirt_sim_t *S, double poseDt) { S->poseDt = poseDt > 0 ? poseDt : 0; }
+void SkirtSim_SetWind(skirt_sim_t *S, const double windW[3])
+{
+	int i;
+	for (i = 0; i < 3; i++) S->windW[i] = windW && isfinite(windW[i]) ? windW[i] : 0;
+}
 
 /* Gram-Schmidt on rows 0..2 of a row-vector matrix (sign of row 2 kept), as the renderer glue's */
 static void poseOrtho(float *m)
@@ -2878,6 +2886,7 @@ int SkirtSim_StepFrame(skirt_sim_t *S, skirt_real dtIn, const float *mats, skirt
 	for (k = 0; k < 3; k++) {
 		o->gL[k] = (float)S->gL[k]; o->wf[k] = (float)S->wf[k];
 		o->aeroLin[k] = (float)S->aeroLin[k]; o->VL[k] = (float)S->VL[k]; o->OL[k] = (float)S->OL[k];
+		o->windL[k] = (float)S->windL[k];
 	}
 	o->aeroAng = (float)S->aeroAng[0];
 	o->kEdge = (float)S->kEdge; o->kBend = (float)S->kBend; o->kArea = (float)S->kArea; o->kTether = (float)S->kTether;

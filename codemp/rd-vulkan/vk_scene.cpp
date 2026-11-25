@@ -68,6 +68,7 @@ scene.frag composites the haze in linear light and encodes past white (toDisplay
 (r_hdr 2) keeps that, so the grade sees the scene's highlights unclipped; an 8-bit one clips them at the tone curve's top.
 */
 #include "vk_scene_local.h"
+#include "rd-common/tr_sim.h"	// r_simWindMs: the wind cloth and hair feel
 
 static void Scene_SortVisible( VkCommandBuffer cb, int f, int v );
 
@@ -264,6 +265,7 @@ static cvar_t *r_sceneMoonImage;
 static cvar_t *r_sceneClock;
 static cvar_t *r_sceneCycle;
 static cvar_t *r_sceneHour;
+static cvar_t *r_sceneWindSpeed;
 static float sceneHourShown = -1.0f;	// the hour last written to r_sceneHour
 static cvar_t *r_sceneSkySunSide;
 static cvar_t *r_sceneSkyGlow;
@@ -6682,6 +6684,7 @@ static void Scene_LoadEnv( const char *bspName, char *sceneMap, int size )
 	sceneEnvCount = 0;
 	sceneEnvDay = qfalse;
 	sceneEnvKeys.clear();
+	r_simWindMs[0] = r_simWindMs[1] = r_simWindMs[2] = 0.0f;	// still air until a scene frame sets it
 	sceneHourShown = -1.0f;
 	ri.Cvar_Set( "r_sceneHour", "" );	// no clock until a cycle runs
 	sceneCycleStart = 0.0f;
@@ -8233,6 +8236,18 @@ void R_SceneVkBeginFrame( void )
 			MAX( r_sceneTreeWindGust->value, 0.0f ), dirW );
 		if ( ( (const float *)sc.windPtr[f] )[0] > 0.0f && r_sceneTreeWindShadows->integer )
 			sc.windFrame++;	// (the kept sun cascades' key: drawn again)
+	}
+	{	// the wind cloth and hair feel (tr_sim.h): the trees' strength and direction, r_sceneWindSpeed m/s at
+		// strength 1 (The Witcher 3's clear 0.3: 4 m/s), and slow gusts (two incommensurate swells, the game clock's)
+		const float strength = MAX( Env( r_sceneTreeWind )->value, 0.0f );
+		const float yaw = DEG2RAD( Env( r_sceneTreeWindDir )->value );
+		const double t = ( (uint32_t)sc.signalTime % 86400000u ) * 0.001;
+		const float gust = 1.0f + MAX( r_sceneTreeWindGust->value, 0.0f ) *
+			( 0.30f * (float)sin( t * 0.83 ) * (float)sin( t * 0.31 + 1.7 ) + 0.15f * (float)sin( t * 2.3 + 0.4 ) );
+		const float ms = strength * MAX( r_sceneWindSpeed->value, 0.0f ) * MAX( gust, 0.2f );
+		r_simWindMs[0] = cosf( yaw ) * ms;
+		r_simWindMs[1] = sinf( yaw ) * ms;
+		r_simWindMs[2] = 0.0f;
 	}
 	fr->water[0] = (float)( ( (uint32_t)sc.signalTime % 86400000u ) * 0.001 );	// the game's clock (a replayed frame repeats), a day round (an hour made every effect jump at once; 8 ms steps at its end)
 	fr->water[1] = sc.waterLo;
@@ -9890,6 +9905,7 @@ void R_SceneRegister( void )
 	r_sceneMoonImage	= ri.Cvar_Get( "r_sceneMoonImage",		"textures/skies/moon",	CVAR_ARCHIVE_ND, "Render scene, r_sceneMoon: the moon's image (alpha its disc), at the map's load; none found: no moon" );
 	r_sceneSkySunSide	= ri.Cvar_Get( "r_sceneSkySunSide",		"0 0 0 0",				CVAR_ARCHIVE_ND, "Render scene, r_sceneSky: the horizon's colour toward a low sun (linear rgb) and its share 0..1 (The Witcher 3's sunColorHorizon; w3env.py's cycle keyframes set it); 0 none" );
 	r_sceneSkyGlow		= ri.Cvar_Get( "r_sceneSkyGlow",			"0 0 0 0",				CVAR_ARCHIVE_ND, "Render scene, r_sceneSky: a glow round the scene's light (linear rgb) and its falloff, the power of the angle's cosine (The Witcher 3's moon glow by night); 0 none" );
+	r_sceneWindSpeed	= ri.Cvar_Get( "r_sceneWindSpeed",		"13.3",					CVAR_ARCHIVE_ND, "Render scene: metres per second of wind cloth and hair feel at r_sceneTreeWind 1 (The Witcher 3's clear weather, 0.3, gives 4 m/s; r_simWind scales it)" );
 	r_sceneHour			= ri.Cvar_Get( "r_sceneHour",			"",						CVAR_ROM, "Render scene: the day/night cycle's hour now 0..24, written by the renderer each game minute (r_sceneCycle; empty without a cycle); the client's ambience reads it" );
 	r_sceneCycle		= ri.Cvar_Get( "r_sceneCycle",			"0",					CVAR_ARCHIVE_ND, "Render scene, a day/night cycle (maps/<map>.xenv hour keyframes): the real minutes a game day takes; 0 the clock stays at the environment's hour (r_sceneClock 0..24 sets one)" );
 	r_sceneClock		= ri.Cvar_Get( "r_sceneClock",			"-1",					CVAR_ARCHIVE_ND, "Render scene: the hour on the game's clock (0..24) the moon's place and colour follow; -1 the scene's own (01:00 at night, 13:00 by day)" );

@@ -394,6 +394,11 @@ void HC_BeginFrameDt(hcSim *s, const hc_real refWorld[16], int frame, hc_real po
 
 void HC_SetFeel(hcSim *s, const hcFeel *f) { s->feel = *f; }
 void HC_SetFlow(hcSim *s, const hcFlow *f) { s->flow = *f; }
+void HC_SetWind(hcSim *s, const hc_real windW[3])
+{
+	for (int k = 0; k < 3; k++)
+		s->windW[k] = windW && isfinite(windW[k]) ? windW[k] : 0;
+}
 
 
 /* reset_to_pose() */
@@ -453,13 +458,18 @@ static void integrate(hcSim *s, hc_real dt)   /* integrate() */
 				v[k] += pseudo[k] * dt * dt;
 		}
 		if (s->flow.airDrag > 0) {
-			/* drag through still air: the particle's own step plus the entity's run and spin carrying it */
+			/* drag through the air: the particle's own step plus the entity's run and spin carrying it, less the
+			 * air's own motion (the wind, world units/s into the reference frame in model units) */
 			const hc_real k = clampr(s->flow.airDrag * dt, 0, 1);
-			hc_real w[3], t[3];
+			const hc_real ws = s->worldScale > 0 ? s->worldScale : 1;
+			hc_real w[3], t[3], wl[3], ww[3];
 			copy3(w, s->feel.on && s->feel.carryLag > 0 ? s->feltOmega : s->angVel);
 			cross3(t, w, s->pos[i]);
 			for (int c = 0; c < 3; c++)
-				v[c] -= (v[c] + (s->frameVel[c] + t[c]) * dt) * k;
+				ww[c] = s->windW[c] / ws;
+			mat3_apply(wl, s->refInv, ww);
+			for (int c = 0; c < 3; c++)
+				v[c] -= (v[c] + (s->frameVel[c] + t[c] - wl[c]) * dt) * k;
 		}
 		copy3(s->prev[i], s->pos[i]);
 		for (int k = 0; k < 3; k++)

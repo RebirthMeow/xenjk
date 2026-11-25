@@ -690,6 +690,7 @@ void stageAeroHash() {
 		const float rho = R(CLR_RHO), cd = R(CLR_CD), cl = R(CLR_CL);
 		const vec3 fv = rv3(CLR_AEROLIN) * rv3(CLR_VL);
 		const vec3 om = R(CLR_AEROANG) * rv3(CLR_OL);
+		const vec3 windL = rv3(CLR_WINDL);	// the wind: the air's own velocity
 		const uint oT = H(CLH_O_TRI), oF = H(CLH_O_TRIF);
 		for (uint t = gid; t < NT; t += gsz) {
 			const uint a = tu[oT + t * 3u], b = tu[oT + t * 3u + 1u], c = tu[oT + t * 3u + 2u];
@@ -697,7 +698,7 @@ void stageAeroHash() {
 			if (!(wInv(a) == 0.0 && wInv(b) == 0.0 && wInv(c) == 0.0)) {
 				const vec3 xa = ld(oX, a), xb = ld(oX, b), xc = ld(oX, c);
 				const vec3 r = (xa + xb + xc) / 3.0;
-				const vec3 uv = (ld(oV, a) + ld(oV, b) + ld(oV, c)) / 3.0 + fv + cross(om, r);
+				const vec3 uv = (ld(oV, a) + ld(oV, b) + ld(oV, c)) / 3.0 + fv + cross(om, r) - windL;
 				const float q2 = dot(uv, uv);
 				if (q2 >= 1e-6) {
 					const float q = sqrt(q2);

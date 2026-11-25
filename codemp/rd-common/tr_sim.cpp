@@ -26,6 +26,20 @@ decision and the step plan, and the r_simCheck counters (tr_sim.h).
 
 #include <string.h>
 
+float r_simWindMs[3];
+cvar_t *r_simWind, *r_simWindForce;
+
+void R_SimWindMs( float out[3] ) {
+	float f[3];
+	if ( r_simWindForce && r_simWindForce->string[0] &&
+		sscanf( r_simWindForce->string, "%f %f %f", &f[0], &f[1], &f[2] ) == 3 ) {
+		out[0] = f[0]; out[1] = f[1]; out[2] = f[2];
+		return;
+	}
+	const float k = r_simWind ? r_simWind->value : 0.0f;
+	out[0] = r_simWindMs[0] * k; out[1] = r_simWindMs[1] * k; out[2] = r_simWindMs[2] * k;
+}
+
 cvar_t *r_simPerFrame;
 cvar_t *r_simSteps;
 cvar_t *r_simCarryFrames;
@@ -140,6 +154,8 @@ void R_SimCheckFrame( void ) {
 }
 
 void R_SimRegister( void ) {
+	r_simWindForce = ri.Cvar_Get( "r_simWindForce", "", CVAR_NONE, "Cloth and hair: a fixed wind \"x y z\" in m/s along the world axes in place of the scene's (any map; tests); empty: the scene's" );
+	r_simWind = ri.Cvar_Get( "r_simWind", "1", CVAR_ARCHIVE_ND, "Cloth and hair feel the scene's wind (the map's r_sceneTreeWind, its direction and gusts) times this; 0 still air" );
 	r_simPerFrame = ri.Cvar_Get( "r_simPerFrame", "1", CVAR_NONE, "Hair and cloth: 1 decided once per frame by the first view that draws the character (shadow views too), from the scene's camera; 0 per view" );
 	r_simSteps = ri.Cvar_Get( "r_simSteps", "1", CVAR_NONE, "Hair and cloth after a long frame or an off-screen moment: 1 carry the steps owed to the next frames and stretch the rest over the frame, 0 drop the time at the frame's end" );
 	r_simCarryFrames = ri.Cvar_Get( "r_simCarryFrames", "4", CVAR_NONE, "Hair and cloth, r_simSteps 1: catch up over about this many frames (0 = at once, stretched over the long frame)" );

@@ -172,7 +172,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define CLR_CONEBODY     311  // u: coneBody
 #define CLR_CONEKR       312  // coneBody: allowance relax factor per substep
 #define CLR_DEBUG        313  // u: r_clothGpuSkip (1 contact search, 2 coloured constraints, 4 particle pass, 8 aero, 16 friction pass)
-#define CLR_MATS         314  // nBones*16 (row-vector skinning matrices)
+#define CLR_WINDL        314  // 3: the air's velocity (wind) in the sim frame
+#define CLR_MATS         317  // nBones*16 (row-vector skinning matrices)
 
 // ---- stats (in the frame buffer, CLR_STATS)
 #define CLS_CONTACTS     0

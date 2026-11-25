@@ -81,6 +81,14 @@ void R_SimCheckFallback( int sys, int frame );
 // once per frame (the first front-end call of either system): print and clear every r_simCheck seconds, and whenever
 // the cvar is set to another value
 void R_SimCheckFrame( void );
-void R_SimRegister( void );	// from R_ClothRegister and R_HairRegister (registering twice is harmless)
+void R_SimRegister( void );
+
+// The wind cloth and hair feel: the air's velocity in metres per second along the world axes, set each frame by the
+// renderer that knows it (rd-vulkan's scene: the map's r_sceneTreeWind, its direction and gusts; zero elsewhere)
+// and scaled by r_simWind (0: still air, as before)
+extern float r_simWindMs[3];
+extern cvar_t *r_simWind, *r_simWindForce;
+#define SIM_UNITS_PER_M	39.37f		// world units per metre (a unit is an inch; cloth's assets are in cm the same way)
+void R_SimWindMs( float out[3] );	// this step's wind, m/s: r_simWindForce if set, else the scene's times r_simWind	// from R_ClothRegister and R_HairRegister (registering twice is harmless)
 
 #endif // TR_SIM_H

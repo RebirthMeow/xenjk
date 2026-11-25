@@ -108,7 +108,7 @@ static_assert( offsetof( clothVkVertGpu_t, pos ) == G2_VERT_OFS_POS && offsetof(
 static_assert( CLOTH_GPU_MAX_CAPS == CL_MAX_CAPS, "tr_cloth_local.h CLOTH_GPU_MAX_CAPS must equal CL_MAX_CAPS" );
 static_assert( CLR_CAPNEW == CLR_CAPOLD + CL_MAX_CAPS * 6 && CLR_SIDED == CLR_CAPNEW + CL_MAX_CAPS * 6,
 	"the step record's capsule blocks are CL_MAX_CAPS * 6 words each" );
-static_assert( CLR_MATS == CLR_DEBUG + 1, "CLR_MATS is the step record's fixed size" );
+static_assert( CLR_MATS == CLR_WINDL + 3 && CLR_WINDL == CLR_DEBUG + 1, "CLR_MATS is the step record's fixed size" );
 static_assert( CLD_A == CLD_DEBUG + 1 && CLD_IU == CLD_A + 12 && CLD_NB == CLD_IU + 1 && CLD_RELZ == CLD_NB + 1
 	&& CLD_S == CLD_RELZ + 1 && CLD_LEAD2 == CLD_S + 1 && CLD_MATS == CLD_LEAD2 + 1
 	&& CLD_WORDS == CLD_MATS, "CLD_WORDS is the draw record's fixed size" );
@@ -992,6 +992,7 @@ bool R_ClothRBGpuStep( clothInst_t *ci, const skirt_frame_t *fr, const float *ca
 		F( CLR_DVEC + k, fr->dvec[k] ); F( CLR_CARRYV + k, fr->carryV[k] ); F( CLR_KICKV + k, fr->kickV[k] ); F( CLR_KICKO + k, fr->kickO[k] );
 		F( CLR_GL + k, fr->gL[k] ); F( CLR_WF + k, fr->wf[k] ); F( CLR_AEROLIN + k, fr->aeroLin[k] );
 		F( CLR_VL + k, fr->VL[k] ); F( CLR_OL + k, fr->OL[k] ); F( CLR_CONEAXIS + k, fr->coneAxis[k] );
+		F( CLR_WINDL + k, fr->windL[k] );
 	}
 	U( CLR_CARRY, fr->carry ? 1 : 0 );
 	U( CLR_KICKIMP, fr->kickImpulse ? 1 : 0 );
