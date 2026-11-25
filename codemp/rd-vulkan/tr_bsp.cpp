@@ -2656,7 +2656,7 @@ static void R_LoadLightGridArray( const lump_t *l, world_t &worldData ) {
 R_LoadEntities
 ================
 */
-static void R_LoadEntities( const lump_t *l, world_t &worldData ) {
+static void R_LoadEntities( const lump_t *l, world_t &worldData, const char *bspName ) {
 	const char *p, *token, *s;
 	char keyname[MAX_TOKEN_CHARS];
 	char value[MAX_TOKEN_CHARS];
@@ -2673,9 +2673,26 @@ static void R_LoadEntities( const lump_t *l, world_t &worldData ) {
 
 	p = (char *)(fileBase + l->fileofs);
 
-	// store for reference by the cgame
-	w->entityString = (char *)Hunk_Alloc( l->filelen + 1, h_low );
-	strcpy( w->entityString, p );
+	// store for reference by the cgame; maps/<map>.ent, when there is one, replaces the BSP's entities here as it does
+	// for the server (cm_load.cpp's CMod_LoadEntityString), so the cgame's client-side entities (misc_model_ghoul2)
+	// see the same list
+	char entName[MAX_QPATH];
+	char *entFile = NULL;
+	COM_StripExtension( bspName, entName, sizeof( entName ) );
+	Q_strcat( entName, sizeof( entName ), ".ent" );
+	const int entLen = ri.FS_ReadFile( entName, (void **)&entFile );
+	if ( entLen > 0 && entFile ) {
+		w->entityString = (char *)Hunk_Alloc( entLen + 1, h_low );
+		Com_Memcpy( w->entityString, entFile, entLen );
+		w->entityString[entLen] = '\0';
+		ri.FS_FreeFile( entFile );
+		p = w->entityString;
+	} else {
+		if ( entFile )
+			ri.FS_FreeFile( entFile );
+		w->entityString = (char *)Hunk_Alloc( l->filelen + 1, h_low );
+		strcpy( w->entityString, p );
+	}
 	w->entityParsePoint = w->entityString;
 
 	COM_BeginParseSession ("R_LoadEntities");
@@ -3238,7 +3255,7 @@ void RE_LoadWorldMap_Actual( const char *name, world_t &worldData, int index )
 
 	if (!index)
 	{
-		R_LoadEntities( &header->lumps[LUMP_ENTITIES], worldData );
+		R_LoadEntities( &header->lumps[LUMP_ENTITIES], worldData, name );
 		R_LoadLightGrid( &header->lumps[LUMP_LIGHTGRID], worldData );
 		R_LoadLightGridArray( &header->lumps[LUMP_LIGHTARRAY], worldData );
 
