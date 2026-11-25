@@ -1187,6 +1187,16 @@ static CFontInfo *RE_Font_GetVariant(CFontInfo *font, float *scale) {
 	return font;
 }
 
+// xenjk: STYLE_ASPECT text is drawn narrower by the window's aspect, so glyphs keep their 4:3 shapes on a wide
+// window (the 640x480 virtual screen is stretched over it). Only callers that ask for it get it (the HUD), unlike
+// r_aspectCorrectFonts, which changes every string's spacing, menus included.
+static float RE_Font_AspectScale( const int iFontHandle ) {
+	if ( !( iFontHandle & STYLE_ASPECT ) || glConfig.vidWidth <= 0 || glConfig.vidHeight <= 0 )
+		return 1.0f;
+	const float coef = ( (float)SCREEN_WIDTH * glConfig.vidHeight ) / ( (float)SCREEN_HEIGHT * glConfig.vidWidth );
+	return coef < 1.0f ? coef : 1.0f;
+}
+
 // needed to add *piShader param because of multiple TPs,
 //	if not passed in, then I also skip S,T calculations for re-usable static asian glyphinfo struct...
 //
@@ -1426,6 +1436,7 @@ float RE_Font_StrLenPixelsNew( const char *psText, const int iFontHandle, const 
 	}
 	curfont = RE_Font_GetVariant(curfont, &fScale);
 
+	const float fAspect = RE_Font_AspectScale( iFontHandle );
 	float fScaleAsian = fScale;
 	if (Language_IsAsian() && fScale > 0.7f )
 	{
@@ -1453,7 +1464,7 @@ float RE_Font_StrLenPixelsNew( const char *psText, const int iFontHandle, const 
 		else {
 			float iPixelAdvance = (float)curfont->GetLetterHorizAdvance( uiLetter );
 
-			float fValue = iPixelAdvance * ((uiLetter > (unsigned)g_iNonScaledCharRange) ? fScaleAsian : fScale);
+			float fValue = iPixelAdvance * ((uiLetter > (unsigned)g_iNonScaledCharRange) ? fScaleAsian : fScale) * fAspect;
 
 			if ( r_aspectCorrectFonts->integer == 1 ) {
 				fValue *= ((float)(SCREEN_WIDTH * glConfig.vidHeight) / (float)(SCREEN_HEIGHT * glConfig.vidWidth));
@@ -1610,6 +1621,7 @@ void RE_Font_DrawString(int ox, int oy, const char *psText, const float *rgba, c
 	curfont = RE_Font_GetVariant(curfont, &fScale);
 	iFontHandle = curfont->GetHandle() | (iFontHandle & ~SET_MASK);
 
+	const float fAspect = RE_Font_AspectScale( iFontHandle );
 	float fScaleAsian = fScale;
 	float fAsianYAdjust = 0.0f;
 	if (Language_IsAsian() && fScale > 0.7f)
@@ -1626,7 +1638,7 @@ void RE_Font_DrawString(int ox, int oy, const char *psText, const float *rgba, c
 		const vec4_t v4DKGREY2 = {0.15f, 0.15f, 0.15f, rgba?rgba[3]:1.0f};
 
 		gbInShadow = qtrue;
-		RE_Font_DrawString(ox + offset, oy + offset, psText, v4DKGREY2, iFontHandle & SET_MASK, iMaxPixelWidth, fScale);
+		RE_Font_DrawString(ox + offset, oy + offset, psText, v4DKGREY2, iFontHandle & (SET_MASK | STYLE_ASPECT), iMaxPixelWidth, fScale);
 		gbInShadow = qfalse;
 	}
 
@@ -1661,7 +1673,7 @@ void RE_Font_DrawString(int ox, int oy, const char *psText, const float *rgba, c
 			break;
 		case 32:						// Space
 			pLetter = curfont->GetLetter(' ');
-			fx += curfont->mbRoundCalcs ? Round(pLetter->horizAdvance * fScale) : pLetter->horizAdvance * fScale;
+			fx += ( curfont->mbRoundCalcs ? Round(pLetter->horizAdvance * fScale) : pLetter->horizAdvance * fScale ) * fAspect;
 			bNextTextWouldOverflow = ( iMaxPixelWidth != -1 && ((fx-fox) > (float)iMaxPixelWidth) ) ? qtrue : qfalse; // yeuch
 			break;
 		case '_':	// has a special word-break usage if in Thai (and followed by a thai char), and should not be displayed, else treat as normal
@@ -1704,7 +1716,7 @@ void RE_Font_DrawString(int ox, int oy, const char *psText, const float *rgba, c
 				fx -= curfont->mbRoundCalcs ? Round(7.0f * fThisScale) : 7.0f * fThisScale;
 			}
 
-			float fAdvancePixels = curfont->mbRoundCalcs ? Round(pLetter->horizAdvance * fThisScale) : pLetter->horizAdvance * fThisScale;
+			float fAdvancePixels = ( curfont->mbRoundCalcs ? Round(pLetter->horizAdvance * fThisScale) : pLetter->horizAdvance * fThisScale ) * fAspect;
 			bNextTextWouldOverflow = ( iMaxPixelWidth != -1 && (((fx+fAdvancePixels)-fox) > (float)iMaxPixelWidth) ) ? qtrue : qfalse; // yeuch
 			if (!bNextTextWouldOverflow)
 			{
@@ -1716,9 +1728,9 @@ void RE_Font_DrawString(int ox, int oy, const char *psText, const float *rgba, c
 					fy += 3.0f; // I'm sick and tired of going round in circles trying to do this legally, so bollocks to it
 				}
 
-				RE_StretchPic(curfont->mbRoundCalcs ? fx + Round(pLetter->horizOffset * fThisScale) : fx + pLetter->horizOffset * fThisScale, // float x
+				RE_StretchPic(fx + ( curfont->mbRoundCalcs ? Round(pLetter->horizOffset * fThisScale) : pLetter->horizOffset * fThisScale ) * fAspect, // float x
 								(uiLetter > (unsigned)g_iNonScaledCharRange) ? fy - fAsianYAdjust : fy,	// float y
-								curfont->mbRoundCalcs ? Round(pLetter->width * fThisScale) : pLetter->width * fThisScale,	// float w
+								( curfont->mbRoundCalcs ? Round(pLetter->width * fThisScale) : pLetter->width * fThisScale ) * fAspect,	// float w
 								curfont->mbRoundCalcs ? Round(pLetter->height * fThisScale) : pLetter->height * fThisScale, // float h
 								pLetter->s,						// float s1
 								pLetter->t,						// float t1

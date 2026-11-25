@@ -2543,6 +2543,14 @@ Ghoul2 Insert End
 	cgs.media.mSaberDamageGlow = trap->R_RegisterShader("gfx/effects/saberDamageGlow");
 
 	CG_RegisterCvars();
+
+	// xenjk: a high-resolution charset with the stock grid (cg_hudCharset) when the game has it; the cvars are
+	// registered only now, after the stock charset was loaded for the first screen updates
+	if ( cg_hudCharset.string[0] ) {
+		qhandle_t hd = trap->R_RegisterShaderNoMip( cg_hudCharset.string );
+		if ( hd )
+			cgs.media.charsetShader = hd;
+	}
 	CG_InitAimFeedback();
 
 	CG_InitConsoleCommands();

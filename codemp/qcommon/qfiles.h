@@ -511,6 +511,7 @@ typedef struct dsurface_s {
 // Must match define in stmparse.h
 #define STYLE_DROPSHADOW	0x80000000
 #define STYLE_BLINK			0x40000000
+#define STYLE_ASPECT		0x20000000	// xenjk: draw at the window's aspect (keeps 4:3 glyph shapes on wide windows); renderers without it ignore the bit
 #define	SET_MASK			0x00ffffff
 
 typedef struct

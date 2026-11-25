@@ -181,19 +181,22 @@ static void vk_render_splash( void )
 	VkPipelineStageFlags		wait_dst_stage_mask;
 	VkImage						imageBuffer;
 	image_t						*splashImage;
-	VkImageBlit					imageBlit;
-	float						ratio;
+	VkImageBlit					imageBlit[3];
+	uint32_t					blitCount, i;
+	float						ratio, srcAspect;
+	int							x0, y0, x1, y1, w, h, fw, fh;
 
 	ratio = ( (float)( SCREEN_WIDTH * glConfig.vidHeight ) / (float)( SCREEN_HEIGHT * glConfig.vidWidth ) );
 
+	// the splash is a picture of the 640x480 screen, whatever its texture size; menu/splash_16_9 one of a 16:9 screen
+	srcAspect = 4.0f / 3.0f;
+	splashImage = NULL;
 	if ( cl_ratioFix->integer && ratio >= 0.74f && ratio <= 0.76f ){
 		splashImage = R_FindImageFile( "menu/splash_16_9", IMGFLAG_CLAMPTOEDGE, 0 );
-
-		if ( !splashImage ){
-			splashImage = R_FindImageFile( "menu/splash", IMGFLAG_CLAMPTOEDGE, 0 );
-		}
+		if ( splashImage )
+			srcAspect = 16.0f / 9.0f;
 	}
-	else{
+	if ( !splashImage ){
 		splashImage = R_FindImageFile( "menu/splash", IMGFLAG_CLAMPTOEDGE, 0 );
 	}
 
@@ -229,24 +232,60 @@ static void vk_render_splash( void )
 		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 		0, 0 );
 
-	Com_Memset( &imageBlit, 0, sizeof(imageBlit) );
-	imageBlit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	imageBlit.srcSubresource.mipLevel = 0;
-	imageBlit.srcSubresource.baseArrayLayer = 0;
-	imageBlit.srcSubresource.layerCount = 1;
-	imageBlit.srcOffsets[0] = { 0, 0, 0 };
-	imageBlit.srcOffsets[1] = { splashImage->width, splashImage->height, 1 };
-	imageBlit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	imageBlit.dstSubresource.mipLevel = 0;
-	imageBlit.dstSubresource.baseArrayLayer = 0;
-	imageBlit.dstSubresource.layerCount = 1;
-	imageBlit.dstOffsets[0] = { vk.blitX0, vk.blitY0, 0 };
-	imageBlit.dstOffsets[1] = { ( gls.windowWidth - vk.blitX0 ), ( gls.windowHeight - vk.blitY0 ), 1 };
+	// xenjk: r_splashFit keeps the picture's shape: it is fitted inside the window and the bars are filled with its
+	// top corner texels (the background; a whole edge column would smear the JPEG's ringing into streaks), so a wide
+	// window shows it pillarboxed instead of stretched. 0 = stretched.
+	x0 = vk.blitX0;
+	y0 = vk.blitY0;
+	x1 = gls.windowWidth - vk.blitX0;
+	y1 = gls.windowHeight - vk.blitY0;
+	w = x1 - x0;
+	h = y1 - y0;
+	fw = w;
+	fh = h;
+	if ( r_splashFit->integer && w > 0 && h > 0 ) {
+		if ( (float)w > (float)h * srcAspect + 0.5f )
+			fw = (int)( (float)h * srcAspect + 0.5f );
+		else if ( (float)h > (float)w / srcAspect + 0.5f )
+			fh = (int)( (float)w / srcAspect + 0.5f );
+	}
+
+	Com_Memset( imageBlit, 0, sizeof(imageBlit) );
+	for ( i = 0; i < 3; i++ ) {
+		imageBlit[i].srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		imageBlit[i].srcSubresource.layerCount = 1;
+		imageBlit[i].dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		imageBlit[i].dstSubresource.layerCount = 1;
+		imageBlit[i].srcOffsets[1] = { splashImage->width, splashImage->height, 1 };
+	}
+	// the picture
+	imageBlit[0].dstOffsets[0] = { x0 + ( w - fw ) / 2, y0 + ( h - fh ) / 2, 0 };
+	imageBlit[0].dstOffsets[1] = { imageBlit[0].dstOffsets[0].x + fw, imageBlit[0].dstOffsets[0].y + fh, 1 };
+	blitCount = 1;
+	if ( fw < w ) {	// pillarbox: left and right bars from the top corner texels
+		imageBlit[1].srcOffsets[1] = { 1, 1, 1 };
+		imageBlit[1].dstOffsets[0] = { x0, y0, 0 };
+		imageBlit[1].dstOffsets[1] = { imageBlit[0].dstOffsets[0].x, y1, 1 };
+		imageBlit[2].srcOffsets[0].x = splashImage->width - 1;
+		imageBlit[2].srcOffsets[1].y = 1;
+		imageBlit[2].dstOffsets[0] = { imageBlit[0].dstOffsets[1].x, y0, 0 };
+		imageBlit[2].dstOffsets[1] = { x1, y1, 1 };
+		blitCount = 3;
+	} else if ( fh < h ) {	// letterbox: top and bottom bars from the left corner texels
+		imageBlit[1].srcOffsets[1] = { 1, 1, 1 };
+		imageBlit[1].dstOffsets[0] = { x0, y0, 0 };
+		imageBlit[1].dstOffsets[1] = { x1, imageBlit[0].dstOffsets[0].y, 1 };
+		imageBlit[2].srcOffsets[0].y = splashImage->height - 1;
+		imageBlit[2].srcOffsets[1].x = 1;
+		imageBlit[2].dstOffsets[0] = { x0, imageBlit[0].dstOffsets[1].y, 0 };
+		imageBlit[2].dstOffsets[1] = { x1, y1, 1 };
+		blitCount = 3;
+	}
 
 	qvkCmdBlitImage( vk.cmd->command_buffer, splashImage->handle,
 		VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, imageBuffer,
-		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
-		&imageBlit, VK_FILTER_LINEAR );
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, blitCount,
+		imageBlit, VK_FILTER_LINEAR );
 
 	vk_record_image_layout_transition( vk.cmd->command_buffer, imageBuffer, VK_IMAGE_ASPECT_COLOR_BIT,
 		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 

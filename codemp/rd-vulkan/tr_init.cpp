@@ -187,6 +187,7 @@ cvar_t	*r_marksOnTriangleMeshes;
 
 cvar_t	*r_aspectCorrectFonts;
 cvar_t	*cl_ratioFix;
+cvar_t	*r_splashFit;
 cvar_t	*r_patchStitching;
 
 // Vulkan
@@ -1100,6 +1101,7 @@ void R_Register( void )
 	r_shadowRange						= ri.Cvar_Get( "r_shadowRange",						"1000",						CVAR_NONE, "" );
 	r_marksOnTriangleMeshes				= ri.Cvar_Get( "r_marksOnTriangleMeshes",			"0",						CVAR_ARCHIVE_ND, "" );
 	r_aspectCorrectFonts				= ri.Cvar_Get( "r_aspectCorrectFonts",				"0",						CVAR_ARCHIVE, "" );
+	r_splashFit							= ri.Cvar_Get( "r_splashFit",						"1",						CVAR_ARCHIVE, "The startup splash keeps its shape: fitted in the window, the bars filled with its corner colour (0 = stretched over the window)" );
 	cl_ratioFix							= ri.Cvar_Get( "cl_ratioFix",						"1",						CVAR_ARCHIVE, "On a 16:9 window the load screen uses menu/splash_16_9 when the game has it (0 = always menu/splash)" );
 	r_patchStitching					= ri.Cvar_Get( "r_patchStitching",					"1",						CVAR_ARCHIVE, "Enable stitching of neighbouring patch surfaces" );
 

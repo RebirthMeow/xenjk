@@ -3126,7 +3126,7 @@ static float CG_DrawSnapshot( float y ) {
 
 	s = va( "time:%i snap:%i cmd:%i", cg.snap->serverTime,
 		cg.latestSnapshotNum, cgs.serverCommandSequence );
-	w = CG_DrawStrlen( s ) * BIGCHAR_WIDTH;
+	w = CG_HudStringWidth( s, BIGCHAR_WIDTH );
 
 	CG_DrawBigString( 635 - w + xOffset, y + 2, s, 1.0F);
 
@@ -3172,7 +3172,7 @@ static float CG_DrawFPS( float y ) {
 	fps = 1000 * FPS_FRAMES / total;
 
 	s = va( "%ifps", fps );
-	w = CG_DrawStrlen( s ) * BIGCHAR_WIDTH;
+	w = CG_HudStringWidth( s, BIGCHAR_WIDTH );
 
 	CG_DrawBigString( 635 - w + xOffset, y + 2, s, 1.0F);
 
@@ -3823,7 +3823,7 @@ static float CG_DrawTimer( float y ) {
 	seconds -= tens * 10;
 
 	s = va( "%i:%i%i", mins, tens, seconds );
-	w = CG_DrawStrlen( s ) * BIGCHAR_WIDTH;
+	w = CG_HudStringWidth( s, BIGCHAR_WIDTH );
 
 	CG_DrawBigString( 635 - w + xOffset, y + 2, s, 1.0F);
 
@@ -4162,7 +4162,7 @@ static void CG_DrawReward( void ) {
 		x = 320 - ICON_SIZE/2;
 		CG_DrawPic( x, y, ICON_SIZE-4, ICON_SIZE-4, cg.rewardShader[0] );
 		Com_sprintf(buf, sizeof(buf), "%d", cg.rewardCount[0]);
-		x = ( SCREEN_WIDTH - SMALLCHAR_WIDTH * CG_DrawStrlen( buf ) ) / 2;
+		x = ( SCREEN_WIDTH - CG_HudStringWidth( buf, SMALLCHAR_WIDTH ) ) / 2;
 		CG_DrawStringExt( x, y+ICON_SIZE, buf, color, qfalse, qtrue,
 								SMALLCHAR_WIDTH, SMALLCHAR_HEIGHT, 0 );
 	}
@@ -4261,11 +4261,11 @@ static void CG_DrawDisconnect( void ) {
 	if (cg.mMapChange)
 	{
 		s = CG_GetStringEdString("MP_INGAME", "SERVER_CHANGING_MAPS");	// s = "Server Changing Maps";
-		w = CG_DrawStrlen( s ) * BIGCHAR_WIDTH;
+		w = CG_HudStringWidth( s, BIGCHAR_WIDTH );
 		CG_DrawBigString( 320 - w/2, 100, s, 1.0F);
 
 		s = CG_GetStringEdString("MP_INGAME", "PLEASE_WAIT");	// s = "Please wait...";
-		w = CG_DrawStrlen( s ) * BIGCHAR_WIDTH;
+		w = CG_HudStringWidth( s, BIGCHAR_WIDTH );
 		CG_DrawBigString( 320 - w/2, 200, s, 1.0F);
 		return;
 	}
@@ -4280,7 +4280,7 @@ static void CG_DrawDisconnect( void ) {
 
 	// also add text in center of screen
 	s = CG_GetStringEdString("MP_INGAME", "CONNECTION_INTERRUPTED"); // s = "Connection Interrupted"; // bk 010215 - FIXME
-	w = CG_DrawStrlen( s ) * BIGCHAR_WIDTH;
+	w = CG_HudStringWidth( s, BIGCHAR_WIDTH );
 	CG_DrawBigString( 320 - w/2, 100, s, 1.0F);
 
 	// blink the icon
@@ -6788,7 +6788,7 @@ static void CG_DrawAmmoWarning( void ) {
 	} else {
 		s = "LOW AMMO WARNING";
 	}
-	w = CG_DrawStrlen( s ) * BIGCHAR_WIDTH;
+	w = CG_HudStringWidth( s, BIGCHAR_WIDTH );
 	CG_DrawBigString(320 - w / 2, 64, s, 1.0F);
 #endif
 }
@@ -6813,7 +6813,7 @@ static void CG_DrawWarmup( void ) {
 	if ( sec < 0 ) {
 //		s = "Waiting for players";
 		s = CG_GetStringEdString("MP_INGAME", "WAITING_FOR_PLAYERS");
-		w = CG_DrawStrlen( s ) * BIGCHAR_WIDTH;
+		w = CG_HudStringWidth( s, BIGCHAR_WIDTH );
 		CG_DrawBigString(320 - w / 2, 24, s, 1.0F);
 		cg.warmupCount = 0;
 		return;

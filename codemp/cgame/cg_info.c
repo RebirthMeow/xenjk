@@ -147,7 +147,24 @@ void CG_DrawInformation( void ) {
 		levelshot = trap->R_RegisterShaderNoMip( "menu/art/unknownmap_mp" );
 	}
 	trap->R_SetColor( NULL );
-	CG_DrawPic( 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, levelshot );
+	// xenjk: the levelshot is a 4:3 picture stretched over the 640x480 screen; on a wider window cg_loadingFit 1
+	// crops its top and bottom so it fills the window at its own shape, 2 fits it whole between black bars,
+	// 0 stretches it
+	{
+		const float	coef = ( cgs.glconfig.vidWidth > 0 && cgs.glconfig.vidHeight > 0 )
+			? ( (float)SCREEN_WIDTH * cgs.glconfig.vidHeight ) / ( (float)SCREEN_HEIGHT * cgs.glconfig.vidWidth ) : 1.0f;
+
+		if ( cg_loadingFit.integer == 1 && coef < 1.0f ) {
+			const float t = ( 1.0f - coef ) * 0.5f;
+			trap->R_DrawStretchPic( 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, t, 1, 1 - t, levelshot );
+		} else if ( cg_loadingFit.integer == 2 && coef < 1.0f ) {
+			const float w = SCREEN_WIDTH * coef;
+			CG_FillRect( 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, colorBlack );
+			CG_DrawPic( ( SCREEN_WIDTH - w ) * 0.5f, 0, w, SCREEN_HEIGHT, levelshot );
+		} else {
+			CG_DrawPic( 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, levelshot );
+		}
+	}
 
 	CG_LoadBar();
 

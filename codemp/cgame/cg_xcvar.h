@@ -117,6 +117,9 @@ XCVAR_DEF( cg_ghoul2Marks,						"16",					NULL,					CVAR_NONE )
 XCVAR_DEF( cg_gunX,								"0",					NULL,					CVAR_ARCHIVE )
 XCVAR_DEF( cg_gunY,								"0",					NULL,					CVAR_ARCHIVE )
 XCVAR_DEF( cg_gunZ,								"0",					NULL,					CVAR_ARCHIVE )
+XCVAR_DEF( cg_hudCharAspect,					"1",					NULL,					CVAR_ARCHIVE )	// xenjk: charset HUD text (fps, timer...) keeps its 4:3 shape on wide screens (0 = stretched)
+XCVAR_DEF( cg_loadingFit,						"1",					NULL,					CVAR_ARCHIVE )	// xenjk: loading-screen levelshot on wide windows: 1 crop to fill, 2 fit with bars, 0 stretched
+XCVAR_DEF( cg_hudCharset,						"gfx/2d/charsgrid_hd",	NULL,					CVAR_ARCHIVE|CVAR_LATCH )	// xenjk: high-resolution charset with the stock layout; stock gfx/2d/charsgrid_med when missing or ""
 XCVAR_DEF( cg_hudFiles,							"ui/jahud.txt",			NULL,					CVAR_ARCHIVE )
 XCVAR_DEF( cg_jumpSounds,						"0",					NULL,					CVAR_ARCHIVE )
 XCVAR_DEF( cg_lagometer,						"0",					NULL,					CVAR_ARCHIVE )

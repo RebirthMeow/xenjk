@@ -172,12 +172,34 @@ void CG_DrawRotatePic2( float x, float y, float width, float height,float angle,
 
 /*
 ===============
+CG_HudCharWidth
+
+xenjk: the width a charset glyph of virtual width w is drawn at. The 640x480 virtual screen is stretched over the
+window, so on a 16:9 window charset text comes out a third wider than on 4:3; cg_hudCharAspect draws it narrower by
+the window's aspect so it keeps its 4:3 shape. Callers that right-align or centre a string measure it with this.
+===============
+*/
+float CG_HudCharWidth( float w ) {
+	float coef;
+
+	if ( !cg_hudCharAspect.integer || cgs.glconfig.vidWidth <= 0 || cgs.glconfig.vidHeight <= 0 )
+		return w;
+	coef = ( (float)SCREEN_WIDTH * cgs.glconfig.vidHeight ) / ( (float)SCREEN_HEIGHT * cgs.glconfig.vidWidth );
+	return coef < 1.0f ? w * coef : w;
+}
+
+int CG_HudStringWidth( const char *s, int charWidth ) {
+	return (int)( CG_DrawStrlen( s ) * CG_HudCharWidth( (float)charWidth ) + 0.5f );
+}
+
+/*
+===============
 CG_DrawChar
 
 Coordinates and size in 640*480 virtual screen size
 ===============
 */
-void CG_DrawChar( int x, int y, int width, int height, int ch ) {
+void CG_DrawChar( float x, float y, float width, float height, int ch ) {
 	int row, col;
 	float frow, fcol;
 	float size;
@@ -239,7 +261,8 @@ void CG_DrawStringExt( int x, int y, const char *string, const float *setColor, 
 	{
 		vec4_t		color;
 		const char	*s;
-		int			xx;
+		float		xx;
+		const float	cw = CG_HudCharWidth( (float)charWidth );	// xenjk: aspect-correct glyphs (cg_hudCharAspect)
 
 		// draw the drop shadow
 		if (shadow) {
@@ -253,8 +276,8 @@ void CG_DrawStringExt( int x, int y, const char *string, const float *setColor, 
 					s += 2;
 					continue;
 				}
-				CG_DrawChar( xx + 2, y + 2, charWidth, charHeight, *s );
-				xx += charWidth;
+				CG_DrawChar( xx + 2, y + 2, cw, charHeight, *s );
+				xx += cw;
 				s++;
 			}
 		}
@@ -273,8 +296,8 @@ void CG_DrawStringExt( int x, int y, const char *string, const float *setColor, 
 				s += 2;
 				continue;
 			}
-			CG_DrawChar( xx, y, charWidth, charHeight, *s );
-			xx += charWidth;
+			CG_DrawChar( xx, y, cw, charHeight, *s );
+			xx += cw;
 			s++;
 		}
 		trap->R_SetColor( NULL );
@@ -508,6 +531,9 @@ void CG_DrawNumField (int x, int y, int width, int value,int charWidth,int charH
 	int		frame;
 	int		xWidth;
 	int		i = 0;
+	const float	k = CG_HudCharWidth( 1.0f );	// xenjk: cg_hudCharAspect keeps the digits' 4:3 shape
+	const float	cw = charWidth * k;
+	float		fx = x;
 
 	if (width < 1) {
 		return;
@@ -564,22 +590,22 @@ void CG_DrawNumField (int x, int y, int width, int value,int charWidth,int charH
 			switch(style)
 			{
 			case NUM_FONT_SMALL:
-				CG_DrawPic( x,y, charWidth, charHeight, cgs.media.smallnumberShaders[0] );
+				CG_DrawPic( fx,y, cw, charHeight, cgs.media.smallnumberShaders[0] );
 				break;
 			case NUM_FONT_CHUNKY:
-				CG_DrawPic( x,y, charWidth, charHeight, cgs.media.chunkyNumberShaders[0] );
+				CG_DrawPic( fx,y, cw, charHeight, cgs.media.chunkyNumberShaders[0] );
 				break;
 			default:
 			case NUM_FONT_BIG:
-				CG_DrawPic( x,y, charWidth, charHeight, cgs.media.numberShaders[0] );
+				CG_DrawPic( fx,y, cw, charHeight, cgs.media.numberShaders[0] );
 				break;
 			}
-			x += 2 + (xWidth);
+			fx += ( 2 + (xWidth) ) * k;
 		}
 	}
 	else
 	{
-		x += 2 + (xWidth)*(width - l);
+		fx += ( 2 + (xWidth)*(width - l) ) * k;
 	}
 
 	ptr = num;
@@ -593,19 +619,19 @@ void CG_DrawNumField (int x, int y, int width, int value,int charWidth,int charH
 		switch(style)
 		{
 		case NUM_FONT_SMALL:
-			CG_DrawPic( x,y, charWidth, charHeight, cgs.media.smallnumberShaders[frame] );
-			x++;	// For a one line gap
+			CG_DrawPic( fx,y, cw, charHeight, cgs.media.smallnumberShaders[frame] );
+			fx += k;	// For a one line gap
 			break;
 		case NUM_FONT_CHUNKY:
-			CG_DrawPic( x,y, charWidth, charHeight, cgs.media.chunkyNumberShaders[frame] );
+			CG_DrawPic( fx,y, cw, charHeight, cgs.media.chunkyNumberShaders[frame] );
 			break;
 		default:
 		case NUM_FONT_BIG:
-			CG_DrawPic( x,y, charWidth, charHeight, cgs.media.numberShaders[frame] );
+			CG_DrawPic( fx,y, cw, charHeight, cgs.media.numberShaders[frame] );
 			break;
 		}
 
-		x += (xWidth);
+		fx += (xWidth) * k;
 		ptr++;
 		l--;
 	}
@@ -613,6 +639,9 @@ void CG_DrawNumField (int x, int y, int width, int value,int charWidth,int charH
 }
 
 #include "ui/ui_shared.h"	// for some text style junk
+#include "qcommon/qfiles.h"	// STYLE_ASPECT, STYLE_DROPSHADOW
+int MenuFontToHandle( int iMenuFont );	// cg_draw.c
+
 void CG_DrawProportionalString( int x, int y, const char* str, int style, vec4_t color )
 {
 	// having all these different style defines (1 for UI, one for CG, and now one for the re->font stuff)
@@ -653,6 +682,18 @@ void CG_DrawProportionalString( int x, int y, const char* str, int style, vec4_t
 		iStyle = ITEM_TEXTSTYLE_BLINK;
 	}
 
+	// xenjk: HUD text keeps its 4:3 glyph shapes on wide windows (cg_hudCharAspect, the renderer's STYLE_ASPECT)
+	if ( cg_hudCharAspect.integer ) {
+		const int iFont = MenuFontToHandle( iMenuFont ) | STYLE_ASPECT;
+		if ( ( style & (UI_LEFT|UI_CENTER|UI_RIGHT) ) == UI_CENTER || ( style & (UI_LEFT|UI_CENTER|UI_RIGHT) ) == UI_RIGHT ) {
+			// measured again at the aspect (the stock code above also halves the width for UI_RIGHT)
+			x += CG_Text_Width( str, 1.0, iMenuFont ) / 2 - trap->R_Font_StrLenPixels( str, iFont, 1.0f ) / 2;
+		}
+		trap->R_Font_DrawString( x, y, str, color,
+			iFont | ( iStyle == ITEM_TEXTSTYLE_SHADOWED ? (int)STYLE_DROPSHADOW : iStyle == ITEM_TEXTSTYLE_BLINK ? STYLE_BLINK : 0 ),
+			-1, 1.0f );
+		return;
+	}
 	CG_Text_Paint(x, y, 1.0, color, str, 0, 0, iStyle, iMenuFont);
 }
 

@@ -301,23 +301,37 @@ void R_Splash()
 	}
 	GL_State(GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO);
 
-	const int width = 640;
-	const int height = 480;
-	const float x1 = 320 - width / 2;
-	const float x2 = 320 + width / 2;
-	const float y1 = 240 - height / 2;
-	const float y2 = 240 + height / 2;
+	// xenjk: r_splashFit keeps the 4:3 picture's shape on a wider (or taller) window: it is fitted inside the
+	// 640x480 virtual screen and the bars are filled with its corner texels (the background; a whole edge column
+	// would smear the JPEG's ringing into streaks). 0 = stretched over the window.
+	float x1 = 0, x2 = 640, y1 = 0, y2 = 480;
+	const cvar_t *splashFit = ri.Cvar_Get( "r_splashFit", "1", CVAR_ARCHIVE, "The startup splash keeps its shape: fitted in the window, the bars filled with its corner colour (0 = stretched over the window)" );
+	if ( splashFit && splashFit->integer && glConfig.vidWidth > 0 && glConfig.vidHeight > 0 ) {
+		const float windowAspect = (float)glConfig.vidWidth / (float)glConfig.vidHeight;
+		if ( windowAspect > 4.0f / 3.0f ) {
+			const float w = 640.0f * ( 4.0f / 3.0f ) / windowAspect;
+			x1 = 320 - w / 2;
+			x2 = 320 + w / 2;
+		} else if ( windowAspect < 4.0f / 3.0f ) {
+			const float h = 480.0f * windowAspect / ( 4.0f / 3.0f );
+			y1 = 240 - h / 2;
+			y2 = 240 + h / 2;
+		}
+	}
+	const float e = 0.5f / ( pImage && pImage->width > 0 ? pImage->width : 1 );	// the corner texel's centre
 
-
-	qglBegin (GL_TRIANGLE_STRIP);
-		qglTexCoord2f( 0,  0 );
-		qglVertex2f(x1, y1);
-		qglTexCoord2f( 1 ,  0 );
-		qglVertex2f(x2, y1);
-		qglTexCoord2f( 0, 1 );
-		qglVertex2f(x1, y2);
-		qglTexCoord2f( 1, 1 );
-		qglVertex2f(x2, y2);
+	qglBegin( GL_QUADS );
+		// bars (empty when the window is 4:3), all from the top-left corner texel
+		qglTexCoord2f( e, e );
+		qglVertex2f( 0, 0 ); qglVertex2f( x1, 0 ); qglVertex2f( x1, 480 ); qglVertex2f( 0, 480 );
+		qglVertex2f( x2, 0 ); qglVertex2f( 640, 0 ); qglVertex2f( 640, 480 ); qglVertex2f( x2, 480 );
+		qglVertex2f( 0, 0 ); qglVertex2f( 640, 0 ); qglVertex2f( 640, y1 ); qglVertex2f( 0, y1 );
+		qglVertex2f( 0, y2 ); qglVertex2f( 640, y2 ); qglVertex2f( 640, 480 ); qglVertex2f( 0, 480 );
+		// the picture
+		qglTexCoord2f( 0, 0 ); qglVertex2f( x1, y1 );
+		qglTexCoord2f( 1, 0 ); qglVertex2f( x2, y1 );
+		qglTexCoord2f( 1, 1 ); qglVertex2f( x2, y2 );
+		qglTexCoord2f( 0, 1 ); qglVertex2f( x1, y2 );
 	qglEnd();
 
 	ri.WIN_Present(&window);

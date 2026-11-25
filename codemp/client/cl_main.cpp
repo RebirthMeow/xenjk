@@ -2421,7 +2421,15 @@ void CL_InitRenderer( void ) {
 	CL_RendererStarted();
 
 	// load character sets
-	cls.charSetShader = re->RegisterShaderNoMip("gfx/2d/charsgrid_med");
+	// xenjk: con_charset names a charset with the stock grid at a higher resolution (tools/fonts/make_hud_charset.py);
+	// the stock one when no pack provides it, or when it is ""
+	{
+		const cvar_t *con_charset = Cvar_Get( "con_charset", "gfx/2d/charsgrid_hd", CVAR_ARCHIVE_ND,
+			"Console and small-text charset with the stock grid (\"\" = gfx/2d/charsgrid_med); read when the renderer starts" );
+		cls.charSetShader = con_charset->string[0] ? re->RegisterShaderNoMip( con_charset->string ) : 0;
+		if ( !cls.charSetShader )
+			cls.charSetShader = re->RegisterShaderNoMip("gfx/2d/charsgrid_med");
+	}
 	cls.consoleFont = re->RegisterFont( "ocr_a" );
 
 	cls.whiteShader = re->RegisterShader( "white" );

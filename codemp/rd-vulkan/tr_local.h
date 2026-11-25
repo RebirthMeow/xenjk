@@ -2224,6 +2224,7 @@ extern	cvar_t	*r_marksOnTriangleMeshes;
 
 extern	cvar_t	*r_aspectCorrectFonts;
 extern	cvar_t	*cl_ratioFix;
+extern	cvar_t	*r_splashFit;
 extern cvar_t	*r_patchStitching;
 
 // Vulkan
