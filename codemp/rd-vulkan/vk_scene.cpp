@@ -7921,6 +7921,14 @@ static qboolean Scene_TreeShadowSplit( void )
 		&& Env( r_sceneTreeWind )->value > 0.0f ) ? qtrue : qfalse;
 }
 
+// whether kept cascade `layer` (1 the middle, 2 the far) splits its trees out: every kept one with r_sceneTreeWindShadows
+// 1, the middle one only with 2 (the far one, ~33-640 m on Beauclair, caches its trees still: its per-frame copy and
+// tree draw were ~0.6-0.8 ms at 4K, perf-20261125 s_tw0, for sway too small to see at that range)
+static qboolean Scene_TreeShadowSplitLayer( int layer )
+{
+	return ( Scene_TreeShadowSplit() && ( r_sceneTreeWindShadows->integer != 2 || layer == 1 ) ) ? qtrue : qfalse;
+}
+
 int R_SceneAddView( viewParms_t *vp )
 {
 	if ( !sc.loaded || !r_scene->integer )
@@ -7968,7 +7976,7 @@ int R_SceneAddView( viewParms_t *vp )
 		const int at = ++sc.numViews;
 		// the kept cascade's SpeedTrees as a view of their own (the same box, LODs and casters' limits), drawn each frame
 		// over the cache that leaves them out (Scene_TreeShadowSplit); the last slot stays free for occlusion's phase 2
-		if ( vk_sun_shadow_kept( cascade - 1 ) && Scene_TreeShadowSplit() && sc.numViews + 1 < SCENE_MAX_VIEWS ) {
+		if ( vk_sun_shadow_kept( cascade - 1 ) && Scene_TreeShadowSplitLayer( cascade - 1 ) && sc.numViews + 1 < SCENE_MAX_VIEWS ) {
 			sceneView_t *t = &sc.views[sc.numViews];
 			*t = *v;
 			v->windMode = 1;
@@ -8802,7 +8810,7 @@ uint32_t vk_scene_shadow_key( void )
 	uint32_t h = 2166136261u;
 	const float v[] = { (float)sc.loaded, (float)sc.numInstances, (float)r_scene->integer, (float)r_sceneShadows->integer,
 		(float)r_sceneShadowCascades->integer, r_sceneShadowLod->value, r_sceneShadowCull->value, r_sceneLodBias->value,
-		r_sceneHideScale->value, Scene_TreeShadowSplit() ? 1.0f : 0.0f };	// (whether the cache leaves the SpeedTrees out)
+		r_sceneHideScale->value, Scene_TreeShadowSplit() ? (float)r_sceneTreeWindShadows->integer : 0.0f };	// (which caches leave the SpeedTrees out)
 	const byte *b = (const byte *)v;
 	for ( size_t i = 0; i < sizeof( v ); i++ )
 		h = ( h ^ b[i] ) * 16777619u;
@@ -9952,7 +9960,7 @@ void R_SceneRegister( void )
 	r_sceneTreeWindDir	= ri.Cvar_Get( "r_sceneTreeWindDir",	"30",					CVAR_ARCHIVE_ND, "Render scene, r_sceneTreeWind: the direction the wind blows toward, degrees from +x toward +y" );
 	r_sceneTreeWindTime	= ri.Cvar_Get( "r_sceneTreeWindTime",	"-1",					CVAR_CHEAT, "Render scene, r_sceneTreeWind: a check's pinned wind clock (seconds; every tree held in one pose, its gusts too); -1 the game's clock" );
 	r_sceneTreeWindGust	= ri.Cvar_Get( "r_sceneTreeWindGust",	"1",					CVAR_ARCHIVE_ND, "Render scene, r_sceneTreeWind: the share of each tree's own gusts (0 none: a steady wind)" );
-	r_sceneTreeWindShadows	= ri.Cvar_Get( "r_sceneTreeWindShadows",	"1",			CVAR_ARCHIVE_ND, "Render scene, r_sceneTreeWind: 1 the kept sun cascades (r_sunShadowFarCache, r_sunShadowMidCache) cache their casters without the SpeedTrees and draw the trees alone over the cache each frame, so far trees' shadows sway with them; 0 the trees stay in the cache (their far shadows still)" );
+	r_sceneTreeWindShadows	= ri.Cvar_Get( "r_sceneTreeWindShadows",	"1",			CVAR_ARCHIVE_ND, "Render scene, r_sceneTreeWind: 1 the kept sun cascades (r_sunShadowFarCache, r_sunShadowMidCache) cache their casters without the SpeedTrees and draw the trees alone over the cache each frame, so far trees' shadows sway with them; 2 the middle cascade only (the far one caches its trees, their shadows still past ~33 m on Beauclair); 0 the trees stay in every cache (their shadows still past the near cascade)" );
 	r_sceneMoon			= ri.Cvar_Get( "r_sceneMoon",			"4",					CVAR_ARCHIVE_ND, "Render scene: CP2077's moon on the sky (r_sceneMoonImage), its light times this over its moonColor (alpha 2 at night, 0.005 by day); 0 none" );
 	r_sceneMoonSize		= ri.Cvar_Get( "r_sceneMoonSize",		"0.0166",				CVAR_ARCHIVE_ND, "Render scene, r_sceneMoon: the disc's angular radius (radians; CP2077's moonSize)" );
 	r_sceneMoonGlow		= ri.Cvar_Get( "r_sceneMoonGlow",		"0.006 100 0.0075 0.3",	CVAR_ARCHIVE_ND, "Render scene, r_sceneMoon: its glow's intensity and falloff (the power of the angle's cosine), then a halo at its rim (strength, width in radii) for CP2077's bloom; fitted to ref09's sky round the disc" );
