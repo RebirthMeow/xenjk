@@ -71,6 +71,7 @@ layout(push_constant) uniform Push {
 						// the kept far cascade's its cell's centre)
 	uvec4 counts;		// x: instances; y: 1 to keep only casters whose shadows may fall in the eye's view; z: occlusion
 						// phase (0 none); w: bit 0 to count (r_sceneOcclusionStats), bit 1 to list the LODs to sort;
+						// bit 4 no SpeedTree meshes, bit 5 only them (r_sceneTreeWind's kept cascades);
 						// bits 8-10: the view (its commands' buffer in the slot, for scene_scatter.comp).
 						// z 3: a static light's face (r_sceneLightShadowLists): x its listed instances, y the first
 } pc;
@@ -198,6 +199,10 @@ void main()
 	if ( rc.look.w > 0.5 && I.info.x != uint( rc.look.w + 0.5 ) - 1u )	// r_sceneOnlyMesh: a measuring view's one mesh
 		return;
 	const Mesh M = meshes[I.info.x];
+	// r_sceneTreeWind's kept sun cascades (counts.w bit 4: the SpeedTrees left out of the cache; bit 5: the trees alone,
+	// drawn over it each frame); a tree's mesh names it in lods.w
+	if ( ( ( pc.counts.w & 16u ) != 0u && M.lods.w != 0u ) || ( ( pc.counts.w & 32u ) != 0u && M.lods.w == 0u ) )
+		return;
 	const vec4 c = vec4( M.sphere.xyz, 1.0 );
 	const vec3 centre = vec3( dot( I.r0, c ), dot( I.r1, c ), dot( I.r2, c ) );
 	const float scale = sqrt( max( max( dot( vec3( I.r0.x, I.r1.x, I.r2.x ), vec3( I.r0.x, I.r1.x, I.r2.x ) ),

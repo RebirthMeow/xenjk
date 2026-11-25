@@ -649,7 +649,8 @@ RB_RenderFarCascade
 r_sunShadowFarCache: the far cascade's static casters (the world's surfaces and the render scene) are drawn only when
 its view changes (the eye's grid cell, R_SetupSunShadowCascades; the sun; the map; the scene's shadow settings) and
 kept in vk.sunShadow.cache. Every frame the layer is restored from it and the moving models (entities: characters,
-movers) are drawn over it. About a millisecond of the far cascade's fill in a dense scene, for a 4096^2 D16 copy.
+movers) are drawn over it, and with r_sceneTreeWind the render scene's SpeedTrees (left out of the cache: their own view,
+vk_scene_draw_trees). About a millisecond of the far cascade's fill in a dense scene, for a 4096^2 D16 copy.
 =============
 */
 /*
@@ -701,6 +702,7 @@ void RB_RenderFarCascade( const drawSurfsCommand_t *cmd, int layer )
 	const int slot = layer == 2 ? 0 : 1;	// the far cascade's cache, or the middle one's (r_sunShadowMidCache)
 	const qboolean reuse = RB_FarCascadeReuse( &backEnd.viewParms, layer );
 	const qboolean skip = r_sunShadowCacheSkip->integer ? qtrue : qfalse;
+	const qboolean trees = vk_scene_tree_casters();	// (the scene's swaying trees: drawn every frame, as the moving models)
 
 	if ( !reuse ) {
 		vk_begin_sun_shadow_render_pass( layer );
@@ -719,14 +721,14 @@ void RB_RenderFarCascade( const drawSurfsCommand_t *cmd, int layer )
 		clean[slot] = qtrue;
 	} else if ( skip && clean[slot] ) {
 		// the layer already holds what the copy would write
-		if ( !numMoving )
+		if ( !numMoving && !trees )
 			return;	// and nothing drawn over it: left as the last frame's readers had it (SHADER_READ_ONLY)
 		vk_sun_shadow_attach( layer );
 	} else {
 		vk_sun_shadow_cache_copy( layer, qfalse );
 		clean[slot] = qtrue;
 	}
-	if ( numMoving )
+	if ( numMoving || trees )
 		clean[slot] = qfalse;
 
 	vk_begin_sun_shadow_render_pass_load( layer );
@@ -734,5 +736,6 @@ void RB_RenderFarCascade( const drawSurfsCommand_t *cmd, int layer )
 	vk.cmd->last_pipeline = VK_NULL_HANDLE;
 	Com_Memcpy( vk_world.modelview_transform, backEnd.viewParms.world.modelViewMatrix, 64 );
 	RB_RenderDrawSurfList( split + numStatic, numMoving );
+	vk_scene_draw_trees();
 	vk_end_render_pass();
 }

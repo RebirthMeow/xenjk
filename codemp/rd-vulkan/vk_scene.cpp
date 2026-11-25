@@ -251,6 +251,7 @@ static cvar_t *r_sceneCloudWind;
 static cvar_t *r_sceneTreeWind;
 static cvar_t *r_sceneTreeWindDir;
 static cvar_t *r_sceneTreeWindGust;
+static cvar_t *r_sceneTreeWindTime;
 static cvar_t *r_sceneTreeWindShadows;
 static cvar_t *r_sceneHoloDots;
 static cvar_t *r_sceneHoloBloom;
@@ -7906,6 +7907,19 @@ float vk_scene_shadow_far( void )
 
 /* ------------------------------------------------------------------ frame */
 
+/*
+r_sceneTreeWind's shadows (r_sceneTreeWindShadows 1): the kept sun cascades (r_sunShadowFarCache, r_sunShadowMidCache)
+cache their casters without the SpeedTrees (windMode 1) and draw the trees alone over the cache each frame (a second
+view, windMode 2: RB_RenderFarCascade, vk_scene_draw_trees). A shadow map keeps the nearest depth, so the two halves
+make the same image as one draw of both, while only the trees are drawn again each frame. The cache's key carries this
+choice (vk_scene_shadow_key), so turning it on or off redraws the cache with or without the trees.
+*/
+static qboolean Scene_TreeShadowSplit( void )
+{
+	return ( sc.loaded && vk.gpuDriven && Scene_WindTrees() && r_sceneTreeWindShadows->integer
+		&& Env( r_sceneTreeWind )->value > 0.0f ) ? qtrue : qfalse;
+}
+
 int R_SceneAddView( viewParms_t *vp )
 {
 	if ( !sc.loaded || !r_scene->integer )
@@ -7931,6 +7945,8 @@ int R_SceneAddView( viewParms_t *vp )
 		v->planes[i][3] = vp->frustum[i].dist;
 	}
 	v->cascade = cascade;
+	v->windMode = 0;
+	v->treeView = -1;
 
 	if ( cascade ) {
 		// the main view's LOD (coarser), so the shadow matches what is drawn; casters under a few texels dropped
@@ -7948,7 +7964,19 @@ int R_SceneAddView( viewParms_t *vp )
 		v->lodScale = MAX( r_sceneShadowLod->value, 0.01f );
 		v->minRadius = MAX( r_sceneShadowCull->value, 0.0f ) * texel;
 		sc.sunTexel[cascade - 1] = texel;
-		return ++sc.numViews;
+		const int at = ++sc.numViews;
+		// the kept cascade's SpeedTrees as a view of their own (the same box, LODs and casters' limits), drawn each frame
+		// over the cache that leaves them out (Scene_TreeShadowSplit); the last slot stays free for occlusion's phase 2
+		if ( vk_sun_shadow_kept( cascade - 1 ) && Scene_TreeShadowSplit() && sc.numViews + 1 < SCENE_MAX_VIEWS ) {
+			sceneView_t *t = &sc.views[sc.numViews];
+			*t = *v;
+			v->windMode = 1;
+			v->treeView = sc.numViews;
+			t->windMode = 2;
+			t->treeView = -1;
+			sc.numViews++;
+		}
+		return at;
 	}
 
 	VectorCopy( vp->ori.origin, v->origin );
@@ -8234,10 +8262,10 @@ void R_SceneVkBeginFrame( void )
 	if ( sc.windPtr[f] ) {
 		const float yaw = DEG2RAD( Env( r_sceneTreeWindDir )->value );
 		const float dirW[3] = { cosf( yaw ), sinf( yaw ), 0.0f };
-		Scene_WindFrame( (float *)sc.windPtr[f], sc.signalTime, vk.gpuDriven ? Env( r_sceneTreeWind )->value : 0.0f,
+		// (r_sceneTreeWindTime: the clock pinned, every tree in one pose: frame-identical comparisons)
+		const int windMs = r_sceneTreeWindTime->value >= 0.0f ? (int)( r_sceneTreeWindTime->value * 1000.0f ) : sc.signalTime;
+		Scene_WindFrame( (float *)sc.windPtr[f], windMs, vk.gpuDriven ? Env( r_sceneTreeWind )->value : 0.0f,
 			MAX( r_sceneTreeWindGust->value, 0.0f ), dirW );
-		if ( ( (const float *)sc.windPtr[f] )[0] > 0.0f && r_sceneTreeWindShadows->integer )
-			sc.windFrame++;	// (the kept sun cascades' key: drawn again)
 	}
 	{	// the wind cloth and hair feel (tr_sim.h): the trees' strength and direction, r_sceneWindSpeed m/s at
 		// strength 1 (The Witcher 3's clear 0.3: 4 m/s), and slow gusts (two incommensurate swells, the game clock's)
@@ -8627,6 +8655,8 @@ void R_SceneVkBeginFrame( void )
 		// over theirs alone
 		if ( gpuGroups )
 			push.counts[3] |= 4;
+		// a kept cascade's casters without the SpeedTrees (16) or the trees alone (32): Scene_TreeShadowSplit
+		push.counts[3] |= view->windMode == 1 ? 16u : view->windMode == 2 ? 32u : 0u;
 		sceneCullDbg[f][v].cascade = view->cascade;
 		sceneCullDbg[f][v].eye = v == eyeView;
 		pushes[v] = push;
@@ -8771,7 +8801,7 @@ uint32_t vk_scene_shadow_key( void )
 	uint32_t h = 2166136261u;
 	const float v[] = { (float)sc.loaded, (float)sc.numInstances, (float)r_scene->integer, (float)r_sceneShadows->integer,
 		(float)r_sceneShadowCascades->integer, r_sceneShadowLod->value, r_sceneShadowCull->value, r_sceneLodBias->value,
-		r_sceneHideScale->value, (float)( sc.windFrame & 0xffffffu ) };	// (r_sceneTreeWind: a new key each frame drawn with wind)
+		r_sceneHideScale->value, Scene_TreeShadowSplit() ? 1.0f : 0.0f };	// (whether the cache leaves the SpeedTrees out)
 	const byte *b = (const byte *)v;
 	for ( size_t i = 0; i < sizeof( v ); i++ )
 		h = ( h ^ b[i] ) * 16777619u;
@@ -9088,10 +9118,32 @@ static void Scene_DrawLists( int pass, int v, scenePush_t *push )
 // RB_DrawSurfs: the view's scene in the main render pass (SCENE_PASS_DEPTH in the depth prepass, SCENE_PASS_GLOW in the
 // dynamic glow's extract pass: emissive materials only, against the main pass's depth)
 
+static void Scene_DrawView( int pass, const int v );
+
 void vk_scene_draw( int pass )
 {
-	vkSecTimer_t tSec( VK_SEC_SCENEDRAW );	// r_cpuTimes
+	Scene_DrawView( pass, backEnd.viewParms.sceneView - 1 );
+}
+
+// whether the kept cascade being drawn has its SpeedTrees in a view of their own (Scene_TreeShadowSplit: drawn over its
+// cache each frame, vk_scene_draw_trees)
+qboolean vk_scene_tree_casters( void )
+{
 	const int v = backEnd.viewParms.sceneView - 1;
+	return ( sc.loaded && r_scene->integer && v >= 0 && v < sc.culledViews && sc.views[v].treeView >= 0
+		&& sc.views[v].treeView < sc.culledViews ) ? qtrue : qfalse;
+}
+
+// the kept cascade's SpeedTrees (its tree view's lists), in the cascade's load pass over the cached casters
+void vk_scene_draw_trees( void )
+{
+	if ( vk_scene_tree_casters() )
+		Scene_DrawView( SCENE_PASS_SHADOW, sc.views[backEnd.viewParms.sceneView - 1].treeView );
+}
+
+static void Scene_DrawView( int pass, const int v )
+{
+	vkSecTimer_t tSec( VK_SEC_SCENEDRAW );	// r_cpuTimes
 	const int f = vk.cmd_index;
 
 	if ( !sc.loaded || v < 0 || v >= sc.culledViews || !r_scene->integer )
@@ -9897,8 +9949,9 @@ void R_SceneRegister( void )
 	r_sceneCloudWind	= ri.Cvar_Get( "r_sceneCloudWind",		"6 2",					CVAR_ARCHIVE_ND, "Render scene, r_sceneClouds: their drift, m/s (x y)" );
 	r_sceneTreeWind		= ri.Cvar_Get( "r_sceneTreeWind",		"0",					CVAR_ARCHIVE_ND, "Render scene: the SpeedTrees' wind (maps/<map>.xw3b version 4), its strength 0..1 as the game's (Witcher 3: the weather's windScale, WT_Clear 0.3, times the environment's windStrengthOverride); 0 still (as before)" );
 	r_sceneTreeWindDir	= ri.Cvar_Get( "r_sceneTreeWindDir",	"30",					CVAR_ARCHIVE_ND, "Render scene, r_sceneTreeWind: the direction the wind blows toward, degrees from +x toward +y" );
+	r_sceneTreeWindTime	= ri.Cvar_Get( "r_sceneTreeWindTime",	"-1",					CVAR_CHEAT, "Render scene, r_sceneTreeWind: a check's pinned wind clock (seconds; every tree held in one pose, its gusts too); -1 the game's clock" );
 	r_sceneTreeWindGust	= ri.Cvar_Get( "r_sceneTreeWindGust",	"1",					CVAR_ARCHIVE_ND, "Render scene, r_sceneTreeWind: the share of each tree's own gusts (0 none: a steady wind)" );
-	r_sceneTreeWindShadows	= ri.Cvar_Get( "r_sceneTreeWindShadows",	"1",			CVAR_ARCHIVE_ND, "Render scene, r_sceneTreeWind: 1 the kept sun cascades (r_sunShadowFarCache) are drawn again each frame, so far trees' shadows sway with them; 0 they keep their cache (the far shadows still)" );
+	r_sceneTreeWindShadows	= ri.Cvar_Get( "r_sceneTreeWindShadows",	"1",			CVAR_ARCHIVE_ND, "Render scene, r_sceneTreeWind: 1 the kept sun cascades (r_sunShadowFarCache, r_sunShadowMidCache) cache their casters without the SpeedTrees and draw the trees alone over the cache each frame, so far trees' shadows sway with them; 0 the trees stay in the cache (their far shadows still)" );
 	r_sceneMoon			= ri.Cvar_Get( "r_sceneMoon",			"4",					CVAR_ARCHIVE_ND, "Render scene: CP2077's moon on the sky (r_sceneMoonImage), its light times this over its moonColor (alpha 2 at night, 0.005 by day); 0 none" );
 	r_sceneMoonSize		= ri.Cvar_Get( "r_sceneMoonSize",		"0.0166",				CVAR_ARCHIVE_ND, "Render scene, r_sceneMoon: the disc's angular radius (radians; CP2077's moonSize)" );
 	r_sceneMoonGlow		= ri.Cvar_Get( "r_sceneMoonGlow",		"0.006 100 0.0075 0.3",	CVAR_ARCHIVE_ND, "Render scene, r_sceneMoon: its glow's intensity and falloff (the power of the angle's cosine), then a halo at its rim (strength, width in radii) for CP2077's bloom; fitted to ref09's sky round the disc" );

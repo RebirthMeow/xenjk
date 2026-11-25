@@ -1701,6 +1701,8 @@ qboolean	vk_scene_color_storage( void );
 qboolean	vk_scene_splits_main( void );
 VkSemaphore	vk_scene_take_wait( void );
 void		vk_scene_draw( int pass );
+qboolean	vk_scene_tree_casters( void );
+void		vk_scene_draw_trees( void );
 void		vk_scene_capture( qboolean haveDepthExtract );
 qboolean	vk_scene_occlusion( void );
 qboolean	vk_scene_decals( void );

@@ -220,6 +220,9 @@ typedef struct {
 	float		lodScale;		// a cascade: r_sceneShadowLod
 	float		minRadius;		// a cascade: casters smaller than this are not drawn
 	int			cascade;		// 1..3: a sun cascade (orthographic), else 0
+	int			windMode;		// r_sceneTreeWind's kept cascades: 1 the SpeedTrees left out (the cached casters), 2 the
+								// SpeedTrees alone (drawn over the cache each frame); 0 every mesh
+	int			treeView;		// a kept cascade with windMode 1: its SpeedTrees' view (0-based), else -1
 	vec3_t		axis[3];		// a main view: forward, left, up
 	float		tanHalfFov[2];	// a main view: x, y
 } sceneView_t;
@@ -370,7 +373,6 @@ typedef struct {
 	void			*receiversPtr[NUM_COMMAND_BUFFERS];
 	sceneBuffer_t	wind[NUM_COMMAND_BUFFERS];			// r_sceneTreeWind: the header, then each SpeedTree's wind constants this frame
 	void			*windPtr[NUM_COMMAND_BUFFERS];		// (draw set binding 30, scene.vert; SCENE_WIND_VEC4 vec4s each)
-	uint32_t		windFrame;							// counts the frames drawn with wind (the kept sun cascades' key)
 	sceneBuffer_t	indirect[NUM_COMMAND_BUFFERS][SCENE_MAX_VIEWS];
 	sceneBuffer_t	visible[NUM_COMMAND_BUFFERS][SCENE_MAX_VIEWS];	// [f][0]: the slot's visible pool, every view's (the others unused)
 	// the count-then-scan cull (scene_scatter.comp): per slot the pairs and touched LODs (header first), its header read
