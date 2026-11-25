@@ -84,7 +84,9 @@ Conventions (checked against the add-on and its own import):
   normal toward the mesh's sphere centre and darkens it near the centre, which on a billboard is the canopy's face toward
   the eye; the billboard's own normal map already holds the rounded canopy's normals. One vertical-card material per
   tree (each tree's views sit in its own frames of the species' shared atlas, and the record carries them).
-- Not carried: wind, hue variation, the detail layer (castanea's stem detail), branch-seam blending, AO bytes,
+- Wind (SpeedTree 7, as the game ships it): see the wind section below (the stream words, wind_record). The renderer
+  moves the vertices behind r_sceneTreeWind (0: still, as before).
+- Not carried: hue variation, the detail layer (castanea's stem detail), branch-seam blending, AO bytes,
   SpecularColor/shininess (w3scene's default F0 and roughness 0.6 apply).
 """
 import argparse
@@ -570,6 +572,141 @@ BB_MIN = 32         # and where that LOD has at least this many (the city's vine
                     # them, their two extra draws and records for a few triangles; the smallest billboarded tree has 35)
 
 
+# ---------------------------------------------------------------------------------------------------- wind
+# SpeedTree 7 wind as the game ships it: the SRT's Wind block (CWind's parameters: 10 oscillators' frequencies and the
+# effects' curves over the wind's strength, 10 points each, the options) and the per-vertex WIND_BRANCH_DATA /
+# WIND_EXTRA_DATA / WIND_FLAGS / leaf anchors. Each vertex's data rides in the scene's second stream (maps/<map>.xw3b,
+# 12 bytes a vertex, which the trees left empty) as the glb's TEXCOORD_1 (two words, as float bits) and COLOR_0 (one
+# word); the tree's parameters go into its index entry ('wind') and w3scene's .xw3b version 4 (the renderer's
+# r_sceneTreeWind evaluates them each frame, scene.vert moves the vertices). Word layout (bit 30 of the first two always
+# 0, so neither is ever a NaN as a float; packed directions and offsets [0, 16) in 1/128ths, the game's half precision
+# there):
+#   A: 0-1 kind (0 branch, 1 frond, 2 leaf, 3 rigid mesh), 2-9 branch 1 weight (1/128ths, < 2), 10-20 branch 1 packed
+#      direction, 21 leaf group 2, 22-29 branch 2 weight, 31 the draw's wind LOD bit 0
+#   B: 0-10 branch 2 packed direction, 11-21 leaf: packed growth direction; frond: ripple scale ((v + 0.5) x 1024),
+#      22-28 leaf: anchor offset x (7-bit signed over the tree's 'offset' scale), 31 wind LOD bit 1
+#   C: 0-10 leaf: packed ripple direction; frond: packed ripple direction, 11-17 leaf: its scale (1/127ths), 18-24 and
+#      25-31 leaf: anchor offset y, z; frond 18-31: its length percent (1/4096ths)
+# Wind LOD (the render state's EWindLod): 0 none, 1 global only, 2 branch and global, 3 every effect.
+WIND_OPTIONS = ('GLOBAL_WIND', 'GLOBAL_PRESERVE_SHAPE', 'BRANCH_SIMPLE_1', 'BRANCH_DIRECTIONAL_1',
+                'BRANCH_DIRECTIONAL_FROND_1', 'BRANCH_TURBULENCE_1', 'BRANCH_WHIP_1', 'BRANCH_OSC_COMPLEX_1',
+                'BRANCH_SIMPLE_2', 'BRANCH_DIRECTIONAL_2', 'BRANCH_DIRECTIONAL_FROND_2', 'BRANCH_TURBULENCE_2',
+                'BRANCH_WHIP_2', 'BRANCH_OSC_COMPLEX_2', 'LEAF_RIPPLE_VERTEX_NORMAL_1', 'LEAF_RIPPLE_COMPUTED_1',
+                'LEAF_TUMBLE_1', 'LEAF_TWITCH_1', 'LEAF_OCCLUSION_1', 'LEAF_RIPPLE_VERTEX_NORMAL_2',
+                'LEAF_RIPPLE_COMPUTED_2', 'LEAF_TUMBLE_2', 'LEAF_TWITCH_2', 'LEAF_OCCLUSION_2',
+                'FROND_RIPPLE_ONE_SIDED', 'FROND_RIPPLE_TWO_SIDED', 'FROND_RIPPLE_ADJUST_LIGHTING', 'ROLLING')
+WIND_RECORD = 320   # floats a tree's record in .xw3b version 4 (wind_record)
+
+
+def wind_lod(rs):
+    """A render state's EWindLod as the stream's 2 bits (0 none, 1 global, 2 branch + global, 3 all)."""
+    s = str(rs.get('EWindLod') or 'NONE').upper()
+    if 'FULL' in s:
+        return 3
+    if 'BRANCH' in s:
+        return 2
+    if 'GLOBAL' in s:
+        return 1
+    return 0
+
+
+def wind_parts(vd, rs, n, corner=None):
+    """A draw call's per-vertex wind before quantisation: dict of arrays (kind, w1, p1, w2, p2, leaf2, ext (n x 3),
+    offset (n x 3: a leaf vertex from its anchor), lod) or None when the SRT has none."""
+    wb = vd.get('wind_branch')
+    if not wb:
+        return None
+    wb = np.nan_to_num(np.array(wb, np.float64).reshape(n, -1))
+    if wb.shape[1] < 4:
+        wb = np.pad(wb, ((0, 0), (0, 4 - wb.shape[1])))
+    ext = np.zeros((n, 3))
+    if vd.get('wind_extra'):
+        e = np.nan_to_num(np.array(vd['wind_extra'], np.float64).reshape(n, -1))
+        ext[:, :e.shape[1]] = e[:, :3]
+    if rs.get('BFacingLeavesPresent') or rs.get('BLeavesPresent'):
+        kind = np.full(n, 2)
+    elif rs.get('BFrondsPresent'):
+        kind = np.full(n, 1)
+    elif rs.get('BRigidMeshesPresent'):
+        kind = np.full(n, 3)
+    else:
+        kind = np.zeros(n, np.int64)
+    if vd.get('geometry_type_hint'):    # (per vertex: 0 branch, 1 frond, 2 leaf, 3 facing leaf, 4 rigid mesh)
+        h = np.rint(np.array(vd['geometry_type_hint'], np.float64).reshape(n)).astype(np.int64)
+        kind = np.choose(np.clip(h, 0, 4), [0, 1, 2, 2, 3])
+    off = np.zeros((n, 3))
+    if corner is not None:
+        off = corner
+    elif vd.get('leaf_anchor_point'):
+        off = np.array(vd['pos'], np.float64).reshape(n, 3) - np.array(vd['leaf_anchor_point'], np.float64).reshape(n, 3)
+    flags = np.array(vd['wind_flags'], np.float64).reshape(n, -1)[:, 0] if vd.get('wind_flags') else np.zeros(n)
+    return {'kind': kind, 'w1': wb[:, 0], 'p1': wb[:, 1], 'w2': wb[:, 2], 'p2': wb[:, 3], 'leaf2': flags > 0.5,
+            'ext': ext, 'offset': np.where(kind[:, None] == 2, off, 0.0), 'lod': wind_lod(rs)}
+
+
+def wind_words(w, scale):
+    """The three stream words (A, B, C: uint32 arrays) of wind_parts' output; scale: the tree's anchor offset scale."""
+    def q(v, mul, top, add=0.0):
+        return np.clip(np.rint((np.asarray(v, np.float64) + add) * mul), 0, top).astype(np.uint32)
+
+    def s7(v):
+        return (np.clip(np.rint(np.asarray(v) / max(scale, 1e-6) * 63.0), -63, 63) + 64).astype(np.uint32)
+    lod = np.uint32(w['lod'])
+    leaf, frond = w['kind'] == 2, w['kind'] == 1
+    e = w['ext']
+    A = (w['kind'].astype(np.uint32) | q(w['w1'], 128, 255) << 2 | q(w['p1'], 128, 2047) << 10
+         | w['leaf2'].astype(np.uint32) << 21 | q(w['w2'], 128, 255) << 22 | (lod & 1) << 31)
+    b11 = np.where(leaf, q(e[:, 1], 128, 2047), np.where(frond, q(e[:, 1], 1024, 2047, 0.5), 0)).astype(np.uint32)
+    B = q(w['p2'], 128, 2047) | b11 << 11 | np.where(leaf, s7(w['offset'][:, 0]), 0).astype(np.uint32) << 22 | (lod >> 1) << 31
+    c0 = np.where(leaf, q(e[:, 2], 128, 2047), np.where(frond, q(e[:, 0], 128, 2047), 0)).astype(np.uint32)
+    hi = np.where(leaf, q(e[:, 0], 127, 127) | s7(w['offset'][:, 1]) << 7 | s7(w['offset'][:, 2]) << 14,
+                  np.where(frond, q(e[:, 2], 4096, 16383) << 7, 0)).astype(np.uint32)
+    C = c0 | hi << 11
+    return A.astype(np.uint32), B.astype(np.uint32), C.astype(np.uint32)
+
+
+def wind_record(srt, scale):
+    """The tree's wind parameters for .xw3b version 4 (vk_scene_w3.cpp Scene_LoadW3Wind reads them in this order):
+    WIND_RECORD floats, [0] the options as bits (WIND_OPTIONS order), or None when the SRT has no wind."""
+    W = srt.get('Wind') or {}
+    P = W.get('Params')
+    if not P:
+        return None
+
+    def c10(v):
+        v = [float(x) for x in (v or [])][:10]
+        return v + [0.0] * (10 - len(v))
+    opts = W.get('m_abOptions') or []
+    bits = sum(1 << i for i, b in enumerate(opts[:32]) if b)
+    r = [float(np.array([bits], np.uint32).view(np.float32)[0])]
+    fr = [float(x) for x in P.get('AfFrequencies') or []][:100]
+    r += fr + [0.0] * (100 - len(fr))                                      # 1: 10 oscillators x 10 strength points
+    r += [float(P.get('m_fGlobalHeight') or 1.0), float(P.get('m_fGlobalHeightExponent') or 1.0)]      # 101
+    r += c10(P.get('AfGlobalDistance')) + c10(P.get('AfGlobalDirectionAdherence'))                       # 103, 113
+    for k in range(2):                                                     # 123, 156: the branch levels
+        b = (P.get('AsBranch') or [{}, {}])[k] if k < len(P.get('AsBranch') or []) else {}
+        r += [float(b.get('m_fTurbulence', 0.0)), float(b.get('m_fTwitch', 0.0)), float(b.get('m_fTwitchFreqScale', 0.0))]
+        r += c10(b.get('AfDistance')) + c10(b.get('AfDirectionAdherence')) + c10(b.get('AfWhip'))
+    for k in range(2):                                                     # 189, 240: the leaf groups
+        b = (P.get('AsLeaf') or [{}, {}])[k] if k < len(P.get('AsLeaf') or []) else {}
+        r += [float(b.get('m_fTwitchSharpness', 1.0))]
+        r += (c10(b.get('AfRippleDistance')) + c10(b.get('AfTumbleFlip')) + c10(b.get('AfTumbleTwist'))
+              + c10(b.get('AfTumbleDirectionAdherence')) + c10(b.get('AfTwitchThrow')))
+    r += c10(P.get('AfFrondRippleDistance')) + [float(P.get('m_fFrondRippleTile', 1.0)),          # 291
+                                                 float(P.get('m_fFrondRippleLightingScalar', 0.0))]
+    r += [float(P.get(k, 0.0)) for k in ('m_fGustFrequency', 'm_fGustStrengthMin', 'm_fGustStrengthMax',   # 303
+                                          'm_fGustDurationMin', 'm_fGustDurationMax', 'm_fGustRiseScalar',
+                                          'm_fGustFallScalar')]
+    r += [float(P.get(k, 0.0)) for k in ('m_fStrengthResponse', 'm_fDirectionResponse', 'm_fAnchorOffset',  # 310
+                                          'm_fAnchorDistanceScale')]
+    a = [float(x) for x in (W.get('m_afBranchWindAnchor') or [0.0, 0.0, 1.0])][:3]
+    r += a + [float(W.get('m_fMaxBranchLevel1Length') or 1.0)]             # 314
+    r += [float(scale)]                                                    # 318: the leaf anchor offsets' scale
+    r += [0.0] * (WIND_RECORD - len(r))
+    assert len(r) == WIND_RECORD, len(r)
+    return r
+
+
 def billboard_distance(profile, last):
     """The game's m_fBillboardStartDistance (its fade to the billboard starts there), never before the last 3D LOD."""
     d = float(profile.get('m_fBillboardStartDistance') or 0.0)
@@ -896,6 +1033,8 @@ def convert(srt_path, srt, folder, mats, missing, img_root=None, bbn=None, bbc=N
     dist = lod_distances(profile, len(plods))
     prims, slots, lods = [], [], []
     st = Counter()
+    wind = bool((srt.get('Wind') or {}).get('Params'))
+    winds = []      # (prim, wind_parts) of the 3D draw calls
     for li, lod in enumerate(plods):
         L = {'lod': li, 'vertices': 0, 'triangles': 0, 'distance': dist[li]}
         calls = lod['PDrawCalls'][:1] if grass else lod['PDrawCalls']
@@ -905,10 +1044,12 @@ def convert(srt_path, srt, folder, mats, missing, img_root=None, bbn=None, bbc=N
             pos = np.array(vd['pos'], dtype=np.float64).reshape(-1, 3)
             if len(pos) == 0:
                 continue
+            corner = None
             if vd.get('leaf_card_corner'):
                 # the card centre plus its corner, (z, x, y) as io_mesh_srt stores it: the Leaf_Card node without a
                 # camera (fixed cards)
-                pos = pos + np.array(vd['leaf_card_corner'], dtype=np.float64).reshape(-1, 3)[:, [2, 0, 1]]
+                corner = np.array(vd['leaf_card_corner'], dtype=np.float64).reshape(-1, 3)[:, [2, 0, 1]]
+                pos = pos + corner
                 st['facing_leaf_vertices'] += len(pos)
             nrm = np.array(vd['normals'], dtype=np.float64).reshape(-1, 3) / 255.0 * 2.0 - 1.0
             ln = np.linalg.norm(nrm, axis=1, keepdims=True)
@@ -923,11 +1064,27 @@ def convert(srt_path, srt, folder, mats, missing, img_root=None, bbn=None, bbc=N
             prims.append({'position': pos, 'normal': nrm, 'uv': uv.astype(np.float32), 'indices': tri,
                           'extras': {'lod': li, 'distance': dist[li], 'material': slots.index(name),
                                      'speedtree': [k for k in GEOM if rs.get(k)]}})
+            if wind:
+                winds.append((prims[-1], wind_parts(vd, rs, len(pos), corner)))
             L['vertices'] += len(pos)
             L['triangles'] += len(tri)
             st['draw_calls'] += 1
         if L['triangles']:
             lods.append(L)
+    # wind: the per-vertex words (the glb's TEXCOORD_1 bits and COLOR_0 bytes) and the tree's record; the anchor
+    # offsets' scale is the tree's largest
+    winds = [(p, w) for p, w in winds if w is not None]
+    rec = None
+    if winds:
+        scale = max([float(np.abs(w['offset']).max()) for _, w in winds] + [0.01])
+        rec = wind_record(srt, scale)
+        for p, w in winds:
+            A, B, C = wind_words(w, scale)
+            p['uv1'] = np.stack([A, B], 1).view(np.float32)
+            p['color'] = np.stack([(C >> s) & 255 for s in (0, 8, 16, 24)], 1).astype(np.uint8)
+            st['wind_vertices'] += len(A)
+            st['wind_leaf_vertices'] += int((w['kind'] == 2).sum())
+        st['wind'] = 1
     bb = billboard_views(srt) if bbn is not None and lods else None
     if bb:
         st['billboard_data'] = 1
@@ -974,6 +1131,8 @@ def convert(srt_path, srt, folder, mats, missing, img_root=None, bbn=None, bbc=N
             st['billboard'] = 1
             st['billboard_flat'] = int(flat)
             st['billboard_top'] = int('top' in L['parts'])
+    if rec is not None:
+        lods[0]['wind'] = rec      # (moved to the index entry by write())
     return prims, slots, lods, st
 
 
@@ -1073,7 +1232,10 @@ def write(work, uncook, img_root=None, update=False, backup='pre-update', rebase
                extras={'source': path, 'space': 'witcher3 mesh-local, metres, +Z up', 'materials': slots,
                        'speedtree': {'lod_profile': srt.get('LodProfile'), 'extents': srt.get('Extents'),
                                      'leaf_cards': 'fixed: centre + corner (z, x, y), facing +X'}})
+        wrec = lods[0].pop('wind', None) if lods else None
         index[path] = {'file': key + '.glb', 'materials': slots, 'lods': lods, 'kind': 'srt'}
+        if wrec is not None:
+            index[path]['wind'] = wrec     # (w3scene: maps/<map>.xw3b version 4)
         trees[path] = {'file': key + '.glb', 'materials': slots, 'lods': lods, **st}
         tri_total['lod0'] += lods[0]['triangles']
         tri_total['all'] += sum(L['triangles'] for L in lods)

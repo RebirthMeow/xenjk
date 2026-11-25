@@ -188,8 +188,8 @@ void Scene_LoadW3Blend( const char *scnName, std::vector<float> &params )
 		// (sizes in 64 bits, so a crafted count cannot wrap them on a 32-bit build; need fits once the file holds it)
 		const uint64_t need64 = sizeof( xw3bHeader_t ) + (uint64_t)h->vertices * 12u + (uint64_t)h->materials * recSize;
 		const size_t need = (size_t)need64;
-		if ( memcmp( h->ident, "XW3B", 4 ) || h->version < 1 || h->version > 3 || h->materials != sc.numMaterials || (uint64_t)len < need64 ) {
-			ri.Printf( PRINT_WARNING, "WARNING: %s: not a version 1 to 3 layer-blend file for this scene's materials, ignored\n", name );
+		if ( memcmp( h->ident, "XW3B", 4 ) || h->version < 1 || h->version > 4 || h->materials != sc.numMaterials || (uint64_t)len < need64 ) {
+			ri.Printf( PRINT_WARNING, "WARNING: %s: not a version 1 to 4 layer-blend file for this scene's materials, ignored\n", name );
 		} else if ( !sceneFileVertices || h->vertices != sceneFileVertices ) {	// (0: the scene streams)
 			ri.Printf( PRINT_WARNING, "WARNING: %s: its %u vertices are not this scene's %u (or the scene streams), ignored\n",
 				name, h->vertices, sceneFileVertices );
@@ -386,7 +386,7 @@ void Scene_LoadW3Blend( const char *scnName, std::vector<float> &params )
 			(uint32_t)sceneSlotImages.size(), missing );
 	// the terrain (maps/<map>.xw3t) reads the same stream: its tile UV in the second UV set
 	const uint32_t terrain = Scene_LoadW3Terrain( scnName, params, streamBytes > 16 ? qtrue : qfalse );
-	if ( !sc.numW3Blend && !numF0 && !terrain ) {
+	if ( !sc.numW3Blend && !numF0 && !terrain && !Scene_WindTrees() ) {	// (the trees' wind reads it too)
 		stream = zero;
 		streamBytes = sizeof( zero );
 	}
@@ -394,6 +394,137 @@ void Scene_LoadW3Blend( const char *scnName, std::vector<float> &params )
 		sc.numW3Blend = 0;
 	if ( buf )
 		ri.FS_FreeFile( buf );
+}
+
+/*
+SpeedTree 7 wind (maps/<map>.xw3b version 4, r_sceneTreeWind): each tree's CWind parameters as the game ships them
+(w3trees.py wind_record: SCENE_WIND_RECORD floats). Each frame Scene_WindFrame evaluates them at the wind's strength
+into SCENE_WIND_VEC4 vec4s a tree (the constants SpeedTree's vertex shader reads; Unity's SpeedTreeWind.cginc names
+them), after a header block: scene.vert's tree t + 1 reads block t + 1. The oscillators' clocks run on each one's
+frequency at the strength now (integrated over the game's clock, so a change of strength does not jump their phase).
+Record layout (w3trees.py): 0 options (bits), 1 frequencies [10 oscillators][10 points], 101 global height, its exponent,
+103 global distance [10], 113 global direction adherence [10], 123 and 156 the branch levels (turbulence, twitch,
+twitch frequency scale, distance [10], direction adherence [10], whip [10]), 189 and 240 the leaf groups (twitch
+sharpness, ripple distance [10], tumble flip [10], twist [10], direction adherence [10], twitch throw [10]), 291 frond
+ripple distance [10], tile, lighting scalar, 303 gust frequency, strength min, max, duration min, max, rise, fall, 310
+strength response, direction response, anchor offset, anchor distance scale, 314 branch anchor xyz, the longest
+level-1 branch, 318 the leaf anchor offsets' scale (the stream's 7-bit offsets).
+Oscillators (the frequencies' rows): 0 global, 1 branch 1, 2 branch 2, 3-5 leaf 1 ripple, tumble, twitch, 6-8 leaf 2's,
+9 frond ripple.
+*/
+static std::vector<float>	sceneWindRecs;		// SCENE_WIND_RECORD floats a tree
+static std::vector<double>	sceneWindTimes;		// a tree's 10 oscillator clocks and its turbulence's global clock
+static int					sceneWindLast = -1;	// the game time (ms) they were advanced to (-1: start from it)
+
+uint32_t Scene_WindTrees( void )
+{
+	return (uint32_t)( sceneWindRecs.size() / SCENE_WIND_RECORD );
+}
+
+void Scene_WindFree( void )
+{
+	sceneWindRecs.clear();
+	sceneWindTimes.clear();
+	sceneWindLast = -1;
+}
+
+// a 10-point curve over the strength 0..1
+static float Scene_WindCurve( const float *c, float s )
+{
+	const float x = Com_Clamp( 0.0f, 1.0f, s ) * 9.0f;
+	const int i = MIN( (int)x, 8 );
+	return c[i] + ( c[i + 1] - c[i] ) * ( x - (float)i );
+}
+
+// an integer hashed to 0..1 (the gusts' strengths)
+static float Scene_WindHash( uint32_t x )
+{
+	x ^= x >> 16;
+	x *= 0x7feb352du;
+	x ^= x >> 15;
+	x *= 0x846ca68bu;
+	x ^= x >> 16;
+	return (float)( x & 0xffffffu ) / 16777215.0f;
+}
+
+/*
+Scene_WindFrame: out = the frame's wind buffer (SCENE_MAX_WIND_TREES + 1 blocks). strength: the wind's (the game's
+weather windScale times its environment's windStrengthOverride; 0: still: the header's x 0 and scene.vert leaves every
+vertex as it is); gust: the share of each tree's own gusts. Gusts: the game's (SpeedTree's CWind) come at random; here
+each tree's come at its m_fGustFrequency on one deterministic sequence of the game's clock, each reaching a strength
+from its [min, max] (times gust), rising and falling in the ratio of its rise and fall scalars, and scaling the
+strength by (1 + it). The clocks are kept modulo 1000 s: every multiplier SpeedTree's shader puts on them (0.689, 0.75,
+0.87, 0.1, 0.01, the twitch scales to 0.001) times 1000 is a whole number, so the wrap is seamless, and float32 keeps
+0.1 ms there.
+*/
+void Scene_WindFrame( float *out, int timeMs, float strength, float gust, const float dirW[3] )
+{
+	const uint32_t nt = Scene_WindTrees();
+	Com_Memset( out, 0, SCENE_WIND_VEC4 * 16 );
+	if ( !nt || strength <= 0.0f )
+		return;
+	const double now = (double)(uint32_t)timeMs * 0.001;
+	const double dt = sceneWindLast < 0 ? -1.0 : (double)( timeMs - sceneWindLast ) * 0.001;
+	const qboolean restart = ( dt < 0.0 || dt > 1.0 ) ? qtrue : qfalse;	// (the first frame, a replay's jump back, a stall)
+	sceneWindLast = timeMs;
+	out[0] = 1.0f;
+	out[1] = (float)nt;
+	for ( uint32_t t = 0; t < nt; t++ ) {
+		const float *R = &sceneWindRecs[(size_t)t * SCENE_WIND_RECORD];
+		double *T = &sceneWindTimes[(size_t)t * 11u];
+		// the strength now, with this tree's gusts
+		float s = Com_Clamp( 0.0f, 1.0f, strength );
+		if ( gust > 0.0f && R[303] > 0.0f ) {
+			const double period = 1.0 / MAX( R[303], 0.02f ), x = now / period;
+			const uint32_t k = (uint32_t)(int64_t)floor( x );
+			const float u = (float)( x - floor( x ) );
+			const float a = ( R[304] + ( R[305] - R[304] ) * Scene_WindHash( k * 2654435761u ^ 0x9e3779b9u ) ) * gust;
+			const float rise = MAX( R[308], 0.05f ), fall = MAX( R[309], 0.05f );
+			const float top = rise / ( rise + fall );	// (the gust's peak within its period)
+			const float e = u < top ? u / top : 1.0f - ( u - top ) / ( 1.0f - top );
+			s = Com_Clamp( 0.0f, 1.0f, s * ( 1.0f + a * e * e * ( 3.0f - 2.0f * e ) ) );
+		}
+		for ( int o = 0; o < 10; o++ ) {
+			const double fq = Scene_WindCurve( R + 1 + o * 10, s );
+			T[o] = restart ? fmod( fq * now, 1000.0 ) : fmod( T[o] + fq * dt, 1000.0 );
+		}
+		T[10] = fmod( now, 1000.0 );
+		float *B = out + (size_t)( t + 1 ) * SCENE_WIND_VEC4 * 4u;
+		const float *b1 = R + 123, *b2 = R + 156, *l1 = R + 189, *l2 = R + 240;
+		// 0: the wind's direction (world), the strength (_ST_WindVector)
+		B[0] = dirW[0]; B[1] = dirW[1]; B[2] = dirW[2]; B[3] = s;
+		// 1: _ST_WindGlobal (its clock, distance, 1 / height, the height's exponent)
+		B[4] = (float)T[0]; B[5] = Scene_WindCurve( R + 103, s ); B[6] = 1.0f / MAX( R[101], 0.01f ); B[7] = R[102];
+		// 2: _ST_WindBranch for both levels (clock, distance)
+		B[8] = (float)T[1]; B[9] = Scene_WindCurve( b1 + 3, s ); B[10] = (float)T[2]; B[11] = Scene_WindCurve( b2 + 3, s );
+		// 3: _ST_WindBranchTwitch (twitch, its frequency scale) for both
+		B[12] = b1[1]; B[13] = b1[2]; B[14] = b2[1]; B[15] = b2[2];
+		// 4: _ST_WindBranchWhip for both; _ST_WindTurbulences
+		B[16] = Scene_WindCurve( b1 + 23, s ); B[17] = Scene_WindCurve( b2 + 23, s ); B[18] = b1[0]; B[19] = b2[0];
+		// 5: _ST_WindBranchAdherences (global, branch 1, branch 2); _ST_WindAnimation.x (the turbulence's global clock)
+		B[20] = Scene_WindCurve( R + 113, s ); B[21] = Scene_WindCurve( b1 + 13, s ); B[22] = Scene_WindCurve( b2 + 13, s );
+		B[23] = (float)T[10];
+		// 6: _ST_WindBranchAnchor (the tree's, mesh-local, normalized; the longest level-1 branch)
+		{
+			const float l = sqrtf( R[314] * R[314] + R[315] * R[315] + R[316] * R[316] );
+			B[24] = l > 0.0f ? R[314] / l : 0.0f; B[25] = l > 0.0f ? R[315] / l : 0.0f; B[26] = l > 0.0f ? R[316] / l : 1.0f;
+			B[27] = R[317];
+		}
+		// 7-9 leaf group 1, 10-12 leaf group 2: ripple (clock, distance), tumble (clock, flip, twist, adherence), twitch
+		// (throw, sharpness, clock)
+		for ( int g = 0; g < 2; g++ ) {
+			const float *L = g ? l2 : l1;
+			float *D = B + 28 + g * 12;
+			const int o = 3 + g * 3;
+			D[0] = (float)T[o]; D[1] = Scene_WindCurve( L + 1, s ); D[2] = D[3] = 0.0f;
+			D[4] = (float)T[o + 1]; D[5] = Scene_WindCurve( L + 11, s ); D[6] = Scene_WindCurve( L + 21, s ); D[7] = Scene_WindCurve( L + 31, s );
+			D[8] = Scene_WindCurve( L + 41, s ); D[9] = L[0]; D[10] = (float)T[o + 2]; D[11] = 0.0f;
+		}
+		// 13: _ST_WindFrondRipple (clock, distance, tile, lighting scalar)
+		B[52] = (float)T[9]; B[53] = Scene_WindCurve( R + 291, s ); B[54] = R[301]; B[55] = R[302];
+		// 14: the options' bits (as stored), the leaf anchor offsets' scale
+		B[56] = R[0]; B[57] = R[318]; B[58] = B[59] = 0.0f;
+	}
 }
 
 /*
@@ -422,10 +553,45 @@ void Scene_MarkCardMeshes( const char *scnName, xscnMesh_t *meshes, uint32_t num
 	const uint64_t need64 = sizeof( xw3bHeader_t ) + (uint64_t)h->vertices * 12u + (uint64_t)h->materials * ( 24u * 4u + 18u * 64u );
 	const size_t need = (size_t)need64;	// (used once the file is known to hold it)
 	uint32_t count = 0, marked = 0;
-	if ( !memcmp( h->ident, "XW3B", 4 ) && h->version == 3 && h->materials == numMats && (uint64_t)len >= need64 + 4u ) {
+	const qboolean ok = ( !memcmp( h->ident, "XW3B", 4 ) && ( h->version == 3 || h->version == 4 ) && h->materials == numMats
+		&& (uint64_t)len >= need64 + 4u ) ? qtrue : qfalse;
+	if ( ok ) {
 		Com_Memcpy( &count, (const byte *)buf + need, 4 );
 		if ( (uint64_t)len < need64 + 4u + (uint64_t)count * 416u )
 			count = 0;
+	}
+	// version 4: the SpeedTree wind after the cards (tools/levelport w3scene.py, w3trees.py's wind section): u32 trees, u32
+	// meshes, per tree SCENE_WIND_RECORD floats, per mesh u32 mesh, u32 tree. The mesh gets word 7 (lods.w) = tree + 1;
+	// its vertices' wind words are in the stream (scene.vert). Read here, before the meshes are uploaded
+	if ( ok && h->version == 4 ) {
+		uint32_t cards = 0;
+		Com_Memcpy( &cards, (const byte *)buf + need, 4 );
+		const uint64_t at = need64 + 4u + (uint64_t)cards * 416u;
+		uint32_t nt = 0, nm = 0;
+		if ( (uint64_t)len >= at + 8u ) {
+			Com_Memcpy( &nt, (const byte *)buf + (size_t)at, 4 );
+			Com_Memcpy( &nm, (const byte *)buf + (size_t)at + 4, 4 );
+		}
+		if ( nt > SCENE_MAX_WIND_TREES || (uint64_t)len < at + 8u + (uint64_t)nt * SCENE_WIND_RECORD * 4u + (uint64_t)nm * 8u ) {
+			ri.Printf( PRINT_WARNING, "WARNING: %s: its wind section (%u trees, %u meshes) is cut short or too large, ignored\n", name, nt, nm );
+		} else if ( nt ) {
+			const byte *w = (const byte *)buf + (size_t)at + 8u;
+			sceneWindRecs.resize( (size_t)nt * SCENE_WIND_RECORD );
+			Com_Memcpy( sceneWindRecs.data(), w, (size_t)nt * SCENE_WIND_RECORD * 4u );
+			sceneWindTimes.assign( (size_t)nt * 11u, 0.0 );
+			sceneWindLast = -1;
+			const byte *m = w + (size_t)nt * SCENE_WIND_RECORD * 4u;
+			uint32_t windMeshes = 0;
+			for ( uint32_t k = 0; k < nm; k++ ) {
+				uint32_t pair[2];
+				Com_Memcpy( pair, m + (size_t)k * 8u, 8 );
+				if ( pair[0] < numMeshes && pair[1] < nt ) {
+					meshes[pair[0]].pad[1] = pair[1] + 1u;
+					windMeshes++;
+				}
+			}
+			ri.Printf( PRINT_ALL, "%s: SpeedTree wind for %u trees, %u meshes (r_sceneTreeWind)\n", name, nt, windMeshes );
+		}
 	}
 	if ( count ) {
 		std::vector<byte> kind( numMats, 0 );	// 1 a card's material, 2 a top card's

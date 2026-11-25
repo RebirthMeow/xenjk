@@ -129,6 +129,9 @@ static_assert( NUM_COMMAND_BUFFERS == 2, "the render scene assumes two frame slo
 								// the lights' shapes, a 10th section, its header 88 bytes)
 #define SCENE_MAX_VIEWS			8		// a main view, its three sun cascades, and room for more
 #define SCENE_OCC_STATS_BYTES	384		// scene_cull.comp's Occ block: two cameras, the levels, eight counters
+#define SCENE_MAX_WIND_TREES	1023	// r_sceneTreeWind: the SpeedTrees with wind a scene holds (maps/<map>.xw3b version 4)
+#define SCENE_WIND_VEC4			16		// vec4s a tree's constants (and the header) in the frame's wind buffer (scene.vert)
+#define SCENE_WIND_RECORD		320		// floats a tree's wind parameters in maps/<map>.xw3b version 4 (w3trees.py WIND_RECORD)
 #define SCENE_MAX_DLIGHTS		32		// the game's dynamic lights (sabers, shots, effects) the scene is lit by
 #define SCENE_MAX_SIGNALS		256		// traffic signals with a cycle (maps/<map>.signals); slot 0 is none
 #define SCENE_SIGNAL_SEGS		8
@@ -365,6 +368,9 @@ typedef struct {
 	void			*framePtr[NUM_COMMAND_BUFFERS];
 	sceneBuffer_t	receivers[NUM_COMMAND_BUFFERS];		// scene_cull.comp's: the eye's four sides, the light's travel
 	void			*receiversPtr[NUM_COMMAND_BUFFERS];
+	sceneBuffer_t	wind[NUM_COMMAND_BUFFERS];			// r_sceneTreeWind: the header, then each SpeedTree's wind constants this frame
+	void			*windPtr[NUM_COMMAND_BUFFERS];		// (draw set binding 30, scene.vert; SCENE_WIND_VEC4 vec4s each)
+	uint32_t		windFrame;							// counts the frames drawn with wind (the kept sun cascades' key)
 	sceneBuffer_t	indirect[NUM_COMMAND_BUFFERS][SCENE_MAX_VIEWS];
 	sceneBuffer_t	visible[NUM_COMMAND_BUFFERS][SCENE_MAX_VIEWS];	// [f][0]: the slot's visible pool, every view's (the others unused)
 	// the count-then-scan cull (scene_scatter.comp): per slot the pairs and touched LODs (header first), its header read
@@ -787,6 +793,9 @@ extern uint32_t	sceneFileVertices;
 void			Scene_LoadW3Blend( const char *scnName, std::vector<float> &params );
 void			Scene_MarkCardMeshes( const char *scnName, xscnMesh_t *meshes, uint32_t numMeshes, const xscnLod_t *lods,
 					const xscnPart_t *parts, uint32_t numMats );
+uint32_t		Scene_WindTrees( void );
+void			Scene_WindFrame( float *out, int timeMs, float strength, float gust, const float dirW[3] );
+void			Scene_WindFree( void );
 
 // vk_scene_cp77.cpp
 void			Scene_LoadSignals( const char *scnName );

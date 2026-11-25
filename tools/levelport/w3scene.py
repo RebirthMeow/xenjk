@@ -18,6 +18,9 @@ v8): not yet. Normal maps are DirectX (green down) and are turned to OpenGL.
 SpeedTree billboards (w3trees.py): a material record with a `card` (type 1 the vertical card, type 2 the
 top card) gets a billboard record in maps/<map>.xw3b, version 3 then (the renderer turns the card and picks its view, scene.vert -9 / -10;
 --bb-fade the pitch band of the top card's fade, 30 to 50 degrees).
+SpeedTree wind (w3trees.py): a tree whose index entry carries `wind` gets its record in maps/<map>.xw3b version 4 (the
+meshes made from it name it); its vertices' wind words are already in the stream (TEXCOORD_1, COLOR_0). --no-wind leaves
+the section out.
 
 Hide distances: the game hides a mesh past its autohide distance; <work>/autohide.json (w3autohide.py)
 holds the depot's values, and each layer placement gets one as its instance hide distance: the component's or sector
@@ -126,6 +129,7 @@ class Tex:
 
 GRASS_HIDE = 60.0   # (m: terrain foliage's grass and flowers, drawn to here)
 GRASS_RE = re.compile(r'[\\/](grass|grass_w3|grass_common\w*)[\\/]', re.I)
+WIND_RECORD = 320   # floats a SpeedTree's wind record (w3trees.WIND_RECORD)
 BLOCKOUT = chr(92) + 'blockout_base' + chr(92)    # (lower case: the game's hidden placeholder meshes)
 
 
@@ -538,6 +542,8 @@ def main():
     ap.add_argument('--terrain-step', type=int, default=1)
     ap.add_argument('--far-step', type=int, default=8, help='the far terrain ring: every Nth vertex')
     ap.add_argument('--version', type=int, default=5, choices=(5, 6), help='scene version (the installed renderer: 5)')
+    ap.add_argument('--no-wind', action='store_true', help="no SpeedTree wind section in maps/<map>.xw3b (the trees "
+                    "stay still whatever r_sceneTreeWind says)")
     ap.add_argument('--no-layers', action='store_true', help='no maps/<map>.xw3b (layer blends): first layers only')
     ap.add_argument('--no-water', action='store_true', help='no sea or lake surfaces (w3water.py)')
     ap.add_argument('--no-vcache', action='store_true', help='triangles in the source order (vcache.py off; A/B)')
@@ -572,6 +578,7 @@ def main():
     count = {'v': 0, 'i': 0}
     meshes, lods, parts = [], [], []
     mesh_of = {}
+    wind_of = {}        # mesh index -> its SpeedTree's depot path, where the tree carries wind (w3trees.py)
     mesh_near = {}      # mesh index -> where its first LOD starts (m): the game's entity proxies start at 50-200 m
     mesh_box = {}       # mesh index -> its LOD 0's local box (lo, hi), metres
     docs = {}
@@ -668,6 +675,8 @@ def main():
         meshes.append(((lo + hi) / 2, radius, first_lod, len(lods) - first_lod))
         mesh_box[len(meshes) - 1] = box0     # (LOD 0's: the proxies' and walls' tests)
         mesh_of[key] = len(meshes) - 1
+        if rec.get('wind') and not a.no_wind:
+            wind_of[len(meshes) - 1] = path      # (a SpeedTree's wind: maps/<map>.xw3b version 4)
         # a mesh whose first LOD starts away from the eye (the game's entity_proxy shells: one LOD from 50-200 m) is
         # drawn only past it, the instance's near distance (scene version 5); drawn everywhere, the castle's walls and
         # stairs showed the proxies' 2-33 px/m atlases
@@ -1042,7 +1051,7 @@ def main():
     shards = []
     with pk3write.writing(pk3, allowZip64=False) as zf:
         zf.writestr(zipfile.ZipInfo('maps/%s.xscn' % a.map), blob, compress_type=zipfile.ZIP_DEFLATED, compresslevel=1)
-        if mats.blend or mats.card or xw3t is not None:
+        if mats.blend or mats.card or xw3t is not None or wind_of:
             # maps/<map>.xw3b (vk_scene.cpp Scene_LoadW3Blend): header, the stream (12 B a vertex), 1248 B a material;
             # version 3 (with billboard cards) then the card records
             import struct
@@ -1054,9 +1063,9 @@ def main():
                 f0 = mats.f0.get(i, [0.0, 0.0, 0.0])     # (version 2: 0 keeps the renderer's default 0.04)
                 recs.append(struct.pack('<24f', *(list(vals) + list(f0) + [float(mats.kind.get(i, 0))])) +
                             b''.join(name64(q) for q in paths))
-            xw3b = (struct.pack('<4s3I', b'XW3B', 3 if mats.card else 2, len(mats.recs), len(V)) +
+            xw3b = (struct.pack('<4s3I', b'XW3B', 4 if wind_of else 3 if mats.card else 2, len(mats.recs), len(V)) +
                     S.astype('<u4').tobytes() + b''.join(recs))
-            if mats.card:
+            if mats.card or wind_of:
                 # version 3: u32 count, then 416 B a card: u32 type
                 # (1 vertical, 2 top), material, views (0 for a top card); f32 a0 (rad), fade0, fade1 (degrees of pitch);
                 # u32 pad[2]; f32 uv[16][6] (per view the card's (s, t) to the atlas: u = m0 s + m1 t + m2,
@@ -1079,6 +1088,21 @@ def main():
                                             float(a.bb_fade[0]), float(a.bb_fade[1]), *pads, *uv))
                 xw3b += b''.join(body)
                 stats['billboard_cards'] = len(mats.card)
+            if wind_of:
+                # version 4: the SpeedTree wind (w3trees.py's wind section; vk_scene_w3.cpp Scene_LoadW3Wind): u32 trees,
+                # u32 meshes, then per tree its record (w3trees.WIND_RECORD f32, [0] the options' bits), then per mesh
+                # u32 mesh index, u32 tree. Each vertex's wind is in the stream above (its second UV's bits, its colour)
+                trees = sorted(set(wind_of.values()))
+                tid = {t: k for k, t in enumerate(trees)}
+                body = [struct.pack('<2I', len(trees), len(wind_of))]
+                for t in trees:
+                    r = index[t]['wind']
+                    assert len(r) == WIND_RECORD, (t, len(r))
+                    body.append(struct.pack('<%df' % WIND_RECORD, *r))
+                body += [struct.pack('<2I', m, tid[t]) for m, t in sorted(wind_of.items())]
+                xw3b += b''.join(body)
+                stats['wind_trees'] = len(trees)
+                stats['wind_meshes'] = len(wind_of)
             zf.writestr(zipfile.ZipInfo('maps/%s.xw3b' % a.map), xw3b, compress_type=zipfile.ZIP_DEFLATED, compresslevel=1)
             stats['layer_blend_materials'] = len(mats.blend)
         if xw3t is not None:

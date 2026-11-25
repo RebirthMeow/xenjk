@@ -61,6 +61,168 @@ layout(std430, set = 0, binding = 27) readonly buffer W3Stream { uint w3Stream[]
 layout(location = 12) out vec2 vUV1;
 layout(location = 13) out vec4 vCol;
 layout(location = 14) flat out uint vCoarse;	// 1: the triangle shades coarse (VRS), so scene.frag's per-pixel coverage does not apply
+
+// r_sceneTreeWind: SpeedTree 7 wind (maps/<map>.xw3b version 4; vk_scene_w3.cpp Scene_WindFrame writes binding 30 each
+// frame). A mesh whose word 7 (lods.w) names a tree (t + 1) reads its constants from block t + 1 (SCENE_WIND_VEC4 = 16
+// vec4s: 0 the wind's world direction and strength, 1 global, 2 branch clocks and distances, 3 twitches, 4 whips and
+// turbulences, 5 adherences and the global clock, 6 the branch anchor, 7-9 and 10-12 the leaf groups' ripple, tumble and
+// twitch, 13 frond ripple, 14 the options' bits and the leaf offsets' scale) and each vertex's three words from the
+// stream (w3trees.py's wind section). Block 0's x is 0 while the wind is off: every vertex then stays exactly as before.
+// Every pass (prepass, lit pass, sun cascades, light faces) runs this module with the same frame's constants, so they
+// all see one shape. The effects follow SpeedTree's own vertex shader (as Unity's SpeedTreeWind.cginc, MIT, carries it:
+// UnpackNormalFromFloat, TrigApproximate, Oscillate, Turbulence, Twitch, the branch winds, LeafRipple, LeafTumble,
+// RippleFrond, GlobalWind), with both branch levels and the tree's own options as the SDK's runtime applies them
+// (Unity's port keeps level 1 only). Not carried: rolling noise (no tree here uses it), the frond ripple's lighting
+// adjustment, the LOD crossfades' shares (a crossfading LOD gets its fuller wind).
+layout(std430, set = 0, binding = 30) readonly buffer Wind { vec4 wind[]; };
+
+vec3 WUnpack( float v ) { return fract( v / vec3( 16.0, 1.0, 0.0625 ) ) * 2.0 - 1.0; }
+vec4 WTrig( vec4 v ) { const vec4 t = abs( fract( v + 0.5 ) * 2.0 - 1.0 ); return ( t * t * ( 3.0 - 2.0 * t ) - 0.5 ) * 2.0; }
+// v turned about the unit axis k by angle a (SpeedTree's RotationMatrix applied)
+vec3 WRot( vec3 k, float a, vec3 v ) { const float c = cos( a ), s = sin( a ); return v * c + cross( k, v ) * s + k * ( dot( k, v ) * ( 1.0 - c ) ); }
+
+float WOscillate( float t, float off, float weight, float whip, bool bWhip, bool complex_, float twitch, float twitchScale,
+	float strength, out vec4 o )
+{
+	float osc;
+	if ( complex_ ) {
+		o = WTrig( vec4( t + off, t * twitchScale + off, twitchScale * 0.5 * ( t + off ), bWhip ? t + off + ( 1.0 - weight ) : 0.0 ) );
+		float broad = o.y * o.z, target = 1.0, amount = broad;
+		if ( broad < 0.0 ) { target = -1.0; amount = -amount; }
+		broad = mix( broad, target, amount );
+		broad = mix( broad, target, amount );
+		osc = broad * twitch * ( 1.0 - strength ) + o.x * ( 1.0 - twitch );
+	} else {
+		o = WTrig( vec4( t + off, t * 0.689 + off, 0.0, bWhip ? t + off + ( 1.0 - weight ) : 0.0 ) );
+		osc = o.x + o.y * o.x;
+	}
+	if ( bWhip )
+		osc *= 1.0 + o.w * whip;
+	return osc;
+}
+
+// one branch level: weight and packed direction from the vertex; clock, distance, twitch, its scale, whip, turbulence,
+// adherence; its options (bit 0 simple, 1 directional, 2 directional frond style, 3 turbulence, 4 whip, 5 complex)
+vec3 WBranch( vec3 p, vec3 treePos, float weight, float packed, float t, float dist, float twitch, float twitchScale, float whip,
+	float turb, float adh, uint opt, float strength, float gtime, vec3 windL, vec3 anchorL )
+{
+	if ( weight <= 0.0 || ( opt & 7u ) == 0u )
+		return p;
+	const bool bWhip = ( opt & 16u ) != 0u, complex_ = ( opt & 32u ) != 0u, bTurb = ( opt & 8u ) != 0u;
+	const vec3 wv = WUnpack( packed ) * weight;
+	t += treePos.x + treePos.y;
+	vec4 o;
+	const float osc = WOscillate( t, packed, weight, whip, bWhip, complex_, twitch, twitchScale, strength, o );
+	p += wv * osc * dist;
+	if ( ( opt & 6u ) != 0u ) {	// directional: toward the wind (frond style: toward the branch anchor)
+		float scale = 1.0;
+		if ( bTurb ) {
+			const vec4 q = WTrig( vec4( t * 0.1 + packed, gtime * turb * 0.1 + packed, 0.0, 0.0 ) );
+			scale = 1.0 - q.x * q.y * q.x * q.y * turb;
+		}
+		if ( bWhip )
+			scale += o.w * strength * whip;
+		p += ( ( opt & 4u ) != 0u ? anchorL - p : windL ) * adh * scale * weight;
+	}
+	return p;
+}
+
+float WTwitch( vec3 p, float amount, float sharpness, float t )
+{
+	const vec4 o = WTrig( vec4( t + ( p.x + p.z ), 0.87 * t + p.y, 0.0, 0.0 ) );
+	return amount * pow( clamp( ( o.x * o.y * o.y + 1.0 ) * 0.5, 0.0, 1.0 ), sharpness );
+}
+
+// a tree vertex moved by the wind, in the mesh's own space (metres, +z up): P its position, N its normal (a leaf's tumble
+// turns it); windW the wind's world direction, rows the instance's (scene.vert's M), treePos its centre in metres
+void TreeWind( const uint tree, const uint at, const mat3 rows, const vec3 treePos, inout vec3 P, inout vec3 N )
+{
+	const uint b = tree * 16u;
+	const uvec3 w = uvec3( w3Stream[at], w3Stream[at + 1u], w3Stream[at + 2u] );
+	const uint lod = ( w.x >> 31u ) | ( ( w.y >> 31u ) << 1u );
+	if ( lod == 0u )
+		return;
+	const vec4 W0 = wind[b], G = wind[b + 1u], BR = wind[b + 2u], TW = wind[b + 3u], WH = wind[b + 4u], AD = wind[b + 5u];
+	const vec4 AN = wind[b + 6u], X = wind[b + 14u];
+	const uint opt = floatBitsToUint( X.x );
+	const float strength = W0.w;
+	const vec3 windL = normalize( rows * W0.xyz );	// (the world direction in the mesh's space: M^T d, normalized)
+	const vec3 anchorL = AN.xyz * AN.w;
+	const uint kind = w.x & 3u;
+	// the leaves' and fronds' own motion (wind LOD 3)
+	if ( lod >= 3u && kind == 2u ) {
+		const float scale = X.y;
+		const vec3 off = ( vec3( float( ( w.y >> 22u ) & 127u ), float( ( w.z >> 18u ) & 127u ), float( ( w.z >> 25u ) & 127u ) ) - 64.0 )
+			* ( scale / 63.0 );
+		const vec3 anchor = P - off;
+		vec3 o = off;
+		const bool g2 = ( ( w.x >> 21u ) & 1u ) != 0u;
+		const uint lb = b + ( g2 ? 10u : 7u );
+		const vec4 RP = wind[lb], TU = wind[lb + 1u], TT = wind[lb + 2u];
+		const uint lopt = opt >> ( g2 ? 19u : 14u );	// (bits: 0 ripple by the vertex normal, 1 computed ripple, 2 tumble, 3 twitch)
+		const float lscale = float( ( w.z >> 11u ) & 127u ) / 127.0;
+		const float growth = float( ( w.y >> 11u ) & 2047u ) / 128.0, ripple = float( w.z & 2047u ) / 128.0;
+		if ( ( lopt & 3u ) != 0u ) {	// LeafRipple
+			const float move = RP.y * WTrig( vec4( RP.x + anchor.x + anchor.y, 0.0, 0.0, 0.0 ) ).x;
+			o += ( ( lopt & 1u ) != 0u ? N : WUnpack( ripple ) ) * move * lscale;
+		}
+		if ( ( lopt & 4u ) != 0u ) {	// LeafTumble
+			const vec3 gd = WUnpack( growth );
+			const vec3 fr = fract( ( anchor + growth ) * 30.3 );
+			const float fo = fr.x + fr.y + fr.z, t = TU.x;
+			const vec4 q = WTrig( vec4( t + fo, t * 0.75 - fo, t * 0.01 + fo, t + fo ) );
+			const float len = length( o );
+			vec3 ax = cross( gd, windL );
+			const float d = clamp( dot( windL, gd ), -1.0, 1.0 );
+			ax.z += d;
+			ax = normalize( ax );
+			const float angle = acos( d );
+			const float osc2 = q.y - q.x * q.x;
+			const float tw = ( lopt & 8u ) != 0u ? WTwitch( anchor, TT.x, TT.y, TT.z + fo ) : 0.0;
+			const float a2 = lscale * ( angle * TU.w + osc2 * TU.y + tw );
+			const float a1 = lscale * TU.z * ( q.x + q.y * q.y );
+			const vec3 gdn = normalize( gd );
+			o = WRot( gdn, a1, WRot( ax, a2, o ) );
+			N = WRot( gdn, a1, WRot( ax, a2, N ) );
+			o = normalize( o ) * len;
+		}
+		P = anchor + o;
+	} else if ( lod >= 3u && kind == 1u && ( opt & ( 3u << 24u ) ) != 0u ) {	// RippleFrond (one- or two-sided)
+		const vec4 FR = wind[b + 13u];
+		const float rscale = float( ( w.y >> 11u ) & 2047u ) / 1024.0 - 0.5;
+		float osc;
+		vec3 dir;
+		if ( ( opt & ( 1u << 24u ) ) != 0u ) {
+			osc = WTrig( vec4( ( FR.x + inUV.y ) * FR.z + ( inUV.x < 0.5 ? 0.75 : 0.0 ), 0.0, 0.0, 0.0 ) ).x;
+			dir = N;
+		} else {
+			const float lenPct = float( ( w.z >> 18u ) & 16383u ) / 4096.0;
+			osc = WTrig( vec4( FR.x * lenPct * FR.z, 0.0, 0.0, 0.0 ) ).x;
+			dir = WUnpack( float( w.z & 2047u ) / 128.0 );
+		}
+		P += dir * ( rscale * osc * FR.y );
+	}
+	// the branches (wind LOD 2 and up; not a rigid mesh), level 2 then level 1, then the whole tree
+	if ( lod >= 2u && kind != 3u ) {
+		const uint o2 = ( opt >> 8u ) & 63u, o1 = ( opt >> 2u ) & 63u;	// (bits: simple, directional, frond style, turbulence, whip, complex)
+		P = WBranch( P, treePos, float( ( w.x >> 22u ) & 255u ) / 128.0, float( w.y & 2047u ) / 128.0, BR.z, BR.w, TW.z, TW.w,
+			WH.y, WH.w, AD.z, o2, strength, AD.w, windL, anchorL );
+		P = WBranch( P, treePos, float( ( w.x >> 2u ) & 255u ) / 128.0, float( ( w.x >> 10u ) & 2047u ) / 128.0, BR.x, BR.y, TW.x, TW.y,
+			WH.x, WH.z, AD.y, o1, strength, AD.w, windL, anchorL );
+	}
+	if ( ( opt & 1u ) != 0u ) {	// GlobalWind (z up)
+		const float len = length( P );
+		float adjust = max( P.z - ( 1.0 / G.z ) * 0.25, 0.0 ) * G.z;
+		if ( adjust != 0.0 )
+			adjust = pow( abs( adjust ), G.w );
+		const vec4 q = WTrig( vec4( treePos.x + G.x, treePos.y + G.x * 0.8, 0.0, 0.0 ) );
+		const float move = ( G.y * ( q.x + q.y * q.y ) + AD.x / G.z ) * adjust;
+		P.xy += windL.xy * move;
+		if ( ( opt & 2u ) != 0u && len > 0.0 )
+			P = normalize( P ) * len;
+	}
+}
+
 #endif
 
 // an emissive layer lies exactly on another material (a poster's glowing print, a sign's face): two sets of triangles
@@ -93,7 +255,13 @@ void main()
 	const uint entry = visible[gl_InstanceIndex];
 	const uint id = entry & 0xffffffu;	// (the top byte: r_sceneLodFade's tag, scene_cull.comp)
 	const Instance I = inst[id];
-	const vec4 p = vec4( inPos, 1.0 );
+	vec3 P = inPos, N = inNrm.xyz;	// (r_sceneTreeWind moves a SpeedTree's; else exactly the vertex's)
+#ifdef GPU_DRIVEN
+	if ( wind[0].x > 0.0 && meshes[I.info.x].lods.w != 0u )
+		TreeWind( meshes[I.info.x].lods.w, uint( gl_VertexIndex ) * 3u, mat3( I.r0.xyz, I.r1.xyz, I.r2.xyz ),
+			vec3( I.r0.w, I.r1.w, I.r2.w ) / 37.5, P, N );
+#endif
+	const vec4 p = vec4( P, 1.0 );
 	vPos = vec3( dot( I.r0, p ), dot( I.r1, p ), dot( I.r2, p ) );
 	const mat3 rows = mat3( I.r0.xyz, I.r1.xyz, I.r2.xyz );	// its columns hold M's rows: v * rows = M v
 	// normals: a rotation with a uniform scale turns them as it turns points (kept as M v: the same arithmetic as
@@ -103,8 +271,8 @@ void main()
 	const float det = dot( a, cross( b, c ) ), aa = dot( a, a ), tol = 1e-3 * aa;
 	const bool similar = det > 0.0 && abs( dot( b, b ) - aa ) <= tol && abs( dot( c, c ) - aa ) <= tol
 		&& abs( dot( a, b ) ) <= tol && abs( dot( b, c ) ) <= tol && abs( dot( a, c ) ) <= tol;
-	vNrm = similar ? inNrm.xyz * rows
-		: sign( det ) * ( cross( b, c ) * inNrm.x + cross( c, a ) * inNrm.y + cross( a, b ) * inNrm.z );
+	vNrm = similar ? N * rows
+		: sign( det ) * ( cross( b, c ) * N.x + cross( c, a ) * N.y + cross( a, b ) * N.z );
 	vTan = vec4( inTan.xyz * rows, det < 0.0 ? -inTan.w : inTan.w );
 	vUV = inUV;
 	vLocal = inPos;

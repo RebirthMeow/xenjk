@@ -247,6 +247,10 @@ static cvar_t *r_sceneCloudScale;
 static cvar_t *r_sceneCloudEdge;
 static cvar_t *r_sceneCloudLight;
 static cvar_t *r_sceneCloudWind;
+static cvar_t *r_sceneTreeWind;
+static cvar_t *r_sceneTreeWindDir;
+static cvar_t *r_sceneTreeWindGust;
+static cvar_t *r_sceneTreeWindShadows;
 static cvar_t *r_sceneHoloDots;
 static cvar_t *r_sceneHoloBloom;
 static cvar_t *r_sceneHoloGain;
@@ -1056,7 +1060,7 @@ static qboolean Scene_CreatePipelines( void )
 	// GPU-driven draws: 14 each list slot's material, 15 the materials (written by Scene_CreateGpuDriven); 16 the light
 	// clusters; 17 the lights' fades (scene_lightfade.comp); 18 the stand-ins; 19 the meshes (scene.vert: the hide fade's centre);
 	// 20, 21, 22 the DBuffer (mesh decals: albedo, normal, the receiver's depth); 23 the occlusion pyramids (the water's bed)
-	static const VkDescriptorType drawTypes[30] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+	static const VkDescriptorType drawTypes[31] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -1066,16 +1070,17 @@ static qboolean Scene_CreatePipelines( void )
 		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,	// 27: maps/<map>.xw3b's vertex stream (scene.vert)
-		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER };	// 28, 29: r_sceneAO's two images
+		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,	// 28, 29: r_sceneAO's two images
+		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER };	// 30: the trees' wind this frame (r_sceneTreeWind, scene.vert)
 	// (2, 3, 4, 13 and 17 also the vertex stage's: the particles' light, records and light fades, scene_fx.vert)
-	static const VkShaderStageFlags drawStages[30] = { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+	static const VkShaderStageFlags drawStages[31] = { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT,
-		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT };	// 15: the materials (scene.vert reads the kind); 18: the stand-ins; 24, 25: the DBuffer's surface and emission; 26: the water's waves
+		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT };	// 15: the materials (scene.vert reads the kind); 18: the stand-ins; 24, 25: the DBuffer's surface and emission; 26: the water's waves
 	// the history's depth alone: ssr 4, capture 3
 	// 5, 6: r_sceneAO's image this frame and last frame's
 	static const VkDescriptorType ssrTypes[7] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -1109,7 +1114,7 @@ static qboolean Scene_CreatePipelines( void )
 	sc.groupCullLayout = Scene_SetLayout( cullTypes, cullStages, 2 );	// scene_groupcull.comp: the groups, the view's list
 	sc.sortLayout = Scene_SetLayout( sortTypes, sortStages, 5 );
 	sc.occLayout = Scene_SetLayout( occTypes, occStages, 2 );
-	sc.drawLayout = Scene_SetLayout( drawTypes, drawStages, 30 );
+	sc.drawLayout = Scene_SetLayout( drawTypes, drawStages, 31 );
 	sc.ssrLayout = Scene_SetLayout( ssrTypes, ssrStages, 7 );
 	sc.fogLayout = Scene_SetLayout( fogTypes, fogStages, 16 );
 	sc.captureLayout = Scene_SetLayout( captureTypes, captureStages, 4 );
@@ -1774,6 +1779,11 @@ static qboolean Scene_CreateViews( void )
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, "scene shadow receivers" ) )
 			return qfalse;
 		VK_CHECK( qvkMapMemory( vk.device, sc.receivers[f].mem, 0, VK_WHOLE_SIZE, 0, &sc.receiversPtr[f] ) );
+		if ( !Scene_CreateBuffer( &sc.wind[f], (VkDeviceSize)( SCENE_MAX_WIND_TREES + 1 ) * SCENE_WIND_VEC4 * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, "scene tree wind" ) )
+			return qfalse;
+		VK_CHECK( qvkMapMemory( vk.device, sc.wind[f].mem, 0, VK_WHOLE_SIZE, 0, &sc.windPtr[f] ) );
+		Com_Memset( sc.windPtr[f], 0, SCENE_WIND_VEC4 * 16 );	// (the header: off)
 		if ( !Scene_CreateBuffer( &sc.frame[f], sizeof( sceneFrame_t ), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, "scene frame" ) )
 			return qfalse;
@@ -2030,6 +2040,9 @@ static qboolean Scene_CreateViews( void )
 				qvkUpdateDescriptorSets( vk.device, 1, &w, 0, NULL );
 				bi.buffer = sc.w3Stream.buf;	// 27: maps/<map>.xw3b's vertex stream (scene.vert, GPU-driven)
 				w.dstBinding = 27;
+				qvkUpdateDescriptorSets( vk.device, 1, &w, 0, NULL );
+				bi.buffer = sc.wind[f].buf;	// 30: the trees' wind this frame (scene.vert)
+				w.dstBinding = 30;
 				qvkUpdateDescriptorSets( vk.device, 1, &w, 0, NULL );
 			}
 		}
@@ -3360,6 +3373,10 @@ void R_SceneFree( void )
 			qvkUnmapMemory( vk.device, sc.receivers[f].mem );
 		sc.receiversPtr[f] = NULL;
 		Scene_DestroyBuffer( &sc.receivers[f] );
+		if ( sc.windPtr[f] )
+			qvkUnmapMemory( vk.device, sc.wind[f].mem );
+		sc.windPtr[f] = NULL;
+		Scene_DestroyBuffer( &sc.wind[f] );
 		if ( sc.occStatsPtr[f] )
 			qvkUnmapMemory( vk.device, sc.occStats[f].mem );
 		sc.occStatsPtr[f] = NULL;
@@ -6656,7 +6673,7 @@ const cvar_t *Scene_Env( const cvar_t *cv )
 // `scene` names) in sceneMap
 static void Scene_LoadEnv( const char *bspName, char *sceneMap, int size )
 {
-	static cvar_t **const look[] = { &r_sceneSun, &r_sceneAmbient, &r_sceneExposure, &r_sceneEmissive, &r_sceneGlow, &r_sceneGlowThreshold, &r_sceneTonemap, &r_sceneFog, &r_sceneFogDensity, &r_sceneFogHeight, &r_sceneFogMax, &r_sceneFogLight, &r_sceneFogPhase, &r_sceneFogAlbedo, &r_sceneFogFar, &r_sceneFogStart, &r_sceneFogMoon, &r_sceneGradeExposure, &r_sceneLightScale, &r_sceneGrade, &r_sceneFogLightMax, &r_sceneDayLamps, &r_sceneSky, &r_sceneSkyZenith, &r_sceneSkyHorizon, &r_sceneSkySun, &r_sceneSkyGround, &r_sceneSkyCurve, &r_sceneCharSun, &r_sceneNightOnlyByDay, &r_sceneDayOnlyAtNight, &r_sceneWet, &r_sceneFoliage, &r_sceneFoliageWrap, &r_sceneFoliageTrans, &r_sceneFoliageAO, &r_sceneAO, &r_sceneAORadius, &r_sceneShadowSoft, &r_sceneShadowFar, &r_sceneClouds, &r_sceneCloudScale, &r_sceneCloudEdge, &r_sceneCloudLight, &r_sceneCloudWind, &r_sceneEmissiveExposure, &r_sceneEmissiveRef, &r_sceneMoon, &r_sceneMoonSize, &r_sceneMoonGlow, &r_sceneMoonPath, &r_sceneMoonLight, &r_sceneClock, &r_sceneSkySunSide, &r_sceneSkyGlow, &r_sceneAutoExposure, &r_sceneExposureWindow, &r_sceneWindowExposure };
+	static cvar_t **const look[] = { &r_sceneSun, &r_sceneAmbient, &r_sceneExposure, &r_sceneEmissive, &r_sceneGlow, &r_sceneGlowThreshold, &r_sceneTonemap, &r_sceneFog, &r_sceneFogDensity, &r_sceneFogHeight, &r_sceneFogMax, &r_sceneFogLight, &r_sceneFogPhase, &r_sceneFogAlbedo, &r_sceneFogFar, &r_sceneFogStart, &r_sceneFogMoon, &r_sceneGradeExposure, &r_sceneLightScale, &r_sceneGrade, &r_sceneFogLightMax, &r_sceneDayLamps, &r_sceneSky, &r_sceneSkyZenith, &r_sceneSkyHorizon, &r_sceneSkySun, &r_sceneSkyGround, &r_sceneSkyCurve, &r_sceneCharSun, &r_sceneNightOnlyByDay, &r_sceneDayOnlyAtNight, &r_sceneWet, &r_sceneFoliage, &r_sceneFoliageWrap, &r_sceneFoliageTrans, &r_sceneFoliageAO, &r_sceneAO, &r_sceneAORadius, &r_sceneShadowSoft, &r_sceneShadowFar, &r_sceneClouds, &r_sceneCloudScale, &r_sceneCloudEdge, &r_sceneCloudLight, &r_sceneCloudWind, &r_sceneTreeWind, &r_sceneTreeWindDir, &r_sceneEmissiveExposure, &r_sceneEmissiveRef, &r_sceneMoon, &r_sceneMoonSize, &r_sceneMoonGlow, &r_sceneMoonPath, &r_sceneMoonLight, &r_sceneClock, &r_sceneSkySunSide, &r_sceneSkyGlow, &r_sceneAutoExposure, &r_sceneExposureWindow, &r_sceneWindowExposure };
 	char name[MAX_QPATH];
 	char *buf = NULL;
 
@@ -7697,8 +7714,11 @@ void R_SceneLoad( const char *mapBsp )
 	sc.numCellRefs = (uint32_t)refs.size();
 
 	sceneFileVertices = ss.on ? 0u : h->count[XS_VERTICES];	// (maps/<map>.xw3b's stream follows this order)
-	for ( uint32_t i = 0; i < numMeshes; i++ )	// word 6, the card-caster mark (scene_cull.comp's lods.z), none unless marked below
-		( (xscnMesh_t *)meshes )[i].pad[0] = 0;
+	for ( uint32_t i = 0; i < numMeshes; i++ ) {	// word 6, the card-caster mark (scene_cull.comp's lods.z), word 7 the mesh's
+		( (xscnMesh_t *)meshes )[i].pad[0] = 0;		// SpeedTree wind (lods.w: tree + 1, scene.vert), none unless marked below
+		( (xscnMesh_t *)meshes )[i].pad[1] = 0;
+	}
+	Scene_WindFree();
 	if ( vk.gpuDriven )	// (the scene file's own buffer: the ocean's records are written into it above too)
 		Scene_MarkCardMeshes( name, (xscnMesh_t *)meshes, numMeshes, lods, parts, numMats );
 	const VkBufferUsageFlags ssbo = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
@@ -8197,6 +8217,15 @@ void R_SceneVkBeginFrame( void )
 	fr->rain[3] = r_sceneFogSegment->integer ? 2.0f : r_sceneFogNearSamples->integer ? 1.0f : 0.0f;
 	fr->detail[0] = sc.numDetailed ? Com_Clamp( 0.0f, 2.0f, r_sceneDetail->value ) : 0.0f;
 	fr->ssr[2] = (float)Com_Clamp( 0, 8, r_sceneDetailSlots->integer );	// (scene.frag: a version 2 material's slots)
+	// r_sceneTreeWind: each SpeedTree's wind constants this frame (binding 30; the header's x 0: still)
+	if ( sc.windPtr[f] ) {
+		const float yaw = DEG2RAD( Env( r_sceneTreeWindDir )->value );
+		const float dirW[3] = { cosf( yaw ), sinf( yaw ), 0.0f };
+		Scene_WindFrame( (float *)sc.windPtr[f], sc.signalTime, vk.gpuDriven ? Env( r_sceneTreeWind )->value : 0.0f,
+			MAX( r_sceneTreeWindGust->value, 0.0f ), dirW );
+		if ( ( (const float *)sc.windPtr[f] )[0] > 0.0f && r_sceneTreeWindShadows->integer )
+			sc.windFrame++;	// (the kept sun cascades' key: drawn again)
+	}
 	fr->water[0] = (float)( ( (uint32_t)sc.signalTime % 86400000u ) * 0.001 );	// the game's clock (a replayed frame repeats), a day round (an hour made every effect jump at once; 8 ms steps at its end)
 	fr->water[1] = sc.waterLo;
 	fr->water[2] = sc.waterHi;
@@ -8717,7 +8746,7 @@ uint32_t vk_scene_shadow_key( void )
 	uint32_t h = 2166136261u;
 	const float v[] = { (float)sc.loaded, (float)sc.numInstances, (float)r_scene->integer, (float)r_sceneShadows->integer,
 		(float)r_sceneShadowCascades->integer, r_sceneShadowLod->value, r_sceneShadowCull->value, r_sceneLodBias->value,
-		r_sceneHideScale->value };
+		r_sceneHideScale->value, (float)( sc.windFrame & 0xffffffu ) };	// (r_sceneTreeWind: a new key each frame drawn with wind)
 	const byte *b = (const byte *)v;
 	for ( size_t i = 0; i < sizeof( v ); i++ )
 		h = ( h ^ b[i] ) * 16777619u;
@@ -9841,6 +9870,10 @@ void R_SceneRegister( void )
 	r_sceneCloudEdge	= ri.Cvar_Get( "r_sceneCloudEdge",		"0.15",					CVAR_ARCHIVE_ND, "Render scene, r_sceneClouds: how soft their edges are (0.01 hard, 1 a haze)" );
 	r_sceneCloudLight	= ri.Cvar_Get( "r_sceneCloudLight",		"1.5",				CVAR_ARCHIVE_ND, "Render scene, r_sceneClouds: the light of their sunlit side, times the scene's sun" );
 	r_sceneCloudWind	= ri.Cvar_Get( "r_sceneCloudWind",		"6 2",					CVAR_ARCHIVE_ND, "Render scene, r_sceneClouds: their drift, m/s (x y)" );
+	r_sceneTreeWind		= ri.Cvar_Get( "r_sceneTreeWind",		"0",					CVAR_ARCHIVE_ND, "Render scene: the SpeedTrees' wind (maps/<map>.xw3b version 4), its strength 0..1 as the game's (Witcher 3: the weather's windScale, WT_Clear 0.3, times the environment's windStrengthOverride); 0 still (as before)" );
+	r_sceneTreeWindDir	= ri.Cvar_Get( "r_sceneTreeWindDir",	"30",					CVAR_ARCHIVE_ND, "Render scene, r_sceneTreeWind: the direction the wind blows toward, degrees from +x toward +y" );
+	r_sceneTreeWindGust	= ri.Cvar_Get( "r_sceneTreeWindGust",	"1",					CVAR_ARCHIVE_ND, "Render scene, r_sceneTreeWind: the share of each tree's own gusts (0 none: a steady wind)" );
+	r_sceneTreeWindShadows	= ri.Cvar_Get( "r_sceneTreeWindShadows",	"1",			CVAR_ARCHIVE_ND, "Render scene, r_sceneTreeWind: 1 the kept sun cascades (r_sunShadowFarCache) are drawn again each frame, so far trees' shadows sway with them; 0 they keep their cache (the far shadows still)" );
 	r_sceneMoon			= ri.Cvar_Get( "r_sceneMoon",			"4",					CVAR_ARCHIVE_ND, "Render scene: CP2077's moon on the sky (r_sceneMoonImage), its light times this over its moonColor (alpha 2 at night, 0.005 by day); 0 none" );
 	r_sceneMoonSize		= ri.Cvar_Get( "r_sceneMoonSize",		"0.0166",				CVAR_ARCHIVE_ND, "Render scene, r_sceneMoon: the disc's angular radius (radians; CP2077's moonSize)" );
 	r_sceneMoonGlow		= ri.Cvar_Get( "r_sceneMoonGlow",		"0.006 100 0.0075 0.3",	CVAR_ARCHIVE_ND, "Render scene, r_sceneMoon: its glow's intensity and falloff (the power of the angle's cosine), then a halo at its rim (strength, width in radii) for CP2077's bloom; fitted to ref09's sky round the disc" );
