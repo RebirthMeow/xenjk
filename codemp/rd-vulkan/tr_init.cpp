@@ -1140,7 +1140,7 @@ void R_Register( void )
 	ri.Cvar_CheckRange(r_presentBits, 16, 30, qtrue);
 	r_maxFrameLatency					= ri.Cvar_Get("r_maxFrameLatency",					"1",						CVAR_ARCHIVE_ND, "Frames the GPU may still be drawing when the next frame reads input (0-2; 2 = old behaviour)");
 	ri.Cvar_CheckRange(r_maxFrameLatency, 0, NUM_COMMAND_BUFFERS, qtrue);
-	r_gpuTimes							= ri.Cvar_Get("r_gpuTimes",							"0",						CVAR_NONE, "Print GPU milliseconds per render pass every frame (bench)");
+	r_gpuTimes							= ri.Cvar_Get("r_gpuTimes",							"0",						CVAR_NONE, "Print GPU milliseconds per render pass every frame (bench); 2 also the time between passes (VKGAP lines)");
 	r_cpuTimes							= ri.Cvar_Get("r_cpuTimes",							"0",						CVAR_NONE, "Print the renderer's CPU milliseconds per frame: frontend, backend recording and its waits (fence, acquire, submit, present, frame latency), the rest of the frame (bench)");
 	r_g2LazyBones						= ri.Cvar_Get("r_g2LazyBones",						"1",						CVAR_NONE, "Ghoul2 skeletons are transformed and uploaded only for entities a view draws (each model once a frame); 0 = every Ghoul2 entity of the scene, drawn or not" );
 	r_swapchainImages					= ri.Cvar_Get("r_swapchainImages",					"0",						CVAR_ARCHIVE_ND | CVAR_LATCH, "Swapchain images without vsync (immediate/mailbox): 0 = default (3), 2 = shortest presentation queue");

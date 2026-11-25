@@ -149,6 +149,31 @@ static void print_results( int slot )
 	for ( int k = 0; k < n; k++ )
 		Q_strcat( line, sizeof( line ), va( " Pass %s: %.3fms", names[k], ms[k] ) );
 	ri.Printf( PRINT_ALL, "%s\n", line );
+	if ( r_gpuTimes->integer < 2 )
+		return;
+	// r_gpuTimes 2: the time between each pass's end and the next one's begin (the untimed work there, barriers, waits),
+	// summed by the two passes' names: VKGAP <sum> | Gap <before> > <after>: <ms>ms ...
+	const char *ga[GPUTIME_MAX_QUERIES / 2], *gb[GPUTIME_MAX_QUERIES / 2];
+	double gms[GPUTIME_MAX_QUERIES / 2], gsum = 0.0;
+	int gn = 0;
+	for ( int p = 1; p < f->numPasses; p++ ) {
+		const double d = (double)( ticks[2 * p] - ticks[2 * p - 1] ) * nsPerTick / 1e6;
+		gsum += d;
+		int k = 0;
+		while ( k < gn && ( strcmp( ga[k], f->name[p - 1] ) || strcmp( gb[k], f->name[p] ) ) )
+			k++;
+		if ( k == gn ) {
+			ga[gn] = f->name[p - 1];
+			gb[gn] = f->name[p];
+			gms[gn++] = 0.0;
+		}
+		gms[k] += d;
+	}
+	Com_sprintf( line, sizeof( line ), "VKGAP %.3f |", gsum );
+	for ( int k = 0; k < gn; k++ )
+		if ( gms[k] >= 0.02 )
+			Q_strcat( line, sizeof( line ), va( " Gap %s > %s: %.3fms", ga[k], gb[k], gms[k] ) );
+	ri.Printf( PRINT_ALL, "%s\n", line );
 }
 
 // after vkBeginCommandBuffer: this slot's fence was waited, so its previous results are ready
