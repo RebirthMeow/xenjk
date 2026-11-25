@@ -1095,7 +1095,8 @@ vec3 windowRoom()
 // at weight w; an image index under 0 is none (a flat normal, roughness 0.9). Called once per distinct layer, so no
 // array is indexed at run time (an array of the taps' merged layers went to local memory: 64 B a fragment)
 void w3TerrainLayer( const float ci, const float ni, const float w, const vec3 tw, const vec2 p0, const vec2 p0x, const vec2 p0y,
-	const vec2 p1, const vec2 p1x, const vec2 p1y, const vec2 p2, const vec2 p2x, const vec2 p2y, inout vec3 D, inout vec3 N, inout float R )
+	const vec2 p1, const vec2 p1x, const vec2 p1y, const vec2 p2, const vec2 p2x, const vec2 p2y, const float fl, inout vec3 D, inout vec3 N,
+	inout float R )
 {
 	if ( w <= 0.0 )
 		return;
@@ -1108,25 +1109,26 @@ void w3TerrainLayer( const float ci, const float ni, const float w, const vec3 t
 		D += w * c;
 	}
 	vec4 q = vec4( 0.5, 0.5, 1.0, 0.9 );
-	if ( ni >= 0.0 ) {
+	if ( ni >= 0.0 && fl < 1.0 ) {	// (past r_sceneTerrainFar, fl 1: no normal map, faded out over its band)
 		const uint t = uint( ni );
-		q = vec4( 0.0 );
-		if ( tw.z > 0.0 ) q += tw.z * textureGrad( sceneTex[SCENE_TEX_INDEX( t )], p0, p0x, p0y );
-		if ( tw.y > 0.0 ) q += tw.y * textureGrad( sceneTex[SCENE_TEX_INDEX( t )], p1, p1x, p1y );
-		if ( tw.x > 0.0 ) q += tw.x * textureGrad( sceneTex[SCENE_TEX_INDEX( t )], p2, p2x, p2y );
+		vec4 r = vec4( 0.0 );
+		if ( tw.z > 0.0 ) r += tw.z * textureGrad( sceneTex[SCENE_TEX_INDEX( t )], p0, p0x, p0y );
+		if ( tw.y > 0.0 ) r += tw.y * textureGrad( sceneTex[SCENE_TEX_INDEX( t )], p1, p1x, p1y );
+		if ( tw.x > 0.0 ) r += tw.x * textureGrad( sceneTex[SCENE_TEX_INDEX( t )], p2, p2x, p2y );
+		q = mix( r, q, fl );
 	}
 	N += w * ( q.xyz * 2.0 - 1.0 );
 	R += w * q.a;
 }
 // a background layer at its UV scale: from above (world xy), along x (-x, -z) and along y (-y, -z)
 void w3TerrainBg( const float ci, const float ni, const float w, const float sc, const vec3 tw, const vec2 world, const float zW,
-	const vec2 gx, const vec2 gy, const vec2 gzx, inout vec3 D, inout vec3 N, inout float R )
+	const vec2 gx, const vec2 gy, const vec2 gzx, const float fl, inout vec3 D, inout vec3 N, inout float R )
 {
 	if ( w <= 0.0 )
 		return;
 	w3TerrainLayer( ci, ni, w, tw, world * sc, gx * sc, gy * sc,
 		vec2( -world.x, -zW ) * sc, vec2( -gx.x, -gzx.x ) * sc, vec2( -gy.x, -gzx.y ) * sc,
-		vec2( -world.y, -zW ) * sc, vec2( -gx.y, -gzx.x ) * sc, vec2( -gy.y, -gzx.y ) * sc, D, N, R );
+		vec2( -world.y, -zW ) * sc, vec2( -gx.y, -gzx.x ) * sc, vec2( -gy.y, -gzx.y ) * sc, fl, D, N, R );
 }
 #endif
 
@@ -1620,6 +1622,15 @@ void main()
 		// colour from above)
 		const vec3 nf = normalize( vNrm );
 		vec3 tw = max( abs( nf ) - 0.576, 0.0 );
+		// past r_sceneTerrainFar (pc.tint.w, units; 0 never): the facing's main projection only, the others faded out
+		// over the next quarter of the distance, and no normal maps (w3TerrainLayer's fl); far terrain's texture
+		// reads were ~1 ms of its ~2.8 at 4K (perf-20261125, r_sceneTerrainFlat)
+		float fl = 0.0;
+		if ( pc.tint.w > 0.0 ) {
+			fl = clamp( ( length( vPos - pc.eye.xyz ) - pc.tint.w ) / ( 0.25 * pc.tint.w ), 0.0, 1.0 );
+			const float tm = max( tw.x, max( tw.y, tw.z ) );
+			tw = mix( tw, vec3( greaterThanEqual( tw, vec3( tm ) ) ) * tm, fl );
+		}
 		tw /= max( tw.x + tw.y + tw.z, 1e-4 );
 		const float zW = vPos.z / UNITS_PER_METRE;
 		const vec2 gzx = vec2( dFdx( zW ), dFdy( zW ) ) * COARSE_GRAD;
@@ -1672,8 +1683,8 @@ void main()
 		const vec2 oxx = vec2( -gx.y, -gzx.x ) * 0.333, oxy = vec2( -gy.y, -gzx.y ) * 0.333;
 #define W3_OVC( i )	materialDetail[b + 34u + uint( i ) / 4u][( i ) % 4]
 #define W3_OVN( i )	materialDetail[b + 42u + uint( i ) / 4u][( i ) % 4]
-#define W3_OV( i, w )	w3TerrainLayer( W3_OVC( i ), W3_OVN( i ), w, tw, uo, gx * 0.333, gy * 0.333, os, osx, osy, ox, oxx, oxy, ovD, ovN, ovR )
-#define W3_BG( i, w, sc )	w3TerrainBg( W3_OVC( i ), W3_OVN( i ), w, sc, tw, world, zW, gx, gy, gzx, bgD, bgN, bgR )
+#define W3_OV( i, w )	w3TerrainLayer( W3_OVC( i ), W3_OVN( i ), w, tw, uo, gx * 0.333, gy * 0.333, os, osx, osy, ox, oxx, oxy, fl, ovD, ovN, ovR )
+#define W3_BG( i, w, sc )	w3TerrainBg( W3_OVC( i ), W3_OVN( i ), w, sc, tw, world, zW, gx, gy, gzx, fl, bgD, bgN, bgR )
 		W3_OV( ovI.x, wo.x ); W3_OV( ovI.y, wo.y ); W3_OV( ovI.z, wo.z ); W3_OV( ovI.w, wo.w );
 		W3_BG( bgI.x, wb.x, bgSc.x ); W3_BG( bgI.y, wb.y, bgSc.y ); W3_BG( bgI.z, wb.z, bgSc.z ); W3_BG( bgI.w, wb.w, bgSc.w );
 		const vec3 n = nf;

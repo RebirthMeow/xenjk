@@ -348,6 +348,7 @@ static cvar_t *r_sceneInvocations;
 static cvar_t *r_sceneSkip;
 static cvar_t *r_sceneVrs;
 static cvar_t *r_sceneTerrainFlat;
+static cvar_t *r_sceneTerrainFar;
 cvar_t *r_sceneAsync;
 static void Scene_InvocationsFrame( VkCommandBuffer cb, int f );
 static VkQueryPool	invPool[NUM_COMMAND_BUFFERS];		// r_sceneInvocations (Scene_InvocationsFrame)
@@ -9199,7 +9200,7 @@ static void Scene_DrawView( int pass, const int v )
 	// r_sceneVrs (metres: terrain, leaves, the rest; 0 never): scene.vert's VRS module reads the distances, in units, from
 	// the GPU-driven draws' tint (their materials' own come from the materials buffer)
 	if ( sc.gdFrame )
-		push.tint[3] = r_sceneTerrainFlat->integer ? -1.0f : 0.0f;	// (bench: scene.frag's terrain in one colour)
+		push.tint[3] = r_sceneTerrainFlat->integer ? -1.0f : ( r_sceneTerrainFar->value > 0.0f ? r_sceneTerrainFar->value * 37.5f : 0.0f );	// (bench: scene.frag's terrain in one colour; else the far terrain's distance, units)
 	if ( vk.shadingRate && sc.gdFrame ) {
 		float d[3] = { 0.0f, 0.0f, 0.0f };
 		sscanf( r_sceneVrs->string, "%f %f %f", &d[0], &d[1], &d[2] );
@@ -10033,6 +10034,7 @@ void R_SceneRegister( void )
 	r_sceneDebug		= ri.Cvar_Get( "r_sceneDebug",			"0",					CVAR_TEMP | CVAR_CHEAT, "Render scene: 1 albedo, 2 normals, 3 lights per cell, 4 sun shadow; lighting shares 5 ambient, 6 the source's lights, 7 sun; 8 material index (4 bits per channel); 9 wet (red) and puddles (yellow); 10 reflections; 11 window rooms (dim: unlit), 12 window instances; 17 roughness dry (red) and wet (green), porosity (blue); 13 and 14 the world position modulo 256 and 65536 game units, 8 exact bits a channel; 15 the instance index, 16 the material index, 24 exact bits; 18 the albedo UV (fraction; blue outside [0, 1]), 19 the albedo texel as sampled, 20 the albedo's GPU-driven image index (24 bits; sceneimage names it)" );
 	r_sceneVrs			= ri.Cvar_Get( "r_sceneVrs",			"0 0 0",				CVAR_ARCHIVE_ND, "Render scene: coarse shading of far surfaces, the distances in metres past which they shade once per 2 x 2 pixels: terrain, SpeedTree leaves, every other surface (0: never). The output stays at full resolution: edges and depth per pixel, only the colour within a block shared. Needs VK_KHR_fragment_shading_rate's primitive rates and the GPU-driven draws" );
 	r_sceneTerrainFlat	= ri.Cvar_Get( "r_sceneTerrainFlat",	"0",					CVAR_TEMP | CVAR_CHEAT, "Render scene (bench): 1 draws Witcher 3 terrain in one colour, no texture reads (its geometry unchanged), to time its shading" );
+	r_sceneTerrainFar	= ri.Cvar_Get( "r_sceneTerrainFar",	"0",					CVAR_ARCHIVE_ND, "Render scene: metres past which Witcher 3 terrain shades without its normal maps, in its facing's main projection only (faded in over the next quarter); 0 never" );
 	r_sceneSkip			= ri.Cvar_Get( "r_sceneSkip",			"0",					CVAR_TEMP | CVAR_CHEAT, "Render scene (bench): classes of materials not drawn in any view, a sum of 1 terrain (flag 0x1000), 2 SpeedTree leaves (0x800), 4 other cutouts, 8 other opaque, 16 the rest (blends, glass, water, emissives, decals); for timing what each costs" );
 	ri.Cmd_AddCommand( "sceneinfo", R_SceneInfo_f, "Print the loaded render scene's counts" );
 	ri.Cmd_AddCommand( "sceneimage", R_SceneImage_f, "Print a scene image by its GPU-driven index (r_sceneDebug 20), or a material's images (m <material>)" );
