@@ -77,6 +77,14 @@ def main():
     ap.add_argument('--shadow-far', type=float, default=0.0,
                     help="r_sceneShadowFar: the far sun cascade's reach (units; 0: r_shadowCascadeZFar's 4096, ~110 m). "
                          "A city seen from the air needs more: its shadows ended in a line that moved with the eye")
+    ap.add_argument('--hours', type=float, default=0.0,
+                    help="the day/night cycle: keyframes every this many hours round the clock (0: none, the one "
+                         "--hour). Each is the game's curves at that hour, scaled by the calibration at --hour")
+    ap.add_argument('--lamp-elevation', type=float, default=4.0,
+                    help="the cycle's city lamps are lit while the drawn sun stands lower than this (degrees)")
+    ap.add_argument('--side-elevation', type=float, default=12.0,
+                    help="the cycle's sun-side horizon colour (sunColorHorizon) shows as the drawn sun falls under this")
+    ap.add_argument('--lamp-fade', type=float, default=0.5, help="hours a city lamp takes to light or go out")
     a = ap.parse_args(argv)
 
     mat = importlib.import_module(PKG + '.repo_paths.materialize')
@@ -91,11 +99,14 @@ def main():
         mat.materialize_repo_path(world.environment_definition, source_game='w3'))
     t = a.hour * 3600.0 / 86400.0
 
-    def curve(name, default):
+    def curve_at(name, default, hour):
         c = definition.curves.get(name)
         if c is None or env.curve_is_placeholder(c):
             return list(default)
-        return [float(x) for x in c.evaluate(t)]
+        return [float(x) for x in c.evaluate((hour % 24.0) * 3600.0 / 86400.0)]
+
+    def curve(name, default):
+        return curve_at(name, default, a.hour)
 
     light = [float(x) for x in world.trajectory.light_direction(a.hour * 3600.0)]
     sun_vis = [float(x) for x in world.trajectory.sun_direction(a.hour * 3600.0)]
@@ -112,6 +123,7 @@ def main():
 
     sc = hue(sun_col)
     ambient = [c * a.ambient for c in hue(amb)]
+    sky_given = a.sky is not None
     if a.sky is None:
         a.sky = a.sun * curve('m_sky.globalSkyBrightness', (0, 0, 0, 7.6))[3] / max(sun_col[3], 1e-3)
     zen = [srgb_to_linear(c / 255.0) * a.sky for c in sky_top[:3]]
@@ -149,6 +161,8 @@ def main():
              'r_sceneAO %.2f' % a.ao, 'r_sceneAORadius %.2f' % a.ao_radius] + (
                  ['r_sceneShadowFar %.0f' % a.shadow_far] if a.shadow_far > 0 else []) + (
                  ['r_sceneFoliage %.2f' % a.foliage] if a.foliage > 0 else [])
+    if a.hours > 0:
+        lines += cycle_lines(a, world, curve_at, sky_given)
     os.makedirs(os.path.join(a.out, 'maps'), exist_ok=True)
     xenv = os.path.join(a.out, 'maps', a.map + '.xenv')
     with open(xenv, 'w', encoding='ascii', newline='\n') as f:
@@ -156,6 +170,9 @@ def main():
     pk3 = os.path.join(a.out, 'zz_%s_env.pk3' % a.map)
     with pk3write.writing(pk3) as z:
         z.write(xenv, 'maps/%s.xenv' % a.map)
+        xlt = os.path.join(a.out, 'maps', a.map + '.xlt')
+        if os.path.isfile(xlt):     # (w3lighttime.py's: the city lamps the cycle lights at night)
+            z.write(xlt, 'maps/%s.xlt' % a.map)
     rec = {'world': world.source_path, 'definition': world.environment_definition, 'hour': a.hour,
            'light_direction': light, 'sun_direction_drawn': sun_vis, 'yaw': yaw, 'elevation': elev,
            'sunColor': sun_col, 'colorAmbient': amb, 'skyColor': sky_top, 'skyColorHorizon': sky_hor,
@@ -165,6 +182,108 @@ def main():
         json.dump(rec, f, indent=1)
     print('W3ENV', pk3)
     print('\n'.join(lines))
+
+
+def cycle_lines(a, world, curve_at, sky_given):
+    """The day/night cycle's lines (vk_scene.cpp Scene_LoadEnv: `cycle`, `lamps`, then `hour` blocks of the values
+    the clock blends): the game's curves every --hours round the clock, each value scaled by its ratio to --hour's,
+    so --hour's keyframe is the calibrated environment above.
+    - the sun: the trajectory's light (the moon's by night: the game swaps them in its light direction), its colour's
+      hue; strength r_sceneSun x the colour's brightest channel over --hour's (moonlight ~0.26 of noon's sun)
+    - ambient: x m_globalLight.envProbeAmbientScaleShadow over --hour's (the probes' light in shade: 0.12 at
+      midnight, 3.5 at 14:00)
+    - the sky: its colours at the hour x the sky's scale with m_sky.globalSkyBrightness at the hour
+    - the haze: its colour and density at the hour; the lights: r_sceneLightScale (0.03) x m_colorGroups.lightsDefault
+      over --hour's
+    - lamps: the city lamps (maps/<map>.xlt) lit while the drawn sun stands under --lamp-elevation, over --lamp-fade"""
+    def sun_at(h):
+        c = curve_at('m_globalLight.sunColor', (255, 255, 255, 1), h)
+        return c, max(max(c[:3]), 0.0)
+    def scalar(name, default, h):
+        return curve_at(name, (0, 0, 0, default), h)[3]
+    _c, sun0 = sun_at(a.hour)
+    amb0 = scalar('m_globalLight.envProbeAmbientScaleShadow', 1.0, a.hour)
+    gsb0 = scalar('m_sky.globalSkyBrightness', 7.6, a.hour)
+    lights0 = scalar('m_colorGroups.lightsDefault', 1.0, a.hour)
+    sunscale0 = curve_at('m_globalLight.sunColor', (255, 255, 255, 1), a.hour)[3]
+    # the lamps: where the drawn sun crosses the elevation, evening and morning
+    def drawn_elev(h):
+        v = [float(x) for x in world.trajectory.sun_direction(h * 3600.0)]
+        return math.degrees(math.asin(max(-1.0, min(1.0, v[2] / (math.sqrt(sum(x * x for x in v)) or 1.0)))))
+    on = off = None
+    steps = 24 * 60
+    for i in range(steps):
+        h0, h1 = 24.0 * i / steps, 24.0 * (i + 1) / steps
+        e0, e1 = drawn_elev(h0), drawn_elev(h1)
+        if e0 >= a.lamp_elevation > e1:
+            on = h1
+        if e0 < a.lamp_elevation <= e1:
+            off = h1
+    out = ['', '# the day/night cycle (w3env.py --hours %g): r_sceneCycle runs the clock' % a.hours,
+           'cycle %.2f' % a.hour]
+    if on is not None and off is not None:
+        out.append('lamps %.2f %.2f %.2f' % (on, off, a.lamp_fade))
+    gsb_b = scalar('m_sky.globalSkyBrightness', 7.6, a.hour)
+    sky_b = a.sky * gsb_b / max(gsb0, 1e-4) if sky_given else a.sun * gsb_b / max(sunscale0, 1e-3)
+    hor_b = [srgb_to_linear(max(x, 0.0) / 255.0) * sky_b
+             for x in curve_at('m_sky.skyColorHorizon', (230, 186, 158, 1), a.hour)[:3]]
+    sky_lum0 = 0.2126 * hor_b[0] + 0.7152 * hor_b[1] + 0.0722 * hor_b[2]
+    n = max(1, int(round(24.0 / a.hours)))
+    for i in range(n):
+        h = 24.0 * i / n
+        c, s = sun_at(h)
+        sc = hue(c) if s > 1e-3 else [1.0, 1.0, 1.0]
+        light = [float(x) for x in world.trajectory.light_direction(h * 3600.0)]
+        yaw = math.degrees(math.atan2(light[1], light[0])) % 360.0
+        elev = math.degrees(math.asin(max(-1.0, min(1.0, light[2] / (math.sqrt(sum(x * x for x in light)) or 1.0)))))
+        amb = curve_at('m_globalLight.envProbeBaseLightingAmbient.colorAmbient', (255, 255, 255, 1), h)
+        ambient = [x * a.ambient * scalar('m_globalLight.envProbeAmbientScaleShadow', 1.0, h) / max(amb0, 1e-4)
+                   for x in hue(amb)]
+        gsb = scalar('m_sky.globalSkyBrightness', 7.6, h)
+        sky = a.sky * gsb / max(gsb0, 1e-4) if sky_given else a.sun * gsb / max(sunscale0, 1e-3)
+        zen = [srgb_to_linear(max(x, 0.0) / 255.0) * sky for x in curve_at('m_sky.skyColor', (108, 158, 230, 1), h)[:3]]
+        hor = [srgb_to_linear(max(x, 0.0) / 255.0) * sky
+               for x in curve_at('m_sky.skyColorHorizon', (230, 186, 158, 1), h)[:3]]
+        ff = [max(0.0, min(255.0, x)) for x in curve_at('m_globalFog.fogColorFront', (180, 185, 190, 1), h)]
+        fm = [max(0.0, min(255.0, x)) for x in curve_at('m_globalFog.fogColorMiddle', (180, 185, 190, 1), h)]
+        dens = scalar('m_globalFog.fogDensity', 0.0006, h) * a.fog
+        ls = 0.03 * scalar('m_colorGroups.lightsDefault', 1.0, h) / max(lights0, 1e-4)
+        # the horizon toward a low sun: sunColorHorizon, its share sunInfluence as the drawn sun falls under
+        # --side-elevation; the glow round the light by night: moonColorSky x moonColorSkyBrightness x moonInfluence
+        # over moonAreaSkySize (the light is the moon's then)
+        side_w = scalar('m_sky.sunInfluence', 0.0, h) * max(0.0, min(1.0, (a.side_elevation - drawn_elev(h)) /
+                                                                  max(a.side_elevation, 1e-3)))
+        side = [srgb_to_linear(max(x, 0.0) / 255.0) * sky
+                for x in curve_at('m_sky.sunColorHorizon', (0, 0, 0, 1), h)[:3]]
+        moon_k = max(0.0, scalar('m_sky.moonColorSkyBrightness', 0.0, h)) * max(0.0, scalar('m_sky.moonInfluence', 0.0, h))
+        moon_k = moon_k if moon_k >= 0.01 else 0.0     # (by day ~0.002: none, so --hour's sky is the calibrated one)
+        glow = [srgb_to_linear(max(x, 0.0) / 255.0) * sky * moon_k
+                for x in curve_at('m_sky.moonColorSky', (0, 0, 0, 1), h)[:3]]
+        glow_pow = scalar('m_sky.moonAreaSkySize', 10.0, h)
+        # the clouds' light (the renderer's stand-in, lit by the scene's sun): kept in the sky's proportion, the sky's
+        # brightest horizon over the sun's, relative to --hour's (else white clouds on a black night sky)
+        lum = lambda c: 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]  # noqa: E731
+        sky_lum = max(lum(hor), side_w * lum(side))
+        k = (sky_lum / max(sky_lum0, 1e-6)) / max(s / max(sun0, 1e-3), 0.25)   # (0.25: the moon's; twilight's ~0)
+        # eye adaptation's reach by night (the game's: luminanceLimitMin 0): the window's top raised with the shade's
+        # fall from --hour's, up to +1.5 EV
+        ev_up = 1.0 + min(1.5, max(0.0, math.log2(max(amb0, 1e-4) / max(scalar('m_globalLight.envProbeAmbientScaleShadow',
+                                                                                1.0, h), 1e-4)) / 3.0))
+        cloud_light = 1.5 * max(0.05, min(1.0, k))
+        out += ['hour %.2f' % h,
+                'sun %.3f %.3f %.3f 100 %.2f %.2f' % (sc[0], sc[1], sc[2], yaw, elev),
+                'r_sceneSun %.4f' % (a.sun * s / max(sun0, 1e-3)),
+                'r_sceneAmbient %.5f %.5f %.5f' % tuple(ambient),
+                'r_sceneSkyZenith %.5f %.5f %.5f' % tuple(zen),
+                'r_sceneSkyHorizon %.5f %.5f %.5f' % tuple(hor),
+                'r_sceneFog %d %d %d' % tuple(round((f + m) / 2) for f, m in zip(ff[:3], fm[:3])),
+                'r_sceneFogDensity %.6f' % dens,
+                'r_sceneLightScale %.5f' % ls,
+                'r_sceneCloudLight %.4f' % cloud_light,
+                'r_sceneExposureWindow -1.2 %.3f' % ev_up,
+                'r_sceneSkySunSide %.5f %.5f %.5f %.4f' % (side[0], side[1], side[2], side_w),
+                'r_sceneSkyGlow %.6f %.6f %.6f %.2f' % (glow[0], glow[1], glow[2], glow_pow)]
+    return out
 
 
 if __name__ == '__main__':
