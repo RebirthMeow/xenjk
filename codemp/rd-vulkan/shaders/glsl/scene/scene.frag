@@ -1827,6 +1827,14 @@ void main()
 		N = normalize( mix( dot( card, Nc ) < 0.0 ? -card : card, Nc, fr.foliage.x ) );
 		leafAO = mix( 1.0, smoothstep( 0.1, 0.9, r ), fr.foliage.w );
 	}
+	// a billboard card (scene.vert: vCanopy.z 1 + its height share): its canopy darker toward its foot as the 3D tree's
+	// inner and lower leaves are (r_sceneFoliageAO), in its ambient light here and its sun below; a card was lit evenly
+	// top to bottom, the far woods flat
+	float cardShade = 1.0;
+	if ( bbCard && vCanopy.z > 0.5 ) {
+		cardShade = mix( 1.0, smoothstep( 0.0, 0.85, vCanopy.z - 1.0 ), fr.foliage.w );
+		leafAO = cardShade;
+	}
 
 	// wet ground (rain), up-facing surfaces by porosity (r_sceneWetPorosity: CP2077's RainAreaSettings; Lagarde, "Water
 	// drop 3", 2013): a surface's porosity from its dry roughness (none on metal); the water a porous surface soaks up
@@ -1929,7 +1937,7 @@ void main()
 		if ( NdotL > 0.0 && ( bbCard || dot( Ng, l ) > -0.1 ) ) {
 			sun = sunShadow( vPos, bbCard && dot( Ng, l ) < 0.0 ? -Ng : Ng );
 			if ( sun > 0.0 )
-				sunPart = brdf( N, V, l, NdotL, NdotV, F0, diffuseColor, rough, 0.0 ) * fr.sunCol.rgb * ( NdotL * sun * bbFix.w );
+				sunPart = brdf( N, V, l, NdotL, NdotV, F0, diffuseColor, rough, 0.0 ) * fr.sunCol.rgb * ( NdotL * sun * bbFix.w * cardShade );
 			col += sunPart;	// (outside the test: sunPart stays 0 when sun is 0)
 		}
 	}

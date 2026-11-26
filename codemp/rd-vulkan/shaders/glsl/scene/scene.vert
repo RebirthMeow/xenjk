@@ -364,6 +364,10 @@ void main()
 	const uint code = pc.info.w;
 #endif
 	vCanopy = vec3( 0.0 );
+#ifdef GPU_DRIVEN
+	if ( detailKind == -9.0 )	// a billboard card: z 1 + its height share (0 its foot, 1 its top; the card's t runs down)
+		vCanopy = vec3( 0.0, 0.0, 2.0 - clamp( inUV.y, 0.0, 1.0 ) );
+#endif
 	if ( code == 32u ) {
 		const vec4 s = meshes[I.info.x].sphere;
 		const vec4 c = vec4( s.xyz, 1.0 );
