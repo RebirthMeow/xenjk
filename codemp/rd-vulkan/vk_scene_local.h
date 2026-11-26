@@ -319,6 +319,7 @@ typedef struct {
 	float		skySide[4];		// r_sceneSkySunSide: the horizon's colour toward a low sun, w its share
 	float		skyGlow[4];		// r_sceneSkyGlow: the glow round the light (the moon by night), w its falloff
 	float		treeTint[4];	// r_sceneTreeTint: SpeedTree leaves' albedo times rgb (linear), w their saturation (1 as stored)
+	float		w3fog[8][4];	// r_sceneW3Fog..AerialBack: The Witcher 3's fog and aerial perspective (scene.frag w3Haze; [0][0] 0 off)
 } sceneFrame_t;
 
 // a traffic signal's cycle (maps/<map>.signals, cp2gltf SceneSignals): its group's program from its intersection's

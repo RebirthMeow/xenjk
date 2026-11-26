@@ -94,6 +94,21 @@ bool facesUp( const vec2 uv, const float d )
 	return abs( n.z ) > 0.7 && dot( n * sign( n.z ), normalize( p.eye.xyz - P ) ) > 0.0;
 }
 
+// a missed ray's sky: the history where its direction meets the frame (a point at infinity: the sky does not move with
+// the ray's start), if the frame shows open sky there (depth 0): the sky and its clouds as drawn, mirrored. 0: none
+vec4 skyAlong( const vec3 R )
+{
+	const vec4 c = p.viewProj * vec4( R, 0.0 );
+	if ( c.w <= 1e-4 )
+		return vec4( 0.0 );
+	const vec2 uv = c.xy / c.w * 0.5 + 0.5;
+	if ( any( lessThan( uv, vec2( 0.0 ) ) ) || any( greaterThan( uv, vec2( 1.0 ) ) ) )
+		return vec4( 0.0 );
+	if ( textureLod( historyDepthTex, uv, 0.0 )[kDepthChannel] != 0.0 )
+		return vec4( 0.0 );
+	return vec4( fromDisplay( textureLod( historyTex, uv, 0.0 ).rgb ), 1.0 );
+}
+
 // the reflected ray through the history: linear light and its weight (0 missed); a miss takes `sky` of the haze
 // (0.5 out of the top of the view, else 0.25: the city's sky is mostly buildings). Under a deck, the ray's hit on the
 // deck's visible top is the deck's dark underside instead: no light, full weight.
@@ -318,8 +333,12 @@ void main()
 		const vec3 R = normalize( reflect( -V, Ng ) + spread );
 		if ( R.z > 0.0 ) {
 			float sky;
-			const vec4 hit = trace( P + Ng * 2.0, R, jit.x, rough * rough * 4.0, sky );
-			cur += hit.rgb * hit.a + p.sky.rgb * ( sky * ( 1.0 - hit.a ) );
+			vec4 hit = trace( P + Ng * 2.0, R, jit.x, rough * rough * 4.0, sky );
+			if ( hit.a < 1.0 ) {
+				const vec4 open = skyAlong( R );	// (the miss's share: the sky the frame shows that way)
+				hit = vec4( hit.rgb * hit.a + open.rgb * ( 1.0 - hit.a ), hit.a + open.a * ( 1.0 - hit.a ) );
+			}
+			cur += hit.rgb + p.sky.rgb * ( sky * ( 1.0 - hit.a ) );
 		}
 	}
 	cur /= float( rays );

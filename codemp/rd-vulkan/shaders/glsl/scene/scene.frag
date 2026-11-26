@@ -106,13 +106,27 @@ layout(std140, set = 0, binding = 5) uniform Frame {
 	vec4 wet2;			// r_sceneWetPorosity: x, y the roughness where porosity starts and ends (y <= x: off, every wet surface
 						// one film), z a soaked porous surface's albedo scale, w the roughness past which nothing is mirrored
 	vec4 waterWaves;	// x: 1 when waveTex holds this frame's waves (r_sceneWaterWaves), yzw: the cascades' patches (m)
-	vec4 waterWaves2;	// x: each cascade's slope variance, y: its texels across
+	vec4 waterWaves2;	// x: each cascade's slope variance, y: its texels across, z: The Witcher 3's water reflectance on
+						// (r_sceneWaterFresnel; > 0: the water's own light x z, r_sceneWaterOwn), w: its curve's power (the env's
+						// waterFresnel + 0.5, 0.01..6)
 	vec4 skyGround;		// r_sceneSkyGround: rgb the distant land under the horizon (0: none), w r_sceneSkyCurve
 	vec4 cards;			// x: 1 when a SpeedTree card blends its two stored views (r_sceneCardBlend), 0 dithers them
 	vec4 skySide;		// r_sceneSkySunSide: rgb the horizon's colour on the sun's side (linear), w its share (0 none)
 	vec4 skyGlow;		// r_sceneSkyGlow: rgb the glow round the scene's light (the moon by night; linear), w its
 						// falloff (the power of the angle's cosine; 0 none)
 	vec4 treeTint;		// r_sceneTreeTint: SpeedTree leaves' (info.w 32) albedo times rgb (linear), w their saturation
+	// r_sceneW3Fog..: The Witcher 3's fog (w3Haze; w3fog.x 0 off): x density per metre, y fogFinalExp, z aerialFinalExp,
+	// w fogDistClamp (m); ramp: appear distance, its range (m), the vertical density on the sun's side and the back;
+	// the fog colours (linear) w: fogVertOffset (m), the rim range, fogSkyDensityScale; the aerial colours w: the
+	// sky's horizonVerticalAttenuation, its vertical density's front and back scales
+	vec4 w3fog;
+	vec4 w3fogRamp;
+	vec4 w3fogFront;
+	vec4 w3fogMid;
+	vec4 w3fogBack;
+	vec4 w3aerFront;
+	vec4 w3aerMid;
+	vec4 w3aerBack;
 } fr;
 layout(set = 0, binding = 26) uniform sampler2DArray waveTex;	// the water's waves (scene_water.comp): x, y the slopes
 // scene_occ.comp's far-depth pyramids (linear view depth): the water's bed (fr.waterBed)
@@ -584,6 +598,53 @@ vec3 hazeLight( const vec3 P )
 	return L * clamp( s, 0.0, 1.0 );
 }
 
+// The Witcher 3's global fog (static shader 00356, shadercache/FOG_SKY.md): the fog's share along D metres of the view
+// ray u from C (metres), sixteen steps of a density that falls off as 1 / (1 + k h) with the height h over the env's
+// offset (k: by the side toward the sun, rim-remapped)
+float w3FogShare( const vec3 C, const vec3 u, const float D, const float dens, const float mu, const vec2 k )
+{
+	const float r = fr.w3fogMid.w;
+	const float kk = mix( k.y, k.x, clamp( ( mu + r ) / ( 1.0 + r ), 0.0, 1.0 ) );
+	const float s = D / 16.0, h0 = C.z + fr.w3fogFront.w;
+	float T = 1.0;
+	for ( int i = 1; i <= 16; i++ )
+		T *= 1.0 - clamp( s * dens / ( 1.0 + max( 0.0, kk * ( h0 + float( i ) * s * u.z ) ) ), 0.0, 1.0 );
+	return 1.0 - T;
+}
+
+// its colours: front toward the light, back away from it, the middle at right angles (by mu^2, from 150 m to 650 m)
+vec3 w3FogPick( const vec3 front, const vec3 mid, const vec3 back, const float mu, const float D )
+{
+	return mix( mid, mu > 0.0 ? front : back, mu * mu * clamp( 0.002 * D - 0.3, 0.0, 1.0 ) );
+}
+
+// a surface at P seen through it: the aerial perspective takes its colour toward its luminance x the aerial colour,
+// then the fog's colour goes over that
+vec3 w3Haze( vec3 c, const vec3 P )
+{
+	const vec3 v = ( P - pc.eye.xyz ) / UNITS_PER_METRE;
+	const float d = length( v );
+	const vec3 u = v / max( d, 1e-4 );
+	const float D = min( fr.w3fog.w, d );
+	const float mu = dot( normalize( fr.sunDir.xyz ), u );
+	const float f = w3FogShare( pc.eye.xyz / UNITS_PER_METRE, u, D, fr.w3fog.x, mu, fr.w3fogRamp.zw );
+	const float appear = clamp( ( D - fr.w3fogRamp.x ) / max( fr.w3fogRamp.y, 1e-3 ), 0.0, 1.0 );
+	const float fogA = pow( f, fr.w3fog.y ) * appear, aerA = pow( f, fr.w3fog.z ) * appear;
+	const vec3 aer = w3FogPick( fr.w3aerFront.rgb, fr.w3aerMid.rgb, fr.w3aerBack.rgb, mu, D );
+	if ( fr.w3fog.z > 0.0 )	// (aerialFinalExp 0: none)
+		c = mix( c, dot( c, vec3( 0.333, 0.555, 0.222 ) ) * aer, aerA );
+	return mix( c, w3FogPick( fr.w3fogFront.rgb, fr.w3fogMid.rgb, fr.w3fogBack.rgb, mu, D ), fogA );
+}
+
+// the sky through it (bob_skydome): the whole clamp's path at the sky's density, no aerial
+vec3 w3SkyFog( const vec3 c, const vec3 u )
+{
+	const float D = fr.w3fog.w, mu = dot( normalize( fr.sunDir.xyz ), u );
+	const float f = w3FogShare( pc.eye.xyz / UNITS_PER_METRE, u, D, fr.w3fog.x * fr.w3fogBack.w, mu,
+								fr.w3fogRamp.zw * vec2( fr.w3aerMid.w, fr.w3aerBack.w ) );
+	return mix( c, w3FogPick( fr.w3fogFront.rgb, fr.w3fogMid.rgb, fr.w3fogBack.rgb, mu, D ), pow( f, fr.w3fog.y ) );
+}
+
 // toDisplay's inverse (back to linear light, before exposure)
 vec3 fromDisplay( const vec3 y )
 {
@@ -596,6 +657,8 @@ vec3 fromDisplay( const vec3 y )
 // and the light the haze scatters toward the eye on top
 vec3 throughHaze( const vec3 c, const float f, const float veil )
 {
+	if ( fr.w3fog.x > 0.0 )
+		return w3Haze( c, vPos ) + hazeLight( vPos );
 	return c * ( 1.0 - f ) + fromDisplay( fr.fog.rgb ) * veil + hazeLight( vPos );
 }
 
@@ -637,6 +700,10 @@ vec3 moonSky( const vec3 d )
 vec3 skyRadiance( const vec3 d, const vec3 moon )
 {
 	vec3 c = mix( fr.skyZenith.rgb, fr.skyHorizon.rgb, pow( 1.0 - clamp( d.z, 0.0, 1.0 ), fr.skyGround.w ) );
+	if ( fr.w3fog.x > 0.0 && fr.w3aerFront.w > 0.0 ) {	// The Witcher 3's zenith ramp (bob_skydome), by the eye's height
+		const float z = 0.001 * fr.w3aerFront.w * ( pc.eye.z / UNITS_PER_METRE + 710.0 + 1000.0 * d.z ) + 0.1;
+		c = mix( fr.skyHorizon.rgb, fr.skyZenith.rgb, 1.0 - pow( clamp( 1.0 / max( z, 1e-3 ), 0.0, 1.0 ), 2.8 ) );
+	}
 	if ( fr.skySide.w > 0.0 ) {	// the horizon toward a low sun (The Witcher 3's sunColorHorizon): by the bearing, low down
 		const vec2 sh = fr.sunDir.xy / max( length( fr.sunDir.xy ), 1e-4 ), dh = d.xy / max( length( d.xy ), 1e-4 );
 		const float side = pow( clamp( 0.5 + 0.5 * dot( sh, dh ), 0.0, 1.0 ), 3.0 ) * pow( 1.0 - clamp( d.z, 0.0, 1.0 ), 2.0 * fr.skyGround.w );
@@ -658,7 +725,9 @@ vec3 skyRadiance( const vec3 d, const vec3 moon )
 	c += moon;
 	const vec4 cloud = skyClouds( d, fr.skyHorizon.rgb );	// (r_sceneClouds; none: 0)
 	c = mix( c, cloud.rgb, cloud.a );
-	if ( fr.fog.w > 0.0 )
+	if ( fr.w3fog.x > 0.0 )
+		c = w3SkyFog( c, d );
+	else if ( fr.fog.w > 0.0 )
 		c = mix( c, fromDisplay( fr.fog.rgb ), pow( 1.0 - abs( d.z ), 12.0 ) );
 	const float mu = dot( d, normalize( fr.sunDir.xyz ) );
 	const float m = max( mu, 0.0 );
@@ -1887,7 +1956,7 @@ void main()
 			foam = texture( DETAIL_TEX, uv ).r * gTint.a * ( 1.0 - smoothstep( 0.0, md.w, waterPath ) ) * smoothstep( 0.0, gEmissive.y * 0.5, waterPath );
 		}
 		// the water's own light: its colour, as much of it as hides the bed, lit as a diffuse surface; foam over it
-		albedo = mix( albedo * ( 1.0 - waterSeen ), vec3( 0.8 ), foam );
+		albedo = mix( albedo * ( 1.0 - waterSeen ) * ( fr.waterWaves2.z > 0.0 ? fr.waterWaves2.z : 1.0 ), vec3( 0.8 ), foam );
 	} else if ( w3World ) {	// the terrain's world-space normal (above)
 		N = normalize( w3Nw * side );
 	} else if ( w3 || ( gInfo.y & 2u ) != 0u || detailSlope != vec2( 0.0 ) ) {
@@ -2004,8 +2073,16 @@ void main()
 	}
 	if ( water ) {	// the screen's reflection where it holds this surface, nudged by the ripples, else the sky's
 		const vec4 r = fr.ssr.x > 0.5 && pc.eye.w > 0.5 ? reflectedLightAt( vPos + vec3( ( N.xy - Ng.xy ) * fr.water2.z, 0.0 ) ) : vec4( 0.0 );
-		const vec2 ab = envBRDF( rough, NdotV );
-		reflection = ( r.rgb * r.a + waterSky( reflect( -V, N ) ) * ( 1.0 - r.a ) ) * ( F0 * ab.x + ab.y ) * ( fr.water2.y * ( 1.0 - foam ) );
+		if ( fr.waterWaves2.z > 0.0 ) {
+			// r_sceneWaterFresnel: The Witcher 3's water (static 00868): ((1 - N.V)^4 / 4 + 0.05) to the env's power,
+			// x 0.4 on calm water to 1 on crests (foam here); where the trace misses, the sky itself (its paraboloid)
+			const vec3 R = reflect( -V, N );
+			const float F = pow( pow( 1.0 - NdotV, 4.0 ) * 0.25 + 0.05, fr.waterWaves2.w ) * ( 0.4 + 0.6 * clamp( 4.0 * sqrt( foam ), 0.0, 1.0 ) );
+			reflection = ( r.rgb * r.a + skyRadiance( normalize( vec3( R.xy, max( R.z, 0.02 ) ) ), vec3( 0.0 ) ) * ( 1.0 - r.a ) ) * ( F * fr.water2.y * ( 1.0 - foam ) );
+		} else {
+			const vec2 ab = envBRDF( rough, NdotV );
+			reflection = ( r.rgb * r.a + waterSky( reflect( -V, N ) ) * ( 1.0 - r.a ) ) * ( F0 * ab.x + ab.y ) * ( fr.water2.y * ( 1.0 - foam ) );
+		}
 	}
 	col += reflection;
 	vec3 sunPart = vec3( 0.0 );
@@ -2250,7 +2327,8 @@ void main()
 	if ( water ) {
 		// over the bed (blended as the blends are): what the water reflects, its own light and the foam, the bed through
 		// the rest; fading in from the shore
-		const float F = WATER_F0 + ( 1.0 - WATER_F0 ) * pow( 1.0 - NdotV, 5.0 );
+		// (r_sceneWaterFresnel: the game adds its reflection over the refraction, which it never dims by the Fresnel)
+		const float F = fr.waterWaves2.z > 0.0 ? 0.0 : WATER_F0 + ( 1.0 - WATER_F0 ) * pow( 1.0 - NdotV, 5.0 );
 		const float a = clamp( max( 1.0 - waterSeen * ( 1.0 - F ), foam ) * smoothstep( 0.0, max( gEmissive.y, 0.01 ), waterPath ), 0.0, 1.0 );
 		if ( a < 1.0 / 255.0 )
 			discard;	// (it writes depth: nothing, not even depth, where the shore fade leaves it transparent)

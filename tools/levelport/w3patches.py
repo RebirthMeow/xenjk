@@ -83,6 +83,14 @@ def apply():
         return orig_err(overrides)
 
     ibf._entity_instance_override_shape_error = shape_err
+
+    # 3) $W3_OVERRIDE: depot folders (';'-separated) whose files win over the uncook, read only -- a mod's files
+    #    unpacked from its bundles (e.g. Filterless Toussaint's sunny_bob_v7.env), nothing in the uncook changed
+    roots = [r for r in os.environ.get('W3_OVERRIDE', '').split(';') if r.strip()]
+    if roots:
+        cb = importlib.import_module(PKG + ".CR2W.common_blender")
+        cb.set_repo_override_roots(roots, read_only=True)
+        print("W3PATCHES_OVERRIDE", roots)
     print("W3PATCHES_APPLIED")
 
 
