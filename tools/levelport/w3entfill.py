@@ -39,7 +39,12 @@ T = M(part) M(template part)^-1, the one that maps the most other parts onto tem
 matrices carry the entity's rotation); the template parts nothing maps onto are placed at T M(template part) with the template part's record (mesh,
 slots, light values). Templates with no whole instance placed are left as imported.
 
-Writes placements.json in place; the previous file is kept as placements.pre-entfill.json (w3work's convention).
+Effects: the export's effect roots (CFXPreview, an effect played at an entity's slot: the braziers' and candles' fire),
+also built for the first instance alone, belong to the entity of the nearest part within --fx-reach and are filled like
+its lights (their witcher_entity_path set, for w3fx.py's night-only fires).
+
+Writes placements.json in place; the import's file is kept as placements.pre-entfill.json (w3work's convention) and a
+rerun starts from it.
 Reads and writes only the work folder; converted levels are for local play only.
 """
 import argparse
@@ -117,7 +122,7 @@ def peel(anchor, pool, proto, tol, light_tol):
         for q2 in proto:
             if q2 is q:
                 continue
-            p, d = nearest(T, q2, pool, used, light_tol if q2['light'] else tol)
+            p, d = nearest(T, q2, pool, used, light_tol if (q2['light'] or q2['fx']) else tol)
             if p is not None:
                 got[id(q2)] = p
                 used.add(id(p))
@@ -128,7 +133,35 @@ def peel(anchor, pool, proto, tol, light_tol):
 
 
 def shape(P):
-    return (sum(1 for p in P if not p['light']), sum(1 for p in P if p['light']))
+    """(meshes, lights): the template file's counts (its effects are not components)"""
+    return (sum(1 for p in P if not p['light'] and not p['fx']), sum(1 for p in P if p['light']))
+
+
+def is_root(r):
+    """An effect's root in the export (CFXPreview: one per effect played on an entity, at its slot)"""
+    p = r.get('props') or {}
+    return p.get('witcher_type') == 'CFXPreview' and bool(p.get('witcher_particle_system'))
+
+
+def attach_fx(pl, parts, reach):
+    """Each effect root to the entity of the nearest placed part (mesh or light) in its layer within reach m: its
+    props.witcher_entity_path set; {entity: [root records]}"""
+    by_layer = collections.defaultdict(list)
+    for e, P in parts.items():
+        for q in P:
+            by_layer[q['layer']].append((q['M'][:3, 3], e))
+    pos = {k: (np.array([x[0] for x in v]), [x[1] for x in v]) for k, v in by_layer.items()}
+    out = collections.defaultdict(list)
+    for r in pl.get('fx') or []:
+        if not is_root(r) or r['layer'] not in pos:
+            continue
+        P, E = pos[r['layer']]
+        d = np.linalg.norm(P - np.array(r['matrix'], dtype=np.float64)[:3, 3], axis=1)
+        i = int(np.argmin(d))
+        if d[i] <= reach:
+            r['props'] = dict(r['props'], witcher_entity_path=E[i])
+            out[E[i]].append(r)
+    return out
 
 
 def keyset(P):
@@ -144,11 +177,15 @@ def main():
     ap.add_argument('--tol', type=float, default=0.02, help='a mesh part maps onto the template part within this (m)')
     ap.add_argument('--light-tol', type=float, default=0.3,
                     help='a light maps onto the template light within this (m): instances place their own')
+    ap.add_argument('--fx-reach', type=float, default=1.0,
+                    help="an effect's root belongs to the entity of the nearest part within this (m)")
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args()
 
     path = os.path.join(a.work, 'placements.json')
-    pl = json.load(open(path, encoding='utf-8'))
+    pre = os.path.join(a.work, 'placements.pre-entfill.json')
+    # (a rerun starts again from the import: the previous fill is replaced, not added to)
+    pl = json.load(open(pre if os.path.exists(pre) else path, encoding='utf-8'))
     tmpl = {k.lower().replace('/', BS): v for k, v in json.load(open(a.templates, encoding='utf-8')).items()}
     parts = collections.defaultdict(list)       # entity -> parts
     for light, recs in ((False, pl['placements']), (True, pl['lights'])):
@@ -156,11 +193,19 @@ def main():
             e = entity_of(r, light)
             if not e or e.endswith('.w2l'):
                 continue
-            parts[e].append({'rec': r, 'light': light, 'key': key_of(r, light),
+            parts[e].append({'rec': r, 'light': light, 'fx': False, 'key': key_of(r, light),
+                             'M': np.array(r['matrix'], dtype=np.float64), 'layer': r.get('layer')})
+    roots = attach_fx(pl, parts, a.fx_reach)
+    for e, R in roots.items():
+        for r in R:
+            q = r['props']
+            parts[e].append({'rec': r, 'light': False, 'fx': True,
+                             'key': ('f', q['witcher_particle_system'].lower(), q.get('witcher_effect_slot')),
                              'M': np.array(r['matrix'], dtype=np.float64), 'layer': r.get('layer')})
 
     stats = collections.Counter()
-    added_m, added_l = [], []
+    stats['fx_roots_attached'] = sum(len(v) for v in roots.values())
+    added_m, added_l, added_f = [], [], []
     per_entity = []
     for e, P in parts.items():
         t = tmpl.get(e.replace('/', BS))
@@ -180,9 +225,11 @@ def main():
         if not whole:
             stats['entity_no_whole_instance'] += 1
             continue
-        top = collections.Counter(keyset(g) for g in whole).most_common(1)[0][0]
-        proto = next(g for g in whole if keyset(g) == top)
-        if not any(not q['light'] for q in proto):
+        # (the first instance in a layer has its effects too: those, if any)
+        lit = [g for g in whole if any(q['fx'] for q in g)] or whole
+        top = collections.Counter(keyset(g) for g in lit).most_common(1)[0][0]
+        proto = next(g for g in lit if keyset(g) == top)
+        if not any(not q['light'] and not q['fx'] for q in proto):
             stats['entity_lights_only'] += 1
             continue
         stats['entities'] += 1
@@ -191,8 +238,12 @@ def main():
         for lay, LP in by_layer.items():
             pool = [p for p in LP if id(p) not in protoset]
             while pool:
-                meshes = [p for p in pool if not p['light']]
-                anchor = meshes[0] if meshes else pool[0]
+                meshes = [p for p in pool if not p['light'] and not p['fx']]
+                lights = [p for p in pool if p['light']]
+                if not meshes and not lights:
+                    stats['fx_left'] += len(pool)
+                    break
+                anchor = meshes[0] if meshes else lights[0]
                 T, got, tight = peel(anchor, pool, proto, a.tol, a.light_tol)
                 if T is None or (anchor['light'] and tight < 1):
                     stats['light_alone' if anchor['light'] else 'parts_not_in_template'] += 1
@@ -210,20 +261,22 @@ def main():
                     r['matrix'] = [[float(v) for v in row] for row in (T @ q['M'])]
                     r['layer'] = lay
                     r['name'] = str(r.get('name', '')) + '#entfill'
-                    (added_l if q['light'] else added_m).append(r)
+                    (added_f if q['fx'] else added_l if q['light'] else added_m).append(r)
                     filled += 1
                 stats['instances_filled'] += 1
         if filled:
             per_entity.append((filled, e.split(BS)[-1], len(P), len(proto)))
     for n, e, npl, npt in sorted(per_entity, reverse=True)[:40]:
         print('W3ENTFILL %5d parts  %-60s placed parts %d, template %d parts' % (n, e, npl, npt))
-    print('W3ENTFILL meshes +%d lights +%d %s' % (len(added_m), len(added_l), dict(stats)))
+    print('W3ENTFILL meshes +%d lights +%d effects +%d %s' % (len(added_m), len(added_l), len(added_f), dict(stats)))
     if a.dry_run:
         return
-    shutil.copyfile(path, os.path.join(a.work, 'placements.pre-entfill.json'))
+    if not os.path.exists(pre):
+        shutil.copyfile(path, pre)
     pl['placements'].extend(added_m)
     pl['lights'].extend(added_l)
-    pl.setdefault('entfill', {})['added'] = {'meshes': len(added_m), 'lights': len(added_l), 'stats': dict(stats)}
+    pl.setdefault('fx', []).extend(added_f)
+    pl['entfill'] = {'added': {'meshes': len(added_m), 'lights': len(added_l), 'fx': len(added_f), 'stats': dict(stats)}}
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(pl, f)
     print('W3ENTFILL wrote', path)

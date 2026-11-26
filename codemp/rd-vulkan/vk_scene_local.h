@@ -829,6 +829,8 @@ qboolean		Scene_FxPlaced( void );	// the map has particle placements (maps/<map>
 // vk_scene_post.cpp
 qboolean		Scene_LoadGrade( const char *scnName );
 float			Scene_ClockHour( void );	// the scene's hour now 0..24 (the cycle's clock, r_sceneClock, or the env's day/night)
+float			Scene_FxEmissive( void );	// r_sceneFxEmissive through the env: the emissive particles' scale
+float			Scene_FxTime( const uint32_t when );	// an effect placement's share now: when 1 night only, 2 day only (the lamps')
 void			Scene_FreeGrade( void );
 void			Scene_MeterDestroy( void );
 float			Scene_Exposure( void );

@@ -1449,7 +1449,9 @@ void main()
 		// (as the fx converter decided per sheet, cp77fx value_mask: gEmissive.y 2 the value, 1 the alpha; 0, a pack made
 		// before the flag: the last mip's alpha)
 		const float m = gEmissive.y;
-		const float mask = m > 1.5 || ( m < 0.5 && textureLod( ALBEDO_TEX, vUV, 16.0 ).a > 0.98 ) ? max( t.r, max( t.g, t.b ) ) : t.a;
+		// (an emissive particle, flag 131072: its shape is in its colour, which it adds; the mask 1)
+		const bool emits = ( uint( vTan.z + 0.5 ) & 131072u ) != 0u;
+		const float mask = emits ? 1.0 : m > 1.5 || ( m < 0.5 && textureLod( ALBEDO_TEX, vUV, 16.0 ).a > 0.98 ) ? max( t.r, max( t.g, t.b ) ) : t.a;
 		float a = mask * vTan.x * fr.fx2.x;
 		if ( vTan.y > 0.0 && fr.fx.z > 0.0 ) {
 			const float z = dot( vPos - pc.eye.xyz, fr.fogFwd.xyz );
@@ -1457,7 +1459,12 @@ void main()
 		}
 		const vec3 amb = 0.5 * ( fr.skyAmbient.rgb + fr.groundAmbient.rgb ) + fromDisplay( fr.fog.rgb ) * fr.fx.y;
 		vec3 col;
-		if ( ( uint( vTan.z + 0.5 ) & 32768u ) != 0u ) {
+		if ( emits ) {
+			// an emissive particle (Witcher 3's fire: fire_glow's flame and glow channels, additive_standard's candle
+			// flames and sparks; the converter bakes the material's colours into the flipbook): its colour times the
+			// light colour (its gain), unlit, at the scene's emissive scale, as the emissive materials
+			col = t.rgb * vLocalNrm * fr.params.z * gEmissive.z;	// (z: r_sceneFxEmissive)
+		} else if ( ( uint( vTan.z + 0.5 ) & 32768u ) != 0u ) {
 			// a normal-mapped water particle (Witcher 3's water_splash_additive: a normal map lit by a cube's reflection):
 			// its normal from the image in the quad's frame (the image's green down), the sky along the reflected view
 			// (Fresnel) times its reflection gain (the light colour), the sun's glint, and a little body (the dark

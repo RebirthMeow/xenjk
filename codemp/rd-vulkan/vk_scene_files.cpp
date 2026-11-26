@@ -501,7 +501,8 @@ void Scene_LoadWater( const char *scnName, std::vector<float> &params )
 /*
 r_sceneFx: maps/<map>.xfx (cp77fx.py), version 1: "XFX\0", version, counts and offsets of its textures (80 B: a 64 B
 path, columns, rows, flags), emitters (512 B: the EMITTER record), systems (16 B: first emitter, count, hide distance)
-and placements (64 B: a 3x4 map's rows, system, emission scale, hide distance, seed). The emitters and placements go
+and placements (64 B: a 3x4 map's rows, system (its top two bits: 1 night only, 2 day only), emission scale, hide
+distance, seed). The emitters and placements go
 into the material records after the rest (scene_fx.vert reads them); the CPU keeps them to cull (Scene_DrawFx)
 */
 typedef struct { char ident[4]; uint32_t version, count[4], ofs[4]; uint32_t pad[2]; } xfxHeader_t;
@@ -649,7 +650,12 @@ void Scene_DrawFx( VkCommandBuffer cb, const int f, const int v, scenePush_t *pu
 		const float *P = &sceneFx.place[(size_t)p * 16u];
 		uint32_t sys;
 		Com_Memcpy( &sys, &P[12], 4 );
+		// (its top two bits: 1 lit at night only, 2 by day only, as the lamps: a brazier's fire burns while its light does)
+		const uint32_t when = sys >> 30;
+		sys &= 0x3fffffffu;
 		if ( sys >= sceneFx.sysFirst.size() || P[13] <= 0.0f )
+			continue;
+		if ( when && Scene_FxTime( when ) < 0.5f )
 			continue;
 		if ( r_sceneFxOnly->integer >= 0 && (int)sys != r_sceneFxOnly->integer )
 			continue;	// (a look check: one system alone)
@@ -711,6 +717,7 @@ void Scene_DrawFx( VkCommandBuffer cb, const int f, const int v, scenePush_t *pu
 	}
 	Com_Memset( fxp.emissive, 0, sizeof( fxp.emissive ) );
 	fxp.emissive[0] = r_sceneFxAccelDrag->integer ? 1.0f : 0.0f;	// (scene_fx.vert: the acceleration under the drag)
+	fxp.emissive[2] = Scene_FxEmissive();	// (scene.frag: the emissive particles' scale)
 	Com_Memset( fxp.tint, 0, sizeof( fxp.tint ) );
 	VectorCopy( E0, fxp.eye );
 	fxp.eye[3] = 1.0f;

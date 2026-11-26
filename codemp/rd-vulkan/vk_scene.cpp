@@ -225,6 +225,7 @@ static cvar_t *r_sceneWindowExposure;
 cvar_t *r_sceneFxAccelDrag;
 cvar_t *r_sceneFxOnly;
 static cvar_t *r_sceneFxAlpha;
+static cvar_t *r_sceneFxEmissive;
 cvar_t *r_sceneExposureWindow;
 cvar_t *r_sceneExposureMeter;
 cvar_t *r_sceneExposureSpeed;
@@ -6703,7 +6704,7 @@ const cvar_t *Scene_Env( const cvar_t *cv )
 // `scene` names) in sceneMap
 static void Scene_LoadEnv( const char *bspName, char *sceneMap, int size )
 {
-	static cvar_t **const look[] = { &r_sceneSun, &r_sceneAmbient, &r_sceneExposure, &r_sceneEmissive, &r_sceneGlow, &r_sceneGlowThreshold, &r_sceneTonemap, &r_sceneFog, &r_sceneFogDensity, &r_sceneFogHeight, &r_sceneFogMax, &r_sceneFogLight, &r_sceneFogPhase, &r_sceneFogAlbedo, &r_sceneFogFar, &r_sceneFogStart, &r_sceneFogMoon, &r_sceneGradeExposure, &r_sceneLightScale, &r_sceneGrade, &r_sceneFogLightMax, &r_sceneDayLamps, &r_sceneSky, &r_sceneSkyZenith, &r_sceneSkyHorizon, &r_sceneSkySun, &r_sceneSkyGround, &r_sceneSkyCurve, &r_sceneCharSun, &r_sceneNightOnlyByDay, &r_sceneDayOnlyAtNight, &r_sceneWet, &r_sceneFoliage, &r_sceneFoliageWrap, &r_sceneFoliageTrans, &r_sceneFoliageAO, &r_sceneTreeTint, &r_sceneAO, &r_sceneAORadius, &r_sceneShadowSoft, &r_sceneShadowFar, &r_sceneClouds, &r_sceneCloudScale, &r_sceneCloudEdge, &r_sceneCloudLight, &r_sceneCloudWind, &r_sceneTreeWind, &r_sceneTreeWindDir, &r_sceneEmissiveExposure, &r_sceneEmissiveRef, &r_sceneMoon, &r_sceneMoonSize, &r_sceneMoonGlow, &r_sceneMoonPath, &r_sceneMoonLight, &r_sceneClock, &r_sceneSkySunSide, &r_sceneSkyGlow, &r_sceneAutoExposure, &r_sceneExposureWindow, &r_sceneWindowExposure,
+	static cvar_t **const look[] = { &r_sceneSun, &r_sceneAmbient, &r_sceneExposure, &r_sceneEmissive, &r_sceneGlow, &r_sceneGlowThreshold, &r_sceneTonemap, &r_sceneFog, &r_sceneFogDensity, &r_sceneFogHeight, &r_sceneFogMax, &r_sceneFogLight, &r_sceneFogPhase, &r_sceneFogAlbedo, &r_sceneFogFar, &r_sceneFogStart, &r_sceneFogMoon, &r_sceneGradeExposure, &r_sceneLightScale, &r_sceneGrade, &r_sceneFogLightMax, &r_sceneDayLamps, &r_sceneSky, &r_sceneSkyZenith, &r_sceneSkyHorizon, &r_sceneSkySun, &r_sceneSkyGround, &r_sceneSkyCurve, &r_sceneCharSun, &r_sceneNightOnlyByDay, &r_sceneDayOnlyAtNight, &r_sceneWet, &r_sceneFoliage, &r_sceneFoliageWrap, &r_sceneFoliageTrans, &r_sceneFoliageAO, &r_sceneTreeTint, &r_sceneAO, &r_sceneAORadius, &r_sceneShadowSoft, &r_sceneShadowFar, &r_sceneClouds, &r_sceneCloudScale, &r_sceneCloudEdge, &r_sceneCloudLight, &r_sceneCloudWind, &r_sceneTreeWind, &r_sceneTreeWindDir, &r_sceneEmissiveExposure, &r_sceneEmissiveRef, &r_sceneFxEmissive, &r_sceneMoon, &r_sceneMoonSize, &r_sceneMoonGlow, &r_sceneMoonPath, &r_sceneMoonLight, &r_sceneClock, &r_sceneSkySunSide, &r_sceneSkyGlow, &r_sceneAutoExposure, &r_sceneExposureWindow, &r_sceneWindowExposure,
 		&r_sceneW3Fog[0], &r_sceneW3Fog[1], &r_sceneW3Fog[2], &r_sceneW3Fog[3], &r_sceneW3Fog[4], &r_sceneW3Fog[5], &r_sceneW3Fog[6], &r_sceneW3Fog[7], &r_sceneW3Clouds, &r_sceneW3CirrusAlong,
 		&r_sceneWaterReflect, &r_sceneWaterFresnel, &r_sceneWaterOwn };
 	char name[MAX_QPATH];
@@ -6972,6 +6973,14 @@ static float Scene_LightTime( const int type )
 }
 
 float Scene_ClockHour( void ) { return Scene_Clock(); }
+
+// an effect placement's share now (Scene_DrawFx): `when` 1 night only (as the night-only lamps), 2 day only, 0 always
+float Scene_FxEmissive( void ) { return MAX( Env( r_sceneFxEmissive )->value, 0.0f ); }
+
+float Scene_FxTime( const uint32_t when )
+{
+	return when == 1u ? Scene_LightTime( 1 << 20 ) : when == 2u ? Scene_LightTime( 1 << 21 ) : 1.0f;
+}
 
 /*
 R_SceneCycle: the day/night cycle, each world scene before its sun is read (tr_scene.cpp): the two keyframes around
@@ -10132,6 +10141,7 @@ void R_SceneRegister( void )
 	r_sceneFxSoft		= ri.Cvar_Get( "r_sceneFxSoft",			"1",					CVAR_ARCHIVE_ND, "Render scene, r_sceneFx: scales the particles' soft fade where they meet the world (0 none)" );
 	r_sceneFxColumns	= ri.Cvar_Get( "r_sceneFxColumns",		"0",					CVAR_ARCHIVE_ND, "Render scene: with an .xfx's particles, 1 keeps the .xfog's steam columns (kind 1, their stand-ins) too; read at map load" );
 	r_sceneFxAlpha		= ri.Cvar_Get( "r_sceneFxAlpha",		"0.5",					CVAR_ARCHIVE_ND, "Render scene, r_sceneFx: scales the particles' opacity (CP2077's steam at ref05 and ref12 is a few faint plumes)" );
+	r_sceneFxEmissive	= ri.Cvar_Get( "r_sceneFxEmissive",		"1",					CVAR_ARCHIVE_ND, "Render scene, r_sceneFx: scales the emissive particles (Witcher 3's fire: its flames and embers) over the scene's emissive scale; a look value the map's env can set" );
 	r_sceneFxOnly		= ri.Cvar_Get( "r_sceneFxOnly",			"-1",					CVAR_TEMP, "Render scene, r_sceneFx: a look check: only the placements of this system index of maps/<map>.xfx drawn (-1: every one)" );
 	r_sceneFxAccelDrag	= ri.Cvar_Get( "r_sceneFxAccelDrag",	"1",					CVAR_ARCHIVE_ND, "Render scene, r_sceneFx: a particle's acceleration moves it under the same drag as its velocity (it settles at the acceleration over the drag), as CP2077's steam rises and slows; 0: undamped (a vent's puffs can coast hundreds of metres in a straight line)" );
 	r_sceneFxDebug		= ri.Cvar_Get( "r_sceneFxDebug",		"0",					CVAR_TEMP, "Render scene, r_sceneFx: 1 prints the effects and particle slots drawn every 60 frames" );
