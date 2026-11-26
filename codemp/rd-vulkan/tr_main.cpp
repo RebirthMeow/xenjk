@@ -1905,7 +1905,13 @@ qboolean R_SetupSunShadowCascades( void )
 			break;
 		}
 
-		VectorScale( refdef->sunDir, -1.0f, lightViewAxis[0] );
+		{	// the cascades drawn every frame follow the sun at this instant (r_sceneSunSmooth); the kept ones its step
+			vec3_t sunNow;
+			if ( !vk_sun_shadow_kept( level ) && vk_scene_sun_smooth( refdef->sunDir, sunNow ) )
+				VectorScale( sunNow, -1.0f, lightViewAxis[0] );
+			else
+				VectorScale( refdef->sunDir, -1.0f, lightViewAxis[0] );
+		}
 		VectorSet( lightViewAxis[2], 0, 0, 1 );
 		if ( fabs( DotProduct( lightViewAxis[2], lightViewAxis[0] ) ) > 0.9f )
 			VectorSet( lightViewAxis[2], 0, 1, 0 );

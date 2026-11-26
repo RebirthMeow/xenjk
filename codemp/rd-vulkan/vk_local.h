@@ -1626,6 +1626,7 @@ void		vk_sun_shadow_cache_copy( int layer, qboolean store );
 qboolean	vk_sun_shadow_kept( int layer );
 void		vk_sun_shadow_cache_reset( void );
 float		vk_scene_shadow_far( void );
+qboolean	vk_scene_sun_smooth( const vec3_t frameDir, vec3_t out );
 void		vk_sun_shadow_attach( int layer );
 qboolean	vk_scene_view_skipped( int sceneView );
 qboolean	R_SceneCharSun( vec3_t col );

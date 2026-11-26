@@ -272,6 +272,9 @@ static cvar_t *r_sceneMoonImage;
 static cvar_t *r_sceneClock;
 static cvar_t *r_sceneCycle;
 static cvar_t *r_sceneHour;
+static cvar_t *r_sceneSunSmooth;
+static vec3_t sceneSunSmooth;		// R_SceneCycle: the sun's direction at this instant (not stepped)
+static qboolean sceneSunSmoothOn;
 static cvar_t *r_sceneWindSpeed;
 static float sceneHourShown = -1.0f;	// the hour last written to r_sceneHour
 static cvar_t *r_sceneSkySunSide;
@@ -6977,6 +6980,7 @@ tr.sunDirection), and the lamps' share for scene_lightfade.comp and R_SceneLight
 */
 void R_SceneCycle( void )
 {
+	sceneSunSmoothOn = qfalse;
 	if ( sceneEnvKeys.empty() || !r_scene || !r_scene->integer )
 		return;
 	if ( sceneCycleT0 == INT_MIN )
@@ -7043,6 +7047,33 @@ void R_SceneCycle( void )
 		if ( VectorNormalize( d ) > 0.0f )
 			VectorCopy( d, tr.sunDirection );
 	}
+	// the same at this instant, for the cascades drawn every frame (vk_scene_sun_smooth)
+	if ( A.hasSun && B.hasSun && r_sceneSunSmooth->integer ) {
+		vec3_t d;
+		if ( DotProduct( A.sunDir, B.sunDir ) < 0.7f )
+			VectorCopy( f < 0.5f ? A.sunDir : B.sunDir, d );
+		else
+			for ( int c = 0; c < 3; c++ )
+				d[c] = A.sunDir[c] + ( B.sunDir[c] - A.sunDir[c] ) * f;
+		if ( VectorNormalize( d ) > 0.0f ) {
+			VectorCopy( d, sceneSunSmooth );
+			sceneSunSmoothOn = qtrue;
+		}
+	}
+}
+
+/*
+r_sceneSunSmooth: with a day/night cycle the sun's direction steps once a game minute so the kept (cached) shadow
+cascades are redrawn only then (r_sunShadowFarCache, r_sunShadowMidCache); the cascades drawn every frame take the sun
+where it is now, so near shadows creep instead of jumping (a 10 m post's shadow moved ~10 cm at each step). qfalse:
+none, or it is not near the frame's (a moon or another source in sunDir).
+*/
+qboolean vk_scene_sun_smooth( const vec3_t frameDir, vec3_t out )
+{
+	if ( !sceneSunSmoothOn || DotProduct( sceneSunSmooth, frameDir ) < 0.9994f )	// (within 2 degrees)
+		return qfalse;
+	VectorCopy( sceneSunSmooth, out );
+	return qtrue;
 }
 
 static void Scene_MoonAt( const float clock, vec3_t dir, vec4_t col )
@@ -10068,6 +10099,7 @@ void R_SceneRegister( void )
 	r_sceneSkySunSide	= ri.Cvar_Get( "r_sceneSkySunSide",		"0 0 0 0",				CVAR_ARCHIVE_ND, "Render scene, r_sceneSky: the horizon's colour toward a low sun (linear rgb) and its share 0..1 (The Witcher 3's sunColorHorizon; w3env.py's cycle keyframes set it); 0 none" );
 	r_sceneSkyGlow		= ri.Cvar_Get( "r_sceneSkyGlow",			"0 0 0 0",				CVAR_ARCHIVE_ND, "Render scene, r_sceneSky: a glow round the scene's light (linear rgb) and its falloff, the power of the angle's cosine (The Witcher 3's moon glow by night); 0 none" );
 	r_sceneWindSpeed	= ri.Cvar_Get( "r_sceneWindSpeed",		"13.3",					CVAR_ARCHIVE_ND, "Render scene: metres per second of wind cloth and hair feel at r_sceneTreeWind 1 (The Witcher 3's clear weather, 0.3, gives 4 m/s; r_simWind scales it)" );
+	r_sceneSunSmooth	= ri.Cvar_Get( "r_sceneSunSmooth",		"1",					CVAR_ARCHIVE_ND, "Render scene, a day/night cycle: the sun shadow cascades drawn every frame follow the sun continuously, the kept ones (r_sunShadowFarCache, r_sunShadowMidCache) its whole game minute; 0: all step each game minute" );
 	r_sceneHour			= ri.Cvar_Get( "r_sceneHour",			"",						CVAR_ROM, "Render scene: the day/night cycle's hour now 0..24, written by the renderer each game minute (r_sceneCycle; empty without a cycle); the client's ambience reads it" );
 	r_sceneCycle		= ri.Cvar_Get( "r_sceneCycle",			"0",					CVAR_ARCHIVE_ND, "Render scene, a day/night cycle (maps/<map>.xenv hour keyframes): the real minutes a game day takes; 0 the clock stays at the environment's hour (r_sceneClock 0..24 sets one)" );
 	r_sceneClock		= ri.Cvar_Get( "r_sceneClock",			"-1",					CVAR_ARCHIVE_ND, "Render scene: the hour on the game's clock (0..24) the moon's place and colour follow; -1 the scene's own (01:00 at night, 13:00 by day)" );
