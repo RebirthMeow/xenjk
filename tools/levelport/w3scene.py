@@ -440,9 +440,10 @@ class Materials:
             scale = float(src_value(ins.get('BaseDiffuseTintScale'), 1.0))
             if tint != [1.0, 1.0, 1.0] and scale != 0.0:
                 raw_base = alb
-                lin = (alb[..., :3].astype(np.float32) / 255.0) ** 2.2
-                lin = lin * (1.0 + scale * (np.array(tint, np.float32) - 1.0))
-                alb = np.concatenate([np.uint8(np.round(np.clip(lin, 0, 1) ** (1 / 2.2) * 255)), alb[..., 3:]], -1)
+                # (on the sRGB numbers, as the game's G-buffer holds them gamma-encoded)
+                srgb = alb[..., :3].astype(np.float32) / 255.0
+                srgb = srgb * (1.0 + scale * (np.array(tint, np.float32) - 1.0))
+                alb = np.concatenate([np.uint8(np.round(np.clip(srgb, 0, 1) * 255)), alb[..., 3:]], -1)
                 self.stats['wear_paint_base_tinted'] += 1
         var = ins.get('VarianceColor')
         if tree == 'Witcher3_Main' and isinstance(var, dict) and alb is not None and rec.get('cloth'):

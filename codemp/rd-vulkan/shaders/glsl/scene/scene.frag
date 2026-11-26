@@ -1496,7 +1496,9 @@ void main()
 			// vertex green x 16 + the blending shift, each tinted inside its coloured range; their blend sharpened about a
 			// mask (the upper layer's height, the normals' blue, or a noise image); the diffuse override over it; the
 			// pattern where its alpha, its mask's levels and vertex blue say, between its layers; vertex red's AO.
-			// Colours raw (byte / 255), as the game's shader takes them
+			// All on sRGB-encoded values with the colours raw (byte / 255), linearised at the end: the game samples its
+			// textures and writes its G-buffer gamma-encoded (pbr_std re-encodes its specular by 1 / 2.2 before the
+			// write), so its tints and overrides act on the sRGB numbers; its baked proxies agree (the city hall tower)
 			const vec4 e0 = materialDetail[b + 10u], e1 = materialDetail[b + 11u], e2 = materialDetail[b + 12u];
 			const vec4 e3 = materialDetail[b + 13u], e4 = materialDetail[b + 14u];
 			const float place = vCol.g * 15.99999 + e2.z;
@@ -1506,13 +1508,11 @@ void main()
 			const vec2 muv = vUV * e2.w;
 			const float c0i = i0 < 4 ? cA[i0] : cB[i0 - 4], c1i = i1 < 4 ? cA[i1] : cB[i1 - 4];
 			const float n0i = i0 < 4 ? nA[i0] : nB[i0 - 4], n1i = i1 < 4 ? nA[i1] : nB[i1 - 4];
-			vec3 c0 = albedo, c1 = albedo;
+			vec3 c0 = pow( max( albedo, vec3( 0.0 ) ), vec3( 1.0 / 2.2 ) ), c1 = c0;
 			if ( c0i >= 0.0 )
-				c0 = toLinear( textureGrad( sceneTex[SCENE_TEX_INDEX( uint( c0i ) )], muv, uvx * e2.w, uvy * e2.w ).rgb );
+				c0 = textureGrad( sceneTex[SCENE_TEX_INDEX( uint( c0i ) )], muv, uvx * e2.w, uvy * e2.w ).rgb;
 			if ( c1i >= 0.0 )
-				c1 = toLinear( textureGrad( sceneTex[SCENE_TEX_INDEX( uint( c1i ) )], muv, uvx * e2.w, uvy * e2.w ).rgb );
-			c0 *= gTint.rgb;
-			c1 *= gTint.rgb;
+				c1 = textureGrad( sceneTex[SCENE_TEX_INDEX( uint( c1i ) )], muv, uvx * e2.w, uvy * e2.w ).rgb;
 			const float g0 = clamp( fi0 + 1.0 - p0.y, 0.0, 1.0 ) * clamp( 1.0 - fi0 + p0.z, 0.0, 1.0 );
 			const float g1 = clamp( fi1 + 1.0 - p0.y, 0.0, 1.0 ) * clamp( 1.0 - fi1 + p0.z, 0.0, 1.0 );
 			c0 = mix( c0, c0 * p2.rgb, g0 );
@@ -1538,9 +1538,10 @@ void main()
 				// (registers 21 and 22 of the game's shader: the top layer gates from below, the bottom from above)
 				const float top = clamp( ( fi0 - p3.y + 1.0 ) * clamp( fi0 - p3.y + w, 0.0, 1.0 ), 0.0, 1.0 );
 				const float bottom = clamp( fi1 + w - p3.x, 0.0, 1.0 );
-				albedo += ( toLinear( pt.rgb ) - albedo ) * pw * ( 1.0 - top ) * bottom;
+				albedo += ( pt.rgb - albedo ) * pw * ( 1.0 - top ) * bottom;
 			}
 			albedo *= mix( vec3( 1.0 ), vCol.r * p1.rgb, clamp( p0.w, 0.0, 1.0 ) );
+			albedo = toLinear( clamp( albedo, 0.0, 1.0 ) ) * gTint.rgb;
 			const vec2 nxy = mix( q0.xy, q1.xy, w ) * 2.0 - 1.0;
 			w3n = normalize( vec3( nxy, 1.0 ) );
 			rough = clamp( mix( mix( q0.a, q1.a, w ), e4.x, e4.y ) * p1.w + p2.w, 0.05, 1.0 );
@@ -1602,7 +1603,8 @@ void main()
 			// the game's own chain (its shader cache, XEXT; levelport/w3/shadercache/FORMULAS.md): the masks' red (or
 			// the base roughness, by share) selects; paint by the pattern's alpha x vertex blue; global wear strips the
 			// paint and adds wear over the whole surface; the wear shows the tinted base (the albedo), its saturation,
-			// brightness and tint. Colours raw (byte / 255), as the game's shader takes them
+			// brightness and tint. On sRGB-encoded values with the colours raw (byte / 255), linearised at the end, as
+			// the game's G-buffer is (see the layer blend above)
 			const vec4 x7 = materialDetail[b + 7u], x8 = materialDetail[b + 8u];
 			const float bm = w5.z >= 0.0 ? textureGrad( sceneTex[SCENE_TEX_INDEX( uint( w5.z ) )], vUV * w1.z, uvx * w1.z, uvy * w1.z ).r : 0.0;
 			const float rr = x8.z >= 0.0 ? textureGrad( sceneTex[SCENE_TEX_INDEX( uint( x8.z ) )], vUV, uvx, uvy ).r : 0.5;
@@ -1622,8 +1624,8 @@ void main()
 			const float gw = clamp( ( gsel - thr ) / ( abs( den ) < 1e-6 ? -1e-6 : den ), 0.0, 1.0 );
 			const float keep = clamp( 1.0 + x7.z * ( gw - 1.0 ), 0.0, 1.0 );
 			pa *= keep;
-			const vec3 base = albedo;
-			vec3 col = mix( base, toLinear( pat.rgb ) * w2.rgb, pa );
+			const vec3 base = pow( max( albedo, vec3( 0.0 ) ), vec3( 1.0 / 2.2 ) );
+			vec3 col = mix( base, pat.rgb * w2.rgb, pa );
 			const float wr = w3v.y - w3v.x;
 			const float wm = clamp( wr != 0.0 ? ( ( 1.0 - vCol.a ) - w3v.x ) / wr : 0.0, 0.0, 1.0 );
 			const float wc = clamp( wm * 2.0 - 1.0 + sWear + w3v.w * ( 1.0 - 2.0 * sWear ), 0.0, 1.0 );
@@ -1632,7 +1634,7 @@ void main()
 			const float wa = clamp( clamp( w2.w, 0.0, 1.0 ) * ( 1.0 - keep + ws ), 0.0, 1.0 );
 			const vec3 wear = w4.rgb * w4.w * mix( vec3( dot( base, vec3( 0.2989, 0.587, 0.114 ) ) ), base, w5.x );
 			col = mix( col, wear, wa );
-			albedo = mix( col, col * ( 1.0 - vCol.r ), clamp( w1.w, 0.0, 1.0 ) );
+			albedo = toLinear( clamp( mix( col, col * ( 1.0 - vCol.r ), clamp( w1.w, 0.0, 1.0 ) ), 0.0, 1.0 ) );
 		} else {
 		const float g = w5.z >= 0.0 ? textureGrad( sceneTex[SCENE_TEX_INDEX( uint( w5.z ) )], vUV * w1.z, uvx * w1.z, uvy * w1.z ).g : 0.0;
 		vec3 col = albedo;
