@@ -31,6 +31,9 @@ graphics.xml; that it scales these distances is read from its name) plus the ins
 from the sphere's centre; the game's measuring point is not known, so never earlier than either). Terrain foliage and
 SpeedTree trees keep theirs; a proxy's members keep the proxy's near distance (mesh and shell must swap at one distance);
 a proxy takes its own only past its near distance. --no-autohide: none (A/B).
+A proxy's near distance is its mesh's first LOD distance times --lod-scale (1.5: MeshLODDistanceScale at the ultra+
+level-of-detail preset of graphics.xml, 1.3 at uber; unscaled, the shells took over at two thirds of the game's
+distance: the city hall at 87 m from the b14 tower view). Within a mesh, LOD changes follow r_sceneLodBias at run time.
 """
 import argparse
 import json
@@ -619,6 +622,8 @@ def main():
     ap.add_argument('--no-vcache', action='store_true', help='triangles in the source order (vcache.py off; A/B)')
     ap.add_argument('--no-autohide', action='store_true', help="no hide distances from the game's (autohide.json; A/B)")
     ap.add_argument('--autohide-scale', type=float, default=1.5, help="times the game's autohide distances")
+    ap.add_argument('--lod-scale', type=float, default=1.5, help="times a far proxy's near distance (its first LOD's: "
+                    "the game's MeshLODDistanceScale, 1.5 at ultra+)")
     ap.add_argument('--card-match', help="cardmatch.py's match.json: each billboard card's match to its 3D tree")
     ap.add_argument('--bb-fade', type=float, nargs=2, default=(30.0, 50.0), metavar=('START', 'END'),
                     help="billboards: the view's pitch (degrees) where the top card starts / finishes replacing the "
@@ -750,7 +755,7 @@ def main():
         # a mesh whose first LOD starts away from the eye (the game's entity_proxy shells: one LOD from 50-200 m) is
         # drawn only past it, the instance's near distance (scene version 5); drawn everywhere, the castle's walls and
         # stairs showed the proxies' 2-33 px/m atlases
-        mesh_near[mesh_of[key]] = float(by_lod[levels[0]][0][1] or 0.0)
+        mesh_near[mesh_of[key]] = a.lod_scale * float(by_lod[levels[0]][0][1] or 0.0)
         return mesh_of[key]
 
     # the game's hide distances (w3autohide.py): sector blocks by layer, mesh and position (10 cm, the neighbours too),
