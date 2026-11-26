@@ -9,6 +9,7 @@ distance, both UV sets, the raw vertex colour and the tangent frame.
     blender -b --python tools/levelport/w3gltf.py -- --layers LIST --work DIR [--allow-failures]
 
 LIST: one layer a line, relative to dlc/bob/data/levels/bob/locations/city_of_beauclair/ (or a full depot path).
+A line naming a .w2ent (full depot path) imports that entity template at the world origin (an unplaced backdrop).
 A layer that fails to import or a mesh the raw reader cannot read ends the run with exit 3 after the work folder is
 written (W3GLTF_DONE names them; --allow-failures: exit 0). The later steps' *.pre-*.json copies of an earlier export
 in the folder are set aside (w3work.py).
@@ -275,9 +276,14 @@ def main():
         t = time.time()
         try:
             p = mat.materialize_repo_path(lay.replace('/', BS), source_game='w3')
-            bpy.ops.witcher.import_w2l('EXEC_DEFAULT', filepath=p, do_import_Mesh=True, do_import_Collision=True,
-                                       do_import_RigidBody=True, do_import_Redcloth=False, do_import_Redapex=False,
-                                       keep_lod_meshes=False)
+            if lay.lower().endswith('.w2ent'):
+                # an entity template no layer places, at the world origin: Toussaint's bcg_mountains.w2ent holds the
+                # horizon ring (bob_background_merged.w2mesh) with its vertices already in world space
+                bpy.ops.witcher.import_w2ent('EXEC_DEFAULT', filepath=p)
+            else:
+                bpy.ops.witcher.import_w2l('EXEC_DEFAULT', filepath=p, do_import_Mesh=True, do_import_Collision=True,
+                                           do_import_RigidBody=True, do_import_Redcloth=False, do_import_Redapex=False,
+                                           keep_lod_meshes=False)
             st = 'ok'
         except Exception as e:  # noqa: BLE001 - a failed layer is reported, the rest go on
             st = 'fail ' + repr(e)[:300]
