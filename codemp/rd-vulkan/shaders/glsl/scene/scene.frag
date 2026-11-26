@@ -1812,8 +1812,9 @@ void main()
 	// leaf by leaf) pulled toward its tree's outward direction (scene.vert's vCanopy), so the canopy is lit and shaded as
 	// one rounded mass; its inner leaves darker
 	// r_sceneTreeTint: the hour's colour and saturation of the trees' leaves (The Witcher 3's m_speedTree.randomColorsTrees,
-	// relative to the calibrated hour: blue-grey and darker by night)
-	if ( gInfo.w == 32u && !water ) {
+	// relative to the calibrated hour: blue-grey and darker by night); the far trees' billboard cards take it too, so a
+	// tree keeps its colour across the switch from its leaves to its card
+	if ( ( gInfo.w == 32u || bbCard ) && !water ) {
 		const float l = dot( albedo, vec3( 0.2126, 0.7152, 0.0722 ) );
 		albedo = max( mix( vec3( l ), albedo, fr.treeTint.w ), vec3( 0.0 ) ) * fr.treeTint.rgb;
 	}
