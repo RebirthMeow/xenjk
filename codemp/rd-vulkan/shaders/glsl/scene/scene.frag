@@ -129,6 +129,7 @@ layout(std140, set = 0, binding = 5) uniform Frame {
 	vec4 w3aerBack;
 	vec4 w3clouds;		// r_sceneW3Clouds (w3Clouds; x 0 off): x their light, y the cirrus' alpha, z the panorama's, w the
 						// share of the cumulus sprites' slots in use
+	vec4 w3clouds2;		// x: r_sceneW3CirrusAlong (the cirrus' fade where its streaks run toward the eye)
 } fr;
 layout(set = 0, binding = 26) uniform sampler2DArray waveTex;	// the water's waves (scene_water.comp): x, y the slopes
 // scene_occ.comp's far-depth pyramids (linear view depth): the water's bed (fr.waterBed)
@@ -1104,7 +1105,11 @@ vec4 w3Clouds( const vec3 d )
 		// (sun_front, sun_behind 1; normal_A 1, normal_B 2)
 		const float lit = pow( mix( 1.0, 2.0, ndl ), 2.2 );
 		const float a = tex.a * clamp( ( t - 2000.0 ) / 5000.0, 0.0, 1.0 );	// near_alpha_multiplier 0, 2 to 7 km
-		const float alpha = clamp( clamp( 5.0 * cover, 0.0, 1.0 ) * a, 0.0, 1.0 ) * fr.w3clouds.y;	// alpha_contrast 5
+		// (r_sceneW3CirrusAlong: bob_cirrus_clouds' streaks run along the texture's v, the world's y here; looking
+		// along them they converge on the horizon as vertical rays)
+		const float along = abs( d.y ) / dh;
+		const float fadeAlong = 1.0 - clamp( fr.w3clouds2.x, 0.0, 1.0 ) * along * along * along * along;
+		const float alpha = clamp( clamp( 5.0 * cover, 0.0, 1.0 ) * a, 0.0, 1.0 ) * fr.w3clouds.y * fadeAlong;	// alpha_contrast 5
 		vec3 col = light * lit * 0.25;
 		if ( fr.w3fog.x > 0.0 )
 			col = w3SkyFogAt( col, d, t );

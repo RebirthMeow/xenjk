@@ -156,6 +156,7 @@ static cvar_t *r_sceneGlowThreshold;
 cvar_t *r_sceneTonemap;
 cvar_t *r_sceneFog;
 static cvar_t *r_sceneFogDensity;
+static cvar_t *r_sceneW3CirrusAlong;
 static cvar_t *r_sceneW3Clouds;	// The Witcher 3's clouds (w3env.py --game-clouds; scene.frag w3Clouds)
 static cvar_t *r_sceneW3CloudImages;
 static image_t *sceneW3CloudImages[3];	// r_sceneW3CloudImages' _sprites, _pano, _cirrus (all three found, else none)
@@ -6663,7 +6664,7 @@ The day/night cycle (tools/levelport/w3env.py --hours), after the lines above:
                     direction; the direction steps once a game minute so the far cascade's cache holds between steps)
 The look values are read through Env( cvar ), which gives the environment's while the cvar is as it was at the load.
 */
-#define SCENE_ENV_VARS	96	// (more than the look values, 73: a line each; was 64)
+#define SCENE_ENV_VARS	96	// (more than the look values, 74: a line each; was 64)
 typedef struct {
 	cvar_t	*cv;
 	int		count;		// the cvar's modificationCount at the load: changed since, its own value wins
@@ -6700,7 +6701,7 @@ const cvar_t *Scene_Env( const cvar_t *cv )
 static void Scene_LoadEnv( const char *bspName, char *sceneMap, int size )
 {
 	static cvar_t **const look[] = { &r_sceneSun, &r_sceneAmbient, &r_sceneExposure, &r_sceneEmissive, &r_sceneGlow, &r_sceneGlowThreshold, &r_sceneTonemap, &r_sceneFog, &r_sceneFogDensity, &r_sceneFogHeight, &r_sceneFogMax, &r_sceneFogLight, &r_sceneFogPhase, &r_sceneFogAlbedo, &r_sceneFogFar, &r_sceneFogStart, &r_sceneFogMoon, &r_sceneGradeExposure, &r_sceneLightScale, &r_sceneGrade, &r_sceneFogLightMax, &r_sceneDayLamps, &r_sceneSky, &r_sceneSkyZenith, &r_sceneSkyHorizon, &r_sceneSkySun, &r_sceneSkyGround, &r_sceneSkyCurve, &r_sceneCharSun, &r_sceneNightOnlyByDay, &r_sceneDayOnlyAtNight, &r_sceneWet, &r_sceneFoliage, &r_sceneFoliageWrap, &r_sceneFoliageTrans, &r_sceneFoliageAO, &r_sceneTreeTint, &r_sceneAO, &r_sceneAORadius, &r_sceneShadowSoft, &r_sceneShadowFar, &r_sceneClouds, &r_sceneCloudScale, &r_sceneCloudEdge, &r_sceneCloudLight, &r_sceneCloudWind, &r_sceneTreeWind, &r_sceneTreeWindDir, &r_sceneEmissiveExposure, &r_sceneEmissiveRef, &r_sceneMoon, &r_sceneMoonSize, &r_sceneMoonGlow, &r_sceneMoonPath, &r_sceneMoonLight, &r_sceneClock, &r_sceneSkySunSide, &r_sceneSkyGlow, &r_sceneAutoExposure, &r_sceneExposureWindow, &r_sceneWindowExposure,
-		&r_sceneW3Fog[0], &r_sceneW3Fog[1], &r_sceneW3Fog[2], &r_sceneW3Fog[3], &r_sceneW3Fog[4], &r_sceneW3Fog[5], &r_sceneW3Fog[6], &r_sceneW3Fog[7], &r_sceneW3Clouds,
+		&r_sceneW3Fog[0], &r_sceneW3Fog[1], &r_sceneW3Fog[2], &r_sceneW3Fog[3], &r_sceneW3Fog[4], &r_sceneW3Fog[5], &r_sceneW3Fog[6], &r_sceneW3Fog[7], &r_sceneW3Clouds, &r_sceneW3CirrusAlong,
 		&r_sceneWaterReflect, &r_sceneWaterFresnel, &r_sceneWaterOwn };
 	char name[MAX_QPATH];
 	char *buf = NULL;
@@ -8424,7 +8425,9 @@ void R_SceneVkBeginFrame( void )
 	fr->fx2[3] = (float)vkSamples;
 	fr->cards[0] = r_sceneCardBlend->integer ? 1.0f : 0.0f;
 	fr->cards[1] = fr->cards[2] = fr->cards[3] = 0.0f;
-	Com_Memset( fr->w3clouds, 0, sizeof( fr->w3clouds ) );	// The Witcher 3's clouds: empty or their images missing, off
+	Com_Memset( fr->w3clouds, 0, sizeof( fr->w3clouds ) );
+	Com_Memset( fr->w3clouds2, 0, sizeof( fr->w3clouds2 ) );
+	fr->w3clouds2[0] = Com_Clamp( 0.0f, 1.0f, Env( r_sceneW3CirrusAlong )->value );	// The Witcher 3's clouds: empty or their images missing, off
 	if ( sc.skyOn && sceneW3CloudImages[0] && Env( r_sceneW3Clouds )->string[0] ) {
 		fr->w3clouds[1] = fr->w3clouds[2] = fr->w3clouds[3] = 1.0f;
 		sscanf( Env( r_sceneW3Clouds )->string, "%f %f %f %f", &fr->w3clouds[0], &fr->w3clouds[1], &fr->w3clouds[2], &fr->w3clouds[3] );
@@ -9995,6 +9998,7 @@ void R_SceneRegister( void )
 	r_sceneFog			= ri.Cvar_Get( "r_sceneFog",			"51 38 32",				CVAR_ARCHIVE_ND, "Render scene: the haze's colour (sRGB 0-255) before the colour grade (r_sceneGrade), matched to the map's sky near the horizon" );
 	r_sceneFogDensity	= ri.Cvar_Get( "r_sceneFogDensity",		"0.005",				CVAR_ARCHIVE_ND, "Render scene: haze density per metre at the floor (0 off; 0.005 hides half of what is 140 m away)" );
 	r_sceneW3Clouds	= ri.Cvar_Get( "r_sceneW3Clouds",	"",	CVAR_ARCHIVE_ND, "Render scene, r_sceneSky: The Witcher 3's clear-weather clouds (bob_mid_clouds_small_1.w2p: cumulus sprites, a cirrus dome, two panorama rings; r_sceneW3CloudImages): their light x the scene's sun and sky ambient, the cirrus' and the panorama's alpha, the share of the sprites' slots in use (empty: off)" );
+	r_sceneW3CirrusAlong	= ri.Cvar_Get( "r_sceneW3CirrusAlong",	"0",	CVAR_ARCHIVE_ND, "Render scene, r_sceneW3Clouds: the cirrus fades by this much where its streaks run toward the eye (the texture's v, the world's y; seen along them they stand up from the horizon as vertical rays), as the fourth power of how closely the view's heading follows them; 0 as the game" );
 	r_sceneW3CloudImages	= ri.Cvar_Get( "r_sceneW3CloudImages",	"textures/skies/w3clouds",	CVAR_ARCHIVE_ND, "Render scene, r_sceneW3Clouds: the images' name, at the map's load: _sprites (the 4x4 atlas: r shade, g alpha; b the coverage noise, 2x1), _pano (r shade, g alpha; b the dissolve noise, 4x1), _cirrus (rgb its normal, a its density)" );
 	r_sceneW3Fog[0]	= ri.Cvar_Get( "r_sceneW3Fog",	"",	CVAR_ARCHIVE_ND, "Render scene, The Witcher 3's fog (w3env.py --game-fog): density per metre, fogFinalExp, aerialFinalExp, fogDistClamp (m); empty: the haze's own model" );
 	r_sceneW3Fog[1]	= ri.Cvar_Get( "r_sceneW3FogRamp",	"",	CVAR_ARCHIVE_ND, "Render scene, The Witcher 3's fog (w3env.py --game-fog): fogAppearDistance, fogAppearRange (m), the vertical density on the sun's side and the back (fogVertDensity x LightFront, x LightBack)" );

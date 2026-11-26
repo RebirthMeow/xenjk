@@ -322,6 +322,7 @@ typedef struct {
 	float		w3fog[8][4];	// r_sceneW3Fog..AerialBack: The Witcher 3's fog and aerial perspective (scene.frag w3Haze; [0][0] 0 off)
 	float		w3clouds[4];	// r_sceneW3Clouds: The Witcher 3's clouds (scene.frag w3Clouds; x 0 off): x their light, y the cirrus, z the
 							// panorama's alpha, w the share of the cumulus sprites' slots in use
+	float		w3clouds2[4];	// x: r_sceneW3CirrusAlong
 } sceneFrame_t;
 
 // a traffic signal's cycle (maps/<map>.signals, cp2gltf SceneSignals): its group's program from its intersection's
