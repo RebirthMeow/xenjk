@@ -127,6 +127,8 @@ layout(std140, set = 0, binding = 5) uniform Frame {
 	vec4 w3aerFront;
 	vec4 w3aerMid;
 	vec4 w3aerBack;
+	vec4 w3clouds;		// r_sceneW3Clouds (w3Clouds; x 0 off): x their light, y the cirrus' alpha, z the panorama's, w the
+						// share of the cumulus sprites' slots in use
 } fr;
 layout(set = 0, binding = 26) uniform sampler2DArray waveTex;	// the water's waves (scene_water.comp): x, y the slopes
 // scene_occ.comp's far-depth pyramids (linear view depth): the water's bed (fr.waterBed)
@@ -636,7 +638,15 @@ vec3 w3Haze( vec3 c, const vec3 P )
 	return mix( c, w3FogPick( fr.w3fogFront.rgb, fr.w3fogMid.rgb, fr.w3fogBack.rgb, mu, D ), fogA );
 }
 
-// the sky through it (bob_skydome): the whole clamp's path at the sky's density, no aerial
+// the sky through it (bob_skydome): the whole clamp's path at the sky's density, no aerial; the clouds' (clouds_bob_v1)
+// the same to their distance D (m)
+vec3 w3SkyFogAt( const vec3 c, const vec3 u, const float D )
+{
+	const float mu = dot( normalize( fr.sunDir.xyz ), u );
+	const float f = w3FogShare( pc.eye.xyz / UNITS_PER_METRE, u, D, fr.w3fog.x * fr.w3fogBack.w, mu,
+								fr.w3fogRamp.zw * vec2( fr.w3aerMid.w, fr.w3aerBack.w ) );
+	return mix( c, w3FogPick( fr.w3fogFront.rgb, fr.w3fogMid.rgb, fr.w3fogBack.rgb, mu, D ), pow( f, fr.w3fog.y ) );
+}
 vec3 w3SkyFog( const vec3 c, const vec3 u )
 {
 	const float D = fr.w3fog.w, mu = dot( normalize( fr.sunDir.xyz ), u );
@@ -663,6 +673,7 @@ vec3 throughHaze( const vec3 c, const float f, const float veil )
 }
 
 vec4 skyClouds( const vec3 d, const vec3 horizon );	// (below, after the noise)
+vec4 w3Clouds( const vec3 d );	// (below)
 
 // r_sceneMoon (vk_scene.cpp Scene_MoonAt; fr.moon w its angular radius, 0 none): CP2077's moon image (the sky pass's
 // set 1) on its disc, upright to the zenith, through the haze's column toward it (its density at the eye's height over
@@ -697,7 +708,14 @@ vec3 moonSky( const vec3 d )
 // r_sceneSky (a day scene's, maps/<map>.xenv): the sky along d in the scene's linear units: zenith to horizon, darker
 // below it, the haze's colour along the horizon while the haze is on (where the city's haze meets it), the sun's disc
 // (about half a degree across) and its glow; the moon (moonSky's) behind the clouds
+vec3 skyRadianceWith( const vec3 d, const vec3 moon, const vec4 after );
 vec3 skyRadiance( const vec3 d, const vec3 moon )
+{
+	return skyRadianceWith( d, moon, vec4( 0.0 ) );
+}
+
+// after: clouds over the fogged sky (w3Clouds: their light already through the fog to them, premultiplied by a)
+vec3 skyRadianceWith( const vec3 d, const vec3 moon, const vec4 after )
 {
 	vec3 c = mix( fr.skyZenith.rgb, fr.skyHorizon.rgb, pow( 1.0 - clamp( d.z, 0.0, 1.0 ), fr.skyGround.w ) );
 	if ( fr.w3fog.x > 0.0 && fr.w3aerFront.w > 0.0 ) {	// The Witcher 3's zenith ramp (bob_skydome), by the eye's height
@@ -723,7 +741,7 @@ vec3 skyRadiance( const vec3 d, const vec3 moon )
 			c *= mix( 1.0, 0.5, clamp( -d.z * 4.0, 0.0, 1.0 ) );
 	}
 	c += moon;
-	const vec4 cloud = skyClouds( d, fr.skyHorizon.rgb );	// (r_sceneClouds; none: 0)
+	vec4 cloud = fr.w3clouds.x > 0.0 ? vec4( 0.0 ) : skyClouds( d, fr.skyHorizon.rgb );	// (r_sceneClouds; none: 0)
 	c = mix( c, cloud.rgb, cloud.a );
 	if ( fr.w3fog.x > 0.0 )
 		c = w3SkyFog( c, d );
@@ -731,8 +749,9 @@ vec3 skyRadiance( const vec3 d, const vec3 moon )
 		c = mix( c, fromDisplay( fr.fog.rgb ), pow( 1.0 - abs( d.z ), 12.0 ) );
 	const float mu = dot( d, normalize( fr.sunDir.xyz ) );
 	const float m = max( mu, 0.0 );
+	cloud.a = max( cloud.a, after.a );
 	c += fr.sunCol.rgb * fr.skyHorizon.w * ( 40.0 * smoothstep( 0.99996, 0.99999, mu ) * ( 1.0 - cloud.a ) + 0.5 * pow( m, 256.0 ) * ( 1.0 - 0.8 * cloud.a ) + 0.05 * pow( m, 8.0 ) );
-	return c;
+	return c * ( 1.0 - after.a ) + after.rgb;
 }
 
 // the share of the sun reaching P: the first cascade whose box holds it, offset along the surface normal and toward
@@ -1016,6 +1035,180 @@ vec4 hash4( const ivec4 c )
 	return vec4( h & 255u, ( h >> 8u ) & 255u, ( h >> 16u ) & 255u, h >> 24u ) / 255.0;
 }
 
+// r_sceneW3Clouds: The Witcher 3's clear-weather clouds (the weather table's WT_Clear in Beauclair:
+// dlc/bob/data/fx/environment/weather/clouds/bob_mid_clouds_small_1.w2p, decoded by w3emitter.py; its material
+// clouds_bob_v1 and clouds_bob_v1_thin decoded from the shader cache: shadercache/FOG_SKY.md section 3). The system rides
+// with the eye (keep_local), so the clouds keep their place round it:
+// - sprites: up to 150 camera-facing cards (CParticleDrawerSphereAligned) 1500 m over the eye, spawned in a ring 1 to
+//   7 km out, 400-600 m wide and half as tall, a random frame of clouds_bob_soft_1's 4x4 atlas, living 100 s (their
+//   alpha over life fades them in and out through the dissolve noise), drifting with the wind;
+// - cirrus: clouds_dome.w2mesh x (300, 300, 700), 200 m under the eye: a dome 7.6 km round and 2.2 km over the eye,
+//   its UV planar (one tile 4.74 km, x3), bob_cirrus_clouds (rgb a normal, a the density) under cloud_cover_tiled;
+//   unseen nearer than 2 km, full from 7 km;
+// - panorama: clouds_stripe.w2mesh x 8000, two rings (100 and 200 m up) of panorama_4 round the horizon (a cone from
+//   5.1 km round at its foot to 4.2 km, 1120 m up), each turned at random, crossfading over 100-200 s lives.
+// The images: normalTex (_sprites: r the shade, g the alpha; b cloud_cover_tiled, 2x1), ormTex (_pano: r, g likewise;
+// b clouds_noise, 4x1), detailTex (_cirrus). Light: the game's cb12[244] (its colour by the sun's side, cb12[245/246],
+// takes no part: the instances leave close_far_clouds 0) is not known: the scene's sun (r_sceneCloudLight) and sky
+// ambient x fr.w3clouds.x. Returns the light (through the sky's fog to each cloud) premultiplied by its alpha
+float w3Life( const float t, const bool ring )	// the emitters' alpha over life (8 samples, linear between)
+{
+	const float sprite[8] = float[8]( 0.0, 0.517, 0.834, 0.979, 0.972, 0.796, 0.464, 0.0 );
+	const float rings[8] = float[8]( 0.0, 0.399, 0.748, 0.963, 0.963, 0.748, 0.399, 0.0 );
+	const float x = clamp( t, 0.0, 1.0 ) * 7.0;
+	const int i = min( int( x ), 6 );
+	return ring ? mix( rings[i], rings[i + 1], x - float( i ) ) : mix( sprite[i], sprite[i + 1], x - float( i ) );
+}
+
+// clouds_bob_v1's light (before the light's colour, linear) and alpha: A its shade (r), G its alpha (g), C the dissolve
+// noise, v down the card (0 top), a the particle's alpha, mu the sun behind the eye (1) or behind the cloud (0)
+vec2 w3CloudMat( const float A, const float G, const float C, const float v, const float a, const float mu,
+				 const float sunBehind, const float rampBehind, const float rampFront )
+{
+	const float g = v < 0.00317 ? 0.0 : ( v > 0.9859 ? -1.0 : -( v - 0.00317 ) * 1.0159 );
+	const float back = A * sunBehind * ( 1.0 + rampBehind * g );
+	const float front = mix( 1.0 - G, A, 0.5 ) * ( 1.0 + rampFront * g );	// (sun_behind_interp 0.5, sun_behind_add 0)
+	const float c = mix( back, front, mu );
+	return vec2( pow( max( c, 0.001 ), 2.2 ), clamp( G * clamp( 3.0 * ( C + a - 1.0 ), 0.0, 1.0 ), 0.0, 1.0 ) );
+}
+
+vec4 w3Clouds( const vec3 d )
+{
+#ifdef GPU_DRIVEN
+	return vec4( 0.0 );
+#else
+	const float pix = max( length( fwidth( d ) ), 1e-6 );	// radians a pixel (uniform control flow: before the tests)
+	vec4 acc = vec4( 0.0 );
+	if ( fr.w3clouds.x <= 0.0 || d.z <= -0.02 )
+		return acc;
+	const float time = fr.water.x;
+	const vec3 sun = normalize( fr.sunDir.xyz );
+	const vec3 light = fr.w3clouds.x * ( fr.sunCol.rgb * fr.clouds.w + fr.skyAmbient.rgb * 2.0 );
+	const vec3 eyeM = pc.eye.xyz / UNITS_PER_METRE;
+	const float dh = max( length( d.xy ), 1e-4 );
+
+	// the cirrus dome (clouds_bob_v1_thin): z = -200 + 2380 (1 - (r / 7590)^2) round the eye
+	if ( fr.w3clouds.y > 0.0 && d.z > 0.0 ) {
+		const float qa = 2380.0 * dh * dh / ( 7590.0 * 7590.0 );
+		const float t = 4360.0 / ( d.z + sqrt( d.z * d.z + 4.0 * qa * 2180.0 ) );	// (the stable root)
+		const vec3 P = d * t;
+		const vec2 uvm = vec2( 0.54 - 0.0633 * P.x / 300.0, 0.49 + 0.0633 * P.y / 300.0 );	// the mesh's UV (a fit)
+		const vec2 uvT = uvm * 3.0 + vec2( 0.001, 0.0 ) * time;		// tex_coord 3, tex_speed
+		const vec2 uvC = uvm + vec2( -0.0005, 0.0 ) * time;			// coverage_size 1, coverage_speed
+		const vec2 gT = vec2( 3.0 * 0.0633 / 300.0 * t * pix );
+		const vec4 tex = textureGrad( detailTex, uvT, vec2( gT.x, 0.0 ), vec2( 0.0, gT.y ) );
+		const float cover = textureGrad( normalTex, vec2( uvC.x * 0.5, uvC.y ), vec2( gT.x / 6.0, 0.0 ), vec2( 0.0, gT.y / 3.0 ) ).b;
+		const vec3 n = normalize( tex.rgb * 2.0 - 1.0 );
+		const vec3 N = n.x * vec3( -1.0, 0.0, 0.0 ) + n.y * vec3( 0.0, 1.0, 0.0 ) + n.z * vec3( 0.0, 0.0, 1.0 );
+		const float ndl = clamp( dot( vec3( -sun.xy, sun.z ), N ), 0.0, 1.0 );
+		// (sun_front, sun_behind 1; normal_A 1, normal_B 2)
+		const float lit = pow( mix( 1.0, 2.0, ndl ), 2.2 );
+		const float a = tex.a * clamp( ( t - 2000.0 ) / 5000.0, 0.0, 1.0 );	// near_alpha_multiplier 0, 2 to 7 km
+		const float alpha = clamp( clamp( 5.0 * cover, 0.0, 1.0 ) * a, 0.0, 1.0 ) * fr.w3clouds.y;	// alpha_contrast 5
+		vec3 col = light * lit * 0.25;
+		if ( fr.w3fog.x > 0.0 )
+			col = w3SkyFogAt( col, d, t );
+		acc = vec4( col * alpha, alpha );
+	}
+
+	// the panorama rings: a cone from r 5136 m at its foot (z0) to 4200 m at z0 + 1120 m
+	if ( fr.w3clouds.z > 0.0 ) {
+		const float az = atan( d.y, d.x ) / 6.2831853;
+		const vec2 gP = vec2( pix * 1024.0 / 6.2831853 / ( 1024.0 * dh ), pix * 1100.0 / 256.0 );
+		const float mu = clamp( dot( sun, -d ), 0.0, 1.0 );
+		for ( int k = 3; k >= 0; k-- ) {	// ring2 (200 m up) behind ring1 (100 m): two lives each, half a life apart
+			const float z0 = k >= 2 ? 200.0 : 100.0;
+			const float s = ( 5136.0 + 0.8357 * z0 ) / ( 1.0 + 0.8357 * d.z / dh );
+			const float v = 1.0 - ( s * d.z / dh - z0 ) / 1120.0;
+			if ( v < 0.0 || v > 1.0 )
+				continue;
+			const float life = 100.0 + 100.0 * hash4( ivec3( k, 7, 3 ) ).x;
+			const float tt = time / life + 0.5 * float( k & 1 ) + hash4( ivec3( k, 1, 9 ) ).y;
+			const vec4 h = hash4( ivec3( k, int( floor( tt ) ), 5 ) );
+			const float u = az + 0.25 + h.x;
+			const vec3 t3 = textureGrad( ormTex, vec2( u, v ), vec2( gP.x, 0.0 ), vec2( 0.0, gP.y ) ).rgb;
+			const float C = textureGrad( ormTex, vec2( fract( u ) * 0.25, v ), vec2( gP.x * 0.25, 0.0 ), vec2( 0.0, gP.y ) ).b;
+			// (sun_behind 1, use_ramp_behind and _front 0.25)
+			const vec2 m = w3CloudMat( t3.r, t3.g, C, v, w3Life( fract( tt ), true ), mu, 1.0, 0.25, 0.25 );
+			const float alpha = m.y * fr.w3clouds.z;
+			if ( alpha <= 0.0 )
+				continue;
+			vec3 col = light * m.x;
+			if ( fr.w3fog.x > 0.0 )
+				col = w3SkyFogAt( col, d, s / dh );
+			acc = acc * ( 1.0 - alpha ) + vec4( col * alpha, alpha );
+		}
+	}
+
+	// the sprites: the eye's ring of cards, found through the cells of a 1250 m grid on their plane (1500 m up)
+	if ( d.z > 0.02 ) {
+		const float G = 1250.0, H = 1500.0;
+		const vec2 wind = fr.clouds2.xy * time;
+		const vec2 F = d.xy * ( H / d.z ) + wind;	// the ray's point on the plane, in the drifting field
+		const ivec2 c0 = ivec2( floor( F / G ) );
+		float dist[9];
+		vec4 col[9];
+		int n = 0;
+		for ( int j = -1; j <= 1; j++ )
+			for ( int i = -1; i <= 1; i++ ) {
+				const ivec2 cell = c0 + ivec2( i, j );
+				const float tt = time / 100.0 + hash4( ivec3( cell, 11 ) ).x;
+				const int gen = int( floor( tt ) );
+				const vec4 h = hash4( ivec3( cell.x * 7 + gen, cell.y * 13 - gen, 23 ) );
+				if ( h.w > fr.w3clouds.w )
+					continue;
+				const vec4 h2 = hash4( ivec3( cell, gen + 101 ) );
+				const vec3 C = vec3( ( vec2( cell ) + 0.15 + 0.7 * h.xy ) * G - wind, H );
+				const float R = length( C.xy );
+				if ( R < 1000.0 || R > 7000.0 )
+					continue;
+				const float size = mix( 200.0, 300.0, h.z );
+				const float L = length( C );
+				const vec3 cd = C / L;
+				const float den = dot( d, cd );
+				if ( den <= 0.0 )
+					continue;
+				const vec3 right = normalize( vec3( cd.y, -cd.x, 0.0 ) );
+				const vec3 up = cross( right, cd );
+				const vec3 P = d * ( L / den ) - C;
+				const vec2 q = vec2( dot( P, right ) / ( 2.0 * size ), dot( P, up ) / size );
+				if ( abs( q.x ) >= 0.5 || abs( q.y ) >= 0.5 )
+					continue;
+				const float u = h2.y < 0.5 ? q.x + 0.5 : 0.5 - q.x, v = 0.5 - q.y;
+				const int frame = int( mix( 0.1, 15.9, h2.x ) );
+				const vec2 at = ( vec2( frame & 3, frame >> 2 ) + vec2( u, v ) ) * 0.25;
+				const float lod = log2( max( 512.0 * pix * L / ( 2.0 * size ), 1e-3 ) );
+				const vec2 t2 = textureLod( normalTex, at, lod ).rg;
+				// the dissolve: clouds_noise over the card (fade_coords 1), sliding at fade_speed (-0.004, 0)
+				const float Cn = textureLod( ormTex, vec2( fract( u - 0.004 * time ) * 0.25, v ),
+											 log2( max( 256.0 * pix * L / ( 2.0 * size ), 1e-3 ) ) ).b;
+				const float mu = clamp( dot( sun, -cd ), 0.0, 1.0 );
+				// (sun_behind 2, use_ramp_behind 1 by default, use_ramp_front 0.5)
+				const vec2 m = w3CloudMat( t2.r, t2.g, Cn, v, w3Life( fract( tt ), false ), mu, 2.0, 1.0, 0.5 );
+				if ( m.y <= 0.0 )
+					continue;
+				vec3 c = light * m.x;
+				if ( fr.w3fog.x > 0.0 )
+					c = w3SkyFogAt( c, d, L / den );
+				dist[n] = L;
+				col[n] = vec4( c * m.y, m.y );
+				n++;
+			}
+		for ( int k = 0; k < n; k++ ) {	// far to near
+			int far = k;
+			for ( int i = k + 1; i < n; i++ )
+				if ( dist[i] > dist[far] )
+					far = i;
+			const vec4 cc = col[far];
+			col[far] = col[k];
+			dist[far] = dist[k];
+			acc = acc * ( 1.0 - cc.a ) + cc;
+		}
+	}
+	return acc;
+#endif
+}
+
 // water (mode 9, the scene's water materials; vk_scene.cpp Scene_LoadWater): gEmissive holds its visibility and shore
 // (m of path through it), its ripples' tile (m) and speed (m/s); its detail parameters (md) their heading (radians),
 // its roughness (0: its ORM's), normal strength and foam band (m); gTint its colour in the water (sRGB), a the foam's
@@ -1231,7 +1424,8 @@ void main()
 		const vec3 d = normalize( vPos - pc.eye.xyz );
 		const vec3 moon = moonSky( d );	// (r_sceneMoon; none: 0)
 		if ( fr.skyZenith.w > 0.5 ) {	// r_sceneSky: the sky itself, over the map's (alpha 1), the haze's light in front
-			outColor = vec4( toDisplay( skyRadiance( d, moon ) + hazeLight( vPos ) ), 1.0 );
+			const vec4 w3c = w3Clouds( d );	// (r_sceneW3Clouds; off: 0)
+			outColor = vec4( toDisplay( skyRadianceWith( d, moon, w3c ) + hazeLight( vPos ) ), 1.0 );
 			return;
 		}
 		// over the sky (shown about as the haze's colour): the moon and the volume's far end, added (alpha 0)

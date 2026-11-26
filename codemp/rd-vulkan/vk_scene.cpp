@@ -156,6 +156,9 @@ static cvar_t *r_sceneGlowThreshold;
 cvar_t *r_sceneTonemap;
 cvar_t *r_sceneFog;
 static cvar_t *r_sceneFogDensity;
+static cvar_t *r_sceneW3Clouds;	// The Witcher 3's clouds (w3env.py --game-clouds; scene.frag w3Clouds)
+static cvar_t *r_sceneW3CloudImages;
+static image_t *sceneW3CloudImages[3];	// r_sceneW3CloudImages' _sprites, _pano, _cirrus (all three found, else none)
 static cvar_t *r_sceneW3Fog[8];	// r_sceneW3Fog, ..Ramp, ..Front, ..Middle, ..Back, r_sceneW3AerialFront, ..Middle, ..Back
 static cvar_t *r_sceneFogHeight;
 static cvar_t *r_sceneFogMax;
@@ -3356,6 +3359,7 @@ static void Scene_FreeCpuState( void );
 void R_SceneFree( void )
 {
 	sceneMoonImage = NULL;
+	Com_Memset( sceneW3CloudImages, 0, sizeof( sceneW3CloudImages ) );
 	if ( !vk.device ) {	// (nothing on the device: the CPU side alone)
 		Scene_StreamFree();
 		Scene_FreeCpuState();
@@ -3583,6 +3587,16 @@ void R_SceneFree( void )
 
 	Com_Memset( &sc, 0, sizeof( sc ) );
 	sc.eyeView = -1;
+}
+
+// the sky pass's sets 2, 3 and 5 (scene.frag normalTex, ormTex, detailTex): r_sceneW3Clouds' images, else white
+static void Scene_BindW3CloudImages( VkCommandBuffer cb )
+{
+	static const uint32_t sets[3] = { 2, 3, 5 };
+	for ( int i = 0; i < 3; i++ ) {
+		const image_t *image = sceneW3CloudImages[i] ? sceneW3CloudImages[i] : tr.whiteImage;
+		qvkCmdBindDescriptorSets( cb, VK_PIPELINE_BIND_POINT_GRAPHICS, sc.drawPipeLayout, sets[i], 1, &image->descriptor_set, 0, NULL );
+	}
 }
 
 image_t *Scene_Image( const char *path, qboolean *found )
@@ -6649,7 +6663,7 @@ The day/night cycle (tools/levelport/w3env.py --hours), after the lines above:
                     direction; the direction steps once a game minute so the far cascade's cache holds between steps)
 The look values are read through Env( cvar ), which gives the environment's while the cvar is as it was at the load.
 */
-#define SCENE_ENV_VARS	96	// (more than the look values, 69: a line each; was 64)
+#define SCENE_ENV_VARS	96	// (more than the look values, 70: a line each; was 64)
 typedef struct {
 	cvar_t	*cv;
 	int		count;		// the cvar's modificationCount at the load: changed since, its own value wins
@@ -6686,7 +6700,7 @@ const cvar_t *Scene_Env( const cvar_t *cv )
 static void Scene_LoadEnv( const char *bspName, char *sceneMap, int size )
 {
 	static cvar_t **const look[] = { &r_sceneSun, &r_sceneAmbient, &r_sceneExposure, &r_sceneEmissive, &r_sceneGlow, &r_sceneGlowThreshold, &r_sceneTonemap, &r_sceneFog, &r_sceneFogDensity, &r_sceneFogHeight, &r_sceneFogMax, &r_sceneFogLight, &r_sceneFogPhase, &r_sceneFogAlbedo, &r_sceneFogFar, &r_sceneFogStart, &r_sceneFogMoon, &r_sceneGradeExposure, &r_sceneLightScale, &r_sceneGrade, &r_sceneFogLightMax, &r_sceneDayLamps, &r_sceneSky, &r_sceneSkyZenith, &r_sceneSkyHorizon, &r_sceneSkySun, &r_sceneSkyGround, &r_sceneSkyCurve, &r_sceneCharSun, &r_sceneNightOnlyByDay, &r_sceneDayOnlyAtNight, &r_sceneWet, &r_sceneFoliage, &r_sceneFoliageWrap, &r_sceneFoliageTrans, &r_sceneFoliageAO, &r_sceneTreeTint, &r_sceneAO, &r_sceneAORadius, &r_sceneShadowSoft, &r_sceneShadowFar, &r_sceneClouds, &r_sceneCloudScale, &r_sceneCloudEdge, &r_sceneCloudLight, &r_sceneCloudWind, &r_sceneTreeWind, &r_sceneTreeWindDir, &r_sceneEmissiveExposure, &r_sceneEmissiveRef, &r_sceneMoon, &r_sceneMoonSize, &r_sceneMoonGlow, &r_sceneMoonPath, &r_sceneMoonLight, &r_sceneClock, &r_sceneSkySunSide, &r_sceneSkyGlow, &r_sceneAutoExposure, &r_sceneExposureWindow, &r_sceneWindowExposure,
-		&r_sceneW3Fog[0], &r_sceneW3Fog[1], &r_sceneW3Fog[2], &r_sceneW3Fog[3], &r_sceneW3Fog[4], &r_sceneW3Fog[5], &r_sceneW3Fog[6], &r_sceneW3Fog[7] };
+		&r_sceneW3Fog[0], &r_sceneW3Fog[1], &r_sceneW3Fog[2], &r_sceneW3Fog[3], &r_sceneW3Fog[4], &r_sceneW3Fog[5], &r_sceneW3Fog[6], &r_sceneW3Fog[7], &r_sceneW3Clouds };
 	char name[MAX_QPATH];
 	char *buf = NULL;
 
@@ -7114,6 +7128,21 @@ void R_SceneLoad( const char *mapBsp )
 	if ( r_sceneMoonImage->string[0] ) {
 		sceneMoonImage = R_FindImageFile( r_sceneMoonImage->string, IMGFLAG_MIPMAP | IMGFLAG_NOLIGHTSCALE | IMGFLAG_CLAMPTOEDGE, 0 );
 		ri.Printf( PRINT_ALL, "scene moon: %s%s\n", r_sceneMoonImage->string, sceneMoonImage ? "" : " not found (no moon)" );
+	}
+	// r_sceneW3Clouds' images (the sky pass's sets 2, 3, 5; a pack supplies them): all three or none
+	Com_Memset( sceneW3CloudImages, 0, sizeof( sceneW3CloudImages ) );
+	if ( r_sceneW3CloudImages->string[0] ) {
+		static const char *const part[3] = { "_sprites", "_pano", "_cirrus" };
+		int found = 0;
+		for ( int i = 0; i < 3; i++ ) {
+			char name[MAX_QPATH];
+			Com_sprintf( name, sizeof( name ), "%s%s", r_sceneW3CloudImages->string, part[i] );
+			sceneW3CloudImages[i] = R_FindImageFile( name, IMGFLAG_MIPMAP | IMGFLAG_NOLIGHTSCALE, 0 );
+			found += sceneW3CloudImages[i] != NULL;
+		}
+		if ( found != 3 )
+			Com_Memset( sceneW3CloudImages, 0, sizeof( sceneW3CloudImages ) );
+		ri.Printf( PRINT_DEVELOPER, "scene w3 clouds: %s%s\n", r_sceneW3CloudImages->string, found == 3 ? "" : " not found (none)" );
 	}
 
 	// a scene with a colour grade gets a float colour target (r_sceneHdr), set before its pipelines are made: the
@@ -8394,6 +8423,12 @@ void R_SceneVkBeginFrame( void )
 	fr->fx2[3] = (float)vkSamples;
 	fr->cards[0] = r_sceneCardBlend->integer ? 1.0f : 0.0f;
 	fr->cards[1] = fr->cards[2] = fr->cards[3] = 0.0f;
+	Com_Memset( fr->w3clouds, 0, sizeof( fr->w3clouds ) );	// The Witcher 3's clouds: empty or their images missing, off
+	if ( sc.skyOn && sceneW3CloudImages[0] && Env( r_sceneW3Clouds )->string[0] ) {
+		fr->w3clouds[1] = fr->w3clouds[2] = fr->w3clouds[3] = 1.0f;
+		sscanf( Env( r_sceneW3Clouds )->string, "%f %f %f %f", &fr->w3clouds[0], &fr->w3clouds[1], &fr->w3clouds[2], &fr->w3clouds[3] );
+		fr->w3clouds[0] = MAX( fr->w3clouds[0], 0.0f );
+	}
 	Com_Memset( fr->w3fog, 0, sizeof( fr->w3fog ) );	// The Witcher 3's fog (w3env.py --game-fog): empty, off
 	if ( Env( r_sceneW3Fog[0] )->string[0] ) {
 		for ( int i = 0; i < 8; i++ )
@@ -9129,6 +9164,7 @@ static void Scene_DrawLists( int pass, int v, scenePush_t *push )
 			qvkCmdBindPipeline( cb, VK_PIPELINE_BIND_POINT_GRAPHICS, sc.pipe[SCENE_PIPE_SKY] );
 			// r_sceneMoon's image as its albedo
 			qvkCmdBindDescriptorSets( cb, VK_PIPELINE_BIND_POINT_GRAPHICS, sc.drawPipeLayout, 1, 1, sceneMoonImage ? &sceneMoonImage->descriptor_set : &tr.whiteImage->descriptor_set, 0, NULL );
+			Scene_BindW3CloudImages( cb );
 			scenePush_t sky;
 			Com_Memset( &sky, 0, sizeof( sky ) );
 			VectorCopy( sc.views[v].origin, sky.eye );
@@ -9293,6 +9329,7 @@ static void Scene_DrawView( int pass, const int v )
 		qvkCmdSetViewport( cb, 0, 1, &atFar );
 		qvkCmdBindPipeline( cb, VK_PIPELINE_BIND_POINT_GRAPHICS, sc.pipe[SCENE_PIPE_SKY] );
 		qvkCmdBindDescriptorSets( cb, VK_PIPELINE_BIND_POINT_GRAPHICS, sc.drawPipeLayout, 1, 1, sceneMoonImage ? &sceneMoonImage->descriptor_set : &tr.whiteImage->descriptor_set, 0, NULL );	// (r_sceneMoon's image)
+		Scene_BindW3CloudImages( cb );
 		Com_Memset( &push, 0, sizeof( push ) );
 		VectorCopy( sc.views[v].origin, push.eye );
 		push.eye[3] = 1.0f;
@@ -9956,6 +9993,8 @@ void R_SceneRegister( void )
 	r_sceneTonemap		= ri.Cvar_Get( "r_sceneTonemap",		"1",					CVAR_ARCHIVE_ND, "Render scene: tone curve, 0 exponential, 1 filmic (ACES fit: darker shadows, a softer shoulder)" );
 	r_sceneFog			= ri.Cvar_Get( "r_sceneFog",			"51 38 32",				CVAR_ARCHIVE_ND, "Render scene: the haze's colour (sRGB 0-255) before the colour grade (r_sceneGrade), matched to the map's sky near the horizon" );
 	r_sceneFogDensity	= ri.Cvar_Get( "r_sceneFogDensity",		"0.005",				CVAR_ARCHIVE_ND, "Render scene: haze density per metre at the floor (0 off; 0.005 hides half of what is 140 m away)" );
+	r_sceneW3Clouds	= ri.Cvar_Get( "r_sceneW3Clouds",	"",	CVAR_ARCHIVE_ND, "Render scene, r_sceneSky: The Witcher 3's clear-weather clouds (bob_mid_clouds_small_1.w2p: cumulus sprites, a cirrus dome, two panorama rings; r_sceneW3CloudImages): their light x the scene's sun and sky ambient, the cirrus' and the panorama's alpha, the share of the sprites' slots in use (empty: off)" );
+	r_sceneW3CloudImages	= ri.Cvar_Get( "r_sceneW3CloudImages",	"textures/skies/w3clouds",	CVAR_ARCHIVE_ND, "Render scene, r_sceneW3Clouds: the images' name, at the map's load: _sprites (the 4x4 atlas: r shade, g alpha; b the coverage noise, 2x1), _pano (r shade, g alpha; b the dissolve noise, 4x1), _cirrus (rgb its normal, a its density)" );
 	r_sceneW3Fog[0]	= ri.Cvar_Get( "r_sceneW3Fog",	"",	CVAR_ARCHIVE_ND, "Render scene, The Witcher 3's fog (w3env.py --game-fog): density per metre, fogFinalExp, aerialFinalExp, fogDistClamp (m); empty: the haze's own model" );
 	r_sceneW3Fog[1]	= ri.Cvar_Get( "r_sceneW3FogRamp",	"",	CVAR_ARCHIVE_ND, "Render scene, The Witcher 3's fog (w3env.py --game-fog): fogAppearDistance, fogAppearRange (m), the vertical density on the sun's side and the back (fogVertDensity x LightFront, x LightBack)" );
 	r_sceneW3Fog[2]	= ri.Cvar_Get( "r_sceneW3FogFront",	"",	CVAR_ARCHIVE_ND, "Render scene, The Witcher 3's fog (w3env.py --game-fog): fogColorFront (linear, x its brightness, at the sky's scale), w fogVertOffset (m)" );

@@ -21,7 +21,8 @@ Mapping (the game's units are not this renderer's; the scales are the calibratio
 - the analytic sky (r_sceneSky 1): m_sky.skyColor / skyColorHorizon, linear, x --sky (the scene's units); by default
   the game's own ratio of the sky to the sun: --sun x m_sky.globalSkyBrightness / m_globalLight.sunColor's scale
   (6 x 7.62 / 182 = 0.25; the hand-set 0.6 drew it pale). Clouds: the game's are particle systems (the
-  weather table's WT_Clear: bob_mid_clouds_small_1.w2p), not converted; --clouds turns on the renderer's own cumulus as
+  weather table's WT_Clear: bob_mid_clouds_small_1.w2p): --game-clouds draws them (r_sceneW3Clouds: scene.frag w3Clouds
+  reads the system's values; its images from w3clouds.py's pack); else --clouds turns on the renderer's own cumulus as
   a stand-in. Under the horizon, where the map's ground ends: --ground (sRGB 0-255 at the sky's scale; the valley's
   hazed blue-green in the wiki's palace shot; clouds 0.5 at 3 km, curve 2), a stand-in until the valley's terrain is converted.
 - exposure: m_toneMapping.exposureScale x --exposure (r_sceneExposure).
@@ -109,6 +110,9 @@ def main():
     ap.add_argument('--game-fog', action='store_true',
                     help="also the game's own fog (r_sceneW3Fog*), in place of the haze's")
     ap.add_argument('--game-aerial', action='store_true', help="--game-fog with its aerial perspective too")
+    ap.add_argument('--game-clouds', default='',
+                    help="r_sceneW3Clouds: the game's clouds (their light, the cirrus' and the panorama's alpha, the share "
+                         "of the sprites in use; needs w3clouds.py's pack); in place of --clouds' stand-in")
     ap.add_argument('--grade', action='store_true', help="the game's grade (w3grade.py's .xlut) does the exposure")
     ap.add_argument('--grade-exposure', type=float, default=8.0,
                     help="the light handed to the game's grade (this renderer's light units to the game's)")
@@ -214,6 +218,8 @@ def main():
                  ['r_sceneFoliage %.2f' % a.foliage] if a.foliage > 0 else [])
     if a.game_fog:
         lines += game_fog_lines(curve_at, a.hour, a.sky, a.fog, a.game_aerial)
+    if a.game_clouds:
+        lines += ['r_sceneW3Clouds %s' % a.game_clouds]  # (scene.frag leaves --clouds' stand-in out then)
     if a.hours > 0:
         lines += cycle_lines(a, world, curve_at, sky_given)
     os.makedirs(os.path.join(a.out, 'maps'), exist_ok=True)
