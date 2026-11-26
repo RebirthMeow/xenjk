@@ -197,6 +197,38 @@ void Scene_LoadW3Blend( const char *scnName, std::vector<float> &params )
 			ri.Printf( PRINT_ALL, "%s: layer blends need the GPU-driven draws; drawn with their first layer\n", name );
 		} else {
 			const byte *mats = (const byte *)buf + sizeof( xw3bHeader_t ) + (size_t)h->vertices * 12u;
+			// XEXT (tools/levelport w3scene.py; any version, after the cards and the wind): 'XEXT', u32 materials, u32
+			// floats, u32 paths, then per material its floats ([0] 1: present) and 64 B paths: the game's exact layer-blend
+			// and wear-paint terms (its shader cache; levelport/w3/shadercache/FORMULAS.md). Absent: the earlier blends
+			const byte *ext = NULL;
+			uint32_t extFloats = 0, extPaths = 0;
+			{
+				uint64_t at = need64;
+				if ( h->version >= 3 && (uint64_t)len >= at + 4u ) {
+					uint32_t cards;
+					Com_Memcpy( &cards, (const byte *)buf + (size_t)at, 4 );
+					at += 4u + (uint64_t)cards * 416u;
+				}
+				if ( h->version == 4 && (uint64_t)len >= at + 8u ) {
+					uint32_t nt, nm;
+					Com_Memcpy( &nt, (const byte *)buf + (size_t)at, 4 );
+					Com_Memcpy( &nm, (const byte *)buf + (size_t)at + 4, 4 );
+					at += 8u + (uint64_t)nt * SCENE_WIND_RECORD * 4u + (uint64_t)nm * 8u;
+				}
+				if ( (uint64_t)len >= at + 16u && !memcmp( (const byte *)buf + (size_t)at, "XEXT", 4 ) ) {
+					uint32_t head[3];
+					Com_Memcpy( head, (const byte *)buf + (size_t)at + 4, 12 );
+					if ( head[0] == h->materials && head[1] >= 18u && head[1] <= 64u && head[2] >= 1u && head[2] <= 8u
+						&& (uint64_t)len >= at + 16u + (uint64_t)head[0] * ( head[1] * 4u + head[2] * 64u ) ) {
+						ext = (const byte *)buf + (size_t)at + 16u;
+						extFloats = head[1];
+						extPaths = head[2];
+					} else {
+						ri.Printf( PRINT_WARNING, "WARNING: %s: its XEXT section does not fit this file, ignored\n", name );
+					}
+				}
+			}
+			uint32_t numExt = 0;
 			auto slotIndex = [&]( const byte *p ) -> float {
 				char path[65];
 				Com_Memcpy( path, p, 64 );
@@ -221,6 +253,16 @@ void Scene_LoadW3Blend( const char *scnName, std::vector<float> &params )
 				float p[24];
 				Com_Memset( p, 0, sizeof( p ) );
 				Com_Memcpy( p, rec, nf * 4u );
+				float e[24];	// (its XEXT floats; e[0] 1: present)
+				Com_Memset( e, 0, sizeof( e ) );
+				const byte *ePaths = NULL;
+				if ( ext ) {
+					const byte *er = ext + (size_t)i * ( extFloats * 4u + extPaths * 64u );
+					Com_Memcpy( e, er, ( extFloats < 24u ? extFloats : 24u ) * 4u );
+					ePaths = er + extFloats * 4u;
+					if ( e[0] != 1.0f )
+						ePaths = NULL;
+				}
 				const int layers = (int)p[0];
 				const qboolean hasF0 = ( p[20] > 0.0f || p[21] > 0.0f || p[22] > 0.0f ) ? qtrue : qfalse;
 				if ( p[23] == 3.0f && params[i * 4u] == 0.0f ) {
@@ -270,6 +312,14 @@ void Scene_LoadW3Blend( const char *scnName, std::vector<float> &params )
 					d[1] = (float)( params.size() / 4u );
 					d[2] = d[3] = 0.0f;
 					params.insert( params.end(), block, block + 28 );
+					if ( ePaths ) {
+						// XEXT (detail z 1): 7 (global wear, its blur, its max, the wear masks' roughness share), 8 (global
+						// wear mask inverted, the paint mask's roughness share, the base roughness image: -1 none)
+						const float more[8] = { e[1], e[2], e[3], e[4], e[5], e[6], slotIndex( ePaths ), 0.0f };
+						params.insert( params.end(), more, more + 8 );
+						params[i * 4u + 2] = 1.0f;
+						numExt++;
+					}
 					sc.numW3Blend++;
 					continue;
 				}
@@ -310,10 +360,22 @@ void Scene_LoadW3Blend( const char *scnName, std::vector<float> &params )
 				d[2] = (float)layers;
 				d[3] = 0.0f;
 				params.insert( params.end(), block, block + 40 );
+				if ( ePaths ) {
+					// XEXT (detail w 1): 10 (diffuse override, its colour), 11 (mask sharpness, the noise mask's share, its
+					// low and high), 12 (the height's low and high, the blending shift, the mask tiling), 13 (the pattern
+					// mask's black and white points, its fill, the mask image: -1 none), 14 (scalar roughness, its share)
+					const float more[20] = { e[1], e[2], e[3], e[4], e[5], e[6], e[7], e[8], e[9], e[10], e[11], e[12],
+						e[13], e[14], e[15], slotIndex( ePaths ), e[16], e[17], 0.0f, 0.0f };
+					params.insert( params.end(), more, more + 20 );
+					params[i * 4u + 3] = 1.0f;
+					numExt++;
+				}
 				sc.numW3Blend++;
 			}
 			if ( numF0 )
 				ri.Printf( PRINT_ALL, "%s: %u materials with their own specular colour\n", name, numF0 );
+			if ( numExt )
+				ri.Printf( PRINT_ALL, "%s: %u layer-blend and wear-paint materials with the game's exact terms (XEXT)\n", name, numExt );
 			// version 3: Witcher 3 SpeedTree billboards (tools/levelport w3scene.py writes them): u32 count,
 			// then 416-byte records: type (1 the card turned to the viewer, 2 the top card), material, views, a0 (radians),
 			// the pitch band's start and end (degrees), 2 pad, 16 views x 6 floats (card (s, t) to the atlas: u = m0 s +

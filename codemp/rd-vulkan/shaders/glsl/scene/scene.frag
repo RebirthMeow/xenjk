@@ -1491,6 +1491,62 @@ void main()
 		if ( f0.r + f0.g + f0.b > 0.0 )
 			w3F0 = f0;
 		const int n = max( int( p0.x ), 1 );
+		if ( md.w == 1.0 ) {
+			// the game's own blend (its shader cache, XEXT; levelport/w3/shadercache/FORMULAS.md): the two layers about
+			// vertex green x 16 + the blending shift, each tinted inside its coloured range; their blend sharpened about a
+			// mask (the upper layer's height, the normals' blue, or a noise image); the diffuse override over it; the
+			// pattern where its alpha, its mask's levels and vertex blue say, between its layers; vertex red's AO.
+			// Colours raw (byte / 255), as the game's shader takes them
+			const vec4 e0 = materialDetail[b + 10u], e1 = materialDetail[b + 11u], e2 = materialDetail[b + 12u];
+			const vec4 e3 = materialDetail[b + 13u], e4 = materialDetail[b + 14u];
+			const float place = vCol.g * 15.99999 + e2.z;
+			const float fi0 = floor( place ), fi1 = floor( place + 1.0 ), f = place - fi0;
+			const int i0 = clamp( int( fi0 ), 0, n - 1 ), i1 = clamp( int( fi1 ), 0, n - 1 );
+			const vec2 uvx = dFdx( vUV ) * COARSE_GRAD, uvy = dFdy( vUV ) * COARSE_GRAD;
+			const vec2 muv = vUV * e2.w;
+			const float c0i = i0 < 4 ? cA[i0] : cB[i0 - 4], c1i = i1 < 4 ? cA[i1] : cB[i1 - 4];
+			const float n0i = i0 < 4 ? nA[i0] : nB[i0 - 4], n1i = i1 < 4 ? nA[i1] : nB[i1 - 4];
+			vec3 c0 = albedo, c1 = albedo;
+			if ( c0i >= 0.0 )
+				c0 = toLinear( textureGrad( sceneTex[SCENE_TEX_INDEX( uint( c0i ) )], muv, uvx * e2.w, uvy * e2.w ).rgb );
+			if ( c1i >= 0.0 )
+				c1 = toLinear( textureGrad( sceneTex[SCENE_TEX_INDEX( uint( c1i ) )], muv, uvx * e2.w, uvy * e2.w ).rgb );
+			c0 *= gTint.rgb;
+			c1 *= gTint.rgb;
+			const float g0 = clamp( fi0 + 1.0 - p0.y, 0.0, 1.0 ) * clamp( 1.0 - fi0 + p0.z, 0.0, 1.0 );
+			const float g1 = clamp( fi1 + 1.0 - p0.y, 0.0, 1.0 ) * clamp( 1.0 - fi1 + p0.z, 0.0, 1.0 );
+			c0 = mix( c0, c0 * p2.rgb, g0 );
+			c1 = mix( c1, c1 * p2.rgb, g1 );
+			vec4 q0 = vec4( 0.5, 0.5, 0.5, 0.5 ), q1 = q0;
+			if ( n0i >= 0.0 )
+				q0 = textureGrad( sceneTex[SCENE_TEX_INDEX( uint( n0i ) )], muv, uvx * e2.w, uvy * e2.w );
+			if ( n1i >= 0.0 )
+				q1 = textureGrad( sceneTex[SCENE_TEX_INDEX( uint( n1i ) )], muv, uvx * e2.w, uvy * e2.w );
+			const float hr = mix( e2.x, e2.y, q1.b );
+			const float noise = e3.w >= 0.0 ? textureGrad( sceneTex[SCENE_TEX_INDEX( uint( e3.w ) )], muv, uvx * e2.w, uvy * e2.w ).r : 0.5;
+			const float mask = mix( hr, mix( e1.z, e1.w, noise ), e1.y );
+			const float w = clamp( ( f - mask ) * e1.x, 0.0, 1.0 );
+			albedo = mix( c0, c1, w );
+			albedo = mix( albedo, e0.yzw, e0.x );
+			if ( p4.z >= 0.0 ) {
+				const vec2 puv = vUV1 * p3.w + p4.xy;
+				const vec4 pt = textureGrad( sceneTex[SCENE_TEX_INDEX( uint( p4.z ) )], puv, dFdx( puv ) * COARSE_GRAD, dFdy( puv ) * COARSE_GRAD );
+				const float pmr = p4.w >= 0.0 ? textureGrad( sceneTex[SCENE_TEX_INDEX( uint( p4.w ) )], vUV, uvx, uvy ).r : 1.0;
+				const float span = e3.y - e3.x;
+				const float pm = clamp( span != 0.0 ? ( pmr - e3.x ) / span : 1.0, 0.0, 1.0 );
+				const float pw = clamp( ( e3.z + p3.z * pt.a * pm ) * vCol.b, 0.0, 1.0 );
+				// (registers 21 and 22 of the game's shader: the top layer gates from below, the bottom from above)
+				const float top = clamp( ( fi0 - p3.y + 1.0 ) * clamp( fi0 - p3.y + w, 0.0, 1.0 ), 0.0, 1.0 );
+				const float bottom = clamp( fi1 + w - p3.x, 0.0, 1.0 );
+				albedo += ( toLinear( pt.rgb ) - albedo ) * pw * ( 1.0 - top ) * bottom;
+			}
+			albedo *= mix( vec3( 1.0 ), vCol.r * p1.rgb, clamp( p0.w, 0.0, 1.0 ) );
+			const vec2 nxy = mix( q0.xy, q1.xy, w ) * 2.0 - 1.0;
+			w3n = normalize( vec3( nxy, 1.0 ) );
+			rough = clamp( mix( mix( q0.a, q1.a, w ), e4.x, e4.y ) * p1.w + p2.w, 0.05, 1.0 );
+			metal = 0.0;
+			ao = 1.0;
+		} else {
 		const float place = vCol.g * 16.0;
 		const float L = clamp( place, 0.0, float( n - 1 ) );
 		const int i0 = int( floor( L ) ), i1 = min( i0 + 1, n - 1 );
@@ -1527,6 +1583,7 @@ void main()
 		rough = clamp( q.a * p1.w + p2.w, 0.05, 1.0 );
 		metal = 0.0;
 		ao = 1.0;
+		}
 	}
 	// Witcher 3 wear-paint (pbr_std_wear_paint, the Blender tools' "W3 Wear" chain): over the tinted base (the albedo),
 	// paint where the vertex colour's blue passes its range past the masks' green, then wear (the untinted base, its
@@ -1541,6 +1598,42 @@ void main()
 		if ( f0.r + f0.g + f0.b > 0.0 )
 			w3F0 = f0;
 		const vec2 uvx = dFdx( vUV ) * COARSE_GRAD, uvy = dFdy( vUV ) * COARSE_GRAD;
+		if ( md.z == 1.0 ) {
+			// the game's own chain (its shader cache, XEXT; levelport/w3/shadercache/FORMULAS.md): the masks' red (or
+			// the base roughness, by share) selects; paint by the pattern's alpha x vertex blue; global wear strips the
+			// paint and adds wear over the whole surface; the wear shows the tinted base (the albedo), its saturation,
+			// brightness and tint. Colours raw (byte / 255), as the game's shader takes them
+			const vec4 x7 = materialDetail[b + 7u], x8 = materialDetail[b + 8u];
+			const float bm = w5.z >= 0.0 ? textureGrad( sceneTex[SCENE_TEX_INDEX( uint( w5.z ) )], vUV * w1.z, uvx * w1.z, uvy * w1.z ).r : 0.0;
+			const float rr = x8.z >= 0.0 ? textureGrad( sceneTex[SCENE_TEX_INDEX( uint( x8.z ) )], vUV, uvx, uvy ).r : 0.5;
+			const float sPaint = mix( bm, rr, x8.y ), sWear = mix( bm, rr, x7.w );
+			vec4 pat = vec4( 1.0 );
+			if ( w5.w >= 0.0 )
+				pat = textureGrad( sceneTex[SCENE_TEX_INDEX( uint( w5.w ) )], vUV1 * w1.y, dFdx( vUV1 ) * COARSE_GRAD * w1.y, dFdy( vUV1 ) * COARSE_GRAD * w1.y );
+			const float pr = w0.z - w0.y;
+			const float pm = clamp( pr != 0.0 ? ( pat.a * vCol.b - w0.y ) / pr : 0.0, 0.0, 1.0 );
+			const float pc = clamp( pm * 2.0 - 1.0 + sPaint + w1.x * ( 1.0 - 2.0 * sPaint ), 0.0, 1.0 );
+			const float ph = clamp( w0.w, 0.0, 1.0 ) * 0.5;
+			float pa = clamp( ( pc - ph ) / max( 1.0 - 2.0 * ph, 1e-4 ), 0.0, 1.0 ) * clamp( w0.x, 0.0, 1.0 );
+			// global wear: x7 (amount, blur, max); its mask the wear selection, inverted by x8.x
+			const float thr = clamp( x7.y + 1.0 - x7.x, 1e-4, 100.0 );
+			const float den = 1.0 - x7.x - thr;
+			const float gsel = sWear + x8.x * ( 1.0 - 2.0 * sWear );
+			const float gw = clamp( ( gsel - thr ) / ( abs( den ) < 1e-6 ? -1e-6 : den ), 0.0, 1.0 );
+			const float keep = clamp( 1.0 + x7.z * ( gw - 1.0 ), 0.0, 1.0 );
+			pa *= keep;
+			const vec3 base = albedo;
+			vec3 col = mix( base, toLinear( pat.rgb ) * w2.rgb, pa );
+			const float wr = w3v.y - w3v.x;
+			const float wm = clamp( wr != 0.0 ? ( ( 1.0 - vCol.a ) - w3v.x ) / wr : 0.0, 0.0, 1.0 );
+			const float wc = clamp( wm * 2.0 - 1.0 + sWear + w3v.w * ( 1.0 - 2.0 * sWear ), 0.0, 1.0 );
+			const float wh = clamp( w3v.z, 0.0, 1.0 ) * 0.5;
+			const float ws = clamp( ( wc - wh ) / max( 1.0 - 2.0 * wh, 1e-4 ), 0.0, 1.0 );
+			const float wa = clamp( clamp( w2.w, 0.0, 1.0 ) * ( 1.0 - keep + ws ), 0.0, 1.0 );
+			const vec3 wear = w4.rgb * w4.w * mix( vec3( dot( base, vec3( 0.2989, 0.587, 0.114 ) ) ), base, w5.x );
+			col = mix( col, wear, wa );
+			albedo = mix( col, col * ( 1.0 - vCol.r ), clamp( w1.w, 0.0, 1.0 ) );
+		} else {
 		const float g = w5.z >= 0.0 ? textureGrad( sceneTex[SCENE_TEX_INDEX( uint( w5.z ) )], vUV * w1.z, uvx * w1.z, uvy * w1.z ).g : 0.0;
 		vec3 col = albedo;
 		if ( w0.x > 0.0 ) {
@@ -1568,6 +1661,7 @@ void main()
 			col = mix( col, wear, amount );
 		}
 		albedo = mix( col, col * ( 1.0 - vCol.r ), clamp( w1.w, 0.0, 1.0 ) );
+		}
 	}
 	// Witcher 3 slope layer (snow.w2mg: the castle's rocks with grass on top): its second layer where the surface faces
 	// up, from its low to its high cosine (ThresholdMin, Max, read as the world normal's up component), at its tiling;

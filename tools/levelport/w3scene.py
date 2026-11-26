@@ -130,6 +130,14 @@ class Tex:
 GRASS_HIDE = 60.0   # (m: terrain foliage's grass and flowers, drawn to here)
 GRASS_RE = re.compile(r'[\\/](grass|grass_w3|grass_common\w*)[\\/]', re.I)
 WIND_RECORD = 320   # floats a SpeedTree's wind record (w3trees.WIND_RECORD)
+# the .xw3b's XEXT section (after the cards and the wind): per material EXT_FLOATS floats ([0] 1: present) and EXT_PATHS
+# 64 B image paths. Layer blend: 1 DiffuseOverride, 2-4 DiffuseOverrideColor (raw), 5 MaskSharpness, 6 UseOldMask,
+# 7 LowMask, 8 HighMask, 9 BottomMaskRange, 10 TopMaskRange, 11 BlendingShift, 12 MaskTile, 13 Mask_Black_Point,
+# 14 Mask_White_Point, 15 MaskFill, 16 ScalarRoughness, 17 RoughnessOverride; path 0 the Mask. Wear-paint: 1 GlobalWear,
+# 2 GlobalWearBlur, 3 GlobalWearMax, 4 the wear masks' roughness share, 5 InvertMaskForGlobalWear,
+# 6 UseRoughnessForPaintMask; path 0 the base roughness (the base normal's alpha, raw)
+EXT_FLOATS = 24
+EXT_PATHS = 2
 BLOCKOUT = chr(92) + 'blockout_base' + chr(92)    # (lower case: the game's hidden placeholder meshes)
 
 
@@ -203,6 +211,31 @@ def rgb(v, default):
     return [float(x) for x in (v if isinstance(v, (list, tuple)) else default)[:3]]
 
 
+def raw_rgb(v, default):
+    """A colour parameter as the game's shader receives it: the byte / 255 numbers, used there as linear multipliers
+    (the game's shader cache: pbr_vert_blend_colorize's TextureColor, DiffuseOverrideColor, AO_Tint and pbr_std_wear_paint's
+    tints reach the maths unconverted; only SpecularColor is raised to 2.2 in the shader). The Blender add-on hands them
+    over sRGB-decoded (TextureColor 255 137 67 as 1.0 0.25 0.056), so this encodes them back. `default` is raw."""
+    if not isinstance(src_value(v, None), (list, tuple)):
+        return list(default)
+
+    def enc(c):
+        c = min(max(float(c), 0.0), 1.0)
+        return c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
+    return [enc(c) for c in rgb(v, default)]
+
+
+def gl_normal_height(t):
+    """A layer-blend normal array slice for the renderer: x, y as OpenGL normals (green flipped), the game's blue (the
+    layer's height: pbr_vert_blend_colorize blends its layers by it, not a normal component; uncorrelated with the
+    normal's z) kept in blue, the roughness alpha kept."""
+    x = t[..., 0].astype(np.float32)
+    y = 255.0 - t[..., 1].astype(np.float32)
+    b = t[..., 2].astype(np.float32) if t.shape[-1] >= 3 else np.full(x.shape, 255.0, np.float32)
+    a = t[..., 3].astype(np.float32) if t.shape[-1] == 4 else np.full(x.shape, 255.0, np.float32)
+    return np.uint8(np.round(np.clip(np.stack([x, y, b, a], -1), 0, 255)))
+
+
 # ---------------------------------------------------------------------------------------------------- materials
 
 class Materials:
@@ -216,6 +249,8 @@ class Materials:
         self.kind = {}      # material index -> its .xw3b record's kind (float 23): 0 layer blend or F0 alone, 1 wear-paint,
                             # 2 a slope layer (snow.w2mg)
         self.card = {}      # material index -> its SpeedTree billboard card (w3trees.py: type 1 vertical, 2 top; .xw3b v3)
+        self.ext = {}       # material index -> (EXT_FLOATS floats, EXT_PATHS paths): the .xw3b's XEXT section (the game's
+                            # exact layer-blend and wear-paint terms, read from its shader cache)
 
     def slope_layer(self, ins):
         """environment/shaders/special/snow.w2mg (a Witcher3_Main material with SnowDiffuse wired; the castle's rocks
@@ -258,15 +293,29 @@ class Materials:
             paths[1] = self.images.add(np.ascontiguousarray(m[..., :3]), 'o')
         t = self.tex.get(pat_p)
         if t is not None:
-            paths[2] = self.images.add(np.ascontiguousarray(t[..., :3]), 'a')
-        wt = rgb(ins.get('WearTint'), [1.0, 1.0, 1.0])
+            # (RGBA: the game's paint mask is the pattern's alpha times the vertex blue)
+            paths[2] = self.images.add(np.ascontiguousarray(t if t.shape[-1] == 4 else t[..., :3]), 'a',
+                                       alpha=t.shape[-1] == 4)
+        wt = raw_rgb(ins.get('WearTint'), [1.0, 1.0, 1.0])
         wt8 = [int(round(min(max(c, 0.0), 1.0) * 255)) for c in wt]
         v = [0.0, f('PaintOpacity', 0.0), f('Paint_0', 0.0), f('Paint_1', 1.0), f('PaintBlendSharpness', 0.0),
-             f('InvertPaintMask', 0.0)] + rgb(ins.get('PaintTint'), [1.0, 1.0, 1.0]) + [f('PaintTiling', 1.0)]
+             f('InvertPaintMask', 0.0)] + raw_rgb(ins.get('PaintTint'), [1.0, 1.0, 1.0]) + [f('PaintTiling', 1.0)]
         v += [f('WearOpacity', 0.0), f('Wear_0', 0.0), f('Wear_1', 1.0), f('WearBlendSharpness', 0.0),
               f('InvertWearMask', 0.0), f('WearBrightness', 1.0), f('WearSaturation', 1.0), f('UseAO', 0.0),
               f('BlendingMasksTiling', 1.0), float(wt8[0] | (wt8[1] << 8) | (wt8[2] << 16))]  # (the wear tint, rgb8)
+        # XEXT: the game's global wear (strips paint, adds wear over the whole surface) and its masks' roughness
+        # selection (shadercache/FORMULAS.md); the raw base roughness (the base normal's alpha) as its image
+        nrm_p, _ = src_image(ins.get('BaseNormal'))
+        n = self.tex.get(nrm_p)
+        ext_paths = [''] * EXT_PATHS
+        if n is not None and n.shape[-1] == 4:
+            ext_paths[0] = self.images.add(np.ascontiguousarray(np.repeat(n[..., 3:4], 3, -1)), 'o')
+        e = [1.0, f('GlobalWear', 0.0), f('GlobalWearBlur', 0.0), f('GlobalWearMax', 1.0),
+             max(f('UseRoughnessForWearMask', 0.0), f('UseRoughnessForGlobalWear', 0.0)),
+             f('InvertMaskForGlobalWear', 0.0), f('UseRoughnessForPaintMask', 0.0)]
+        self.ext[self._wear_index] = (e + [0.0] * (EXT_FLOATS - len(e)), ext_paths)
         self.stats['wear_paint_layers'] += 1
+        self.stats['wear_paint_global_wear'] += 1 if f('GlobalWear', 0.0) > 0.0 else 0
         return v, paths
 
     def layer_blend(self, ins):
@@ -281,7 +330,8 @@ class Materials:
             paths.append(self.images.add(np.ascontiguousarray(t[..., :3]), 'a') if t is not None else '')
         for k in range(8):
             t = self.tex.get(nrms[k]) if k < n and k < len(nrms) else None
-            paths.append(self.images.add(dx_to_gl_normal(t, keep_alpha=True), 'n', alpha=True) if t is not None else '')
+            # (x, y, the game's height in blue, roughness: the renderer rebuilds the normal from x and y)
+            paths.append(self.images.add(gl_normal_height(t), 'n', alpha=True) if t is not None else '')
         pat_p, _ = src_image(ins.get('PatternTexture'))
         mask_p, _ = src_image(ins.get('PatternMask'))
         pat = self.tex.get(pat_p)
@@ -289,15 +339,31 @@ class Materials:
         paths.append(self.images.add(np.ascontiguousarray(pat), 'a', alpha=True) if pat is not None else '')
         paths.append(self.images.add(np.ascontiguousarray(mask[..., :3]), 'o') if mask is not None else '')
         off = combxyz(ins.get('PatternUVOffset'))
-        p = [float(n), float(src_value(ins.get('ColoredTextureBottom'), 0.0)),
-             float(src_value(ins.get('ColoredTextureTop'), -1.0)), float(src_value(ins.get('AOPower'), 0.0))]
-        p += rgb(ins.get('AO_Tint'), [1.0, 1.0, 1.0]) + [float(src_value(ins.get('RSpecScale'), 1.0))]
-        p += rgb(ins.get('TextureColor'), [1.0, 1.0, 1.0]) + [float(src_value(ins.get('RSpecBase'), 0.0))]
-        p += [float(src_value(ins.get('PatternBottomLayer'), 0.0)), float(src_value(ins.get('PatternTopLayer'), -1.0)),
-              float(src_value(ins.get('UsePattern'), 0.0)) if pat is not None else 0.0,
-              float(src_value(ins.get('PatternUVScale'), 1.0))]
+
+        def f(k, d):
+            return float(src_value(ins.get(k), d))
+        p = [float(n), f('ColoredTextureBottom', 0.0), f('ColoredTextureTop', -1.0), f('AOPower', 0.0)]
+        p += raw_rgb(ins.get('AO_Tint'), [1.0, 1.0, 1.0]) + [f('RSpecScale', 1.0)]
+        p += raw_rgb(ins.get('TextureColor'), [1.0, 1.0, 1.0]) + [f('RSpecBase', 0.0)]
+        p += [f('PatternBottomLayer', 0.0), f('PatternTopLayer', -1.0), f('UsePattern', 0.0) if pat is not None else 0.0,
+              f('PatternUVScale', 1.0)]
         p += [off[0], off[1], 0.0, 0.0]
+        # XEXT: the game's exact blend (shadercache/FORMULAS.md): the diffuse override, the layer mask (the upper
+        # layer's height or the Mask noise, sharpened), the blending shift, the pattern mask's levels and fill
+        m_p, _ = src_image(ins.get('Mask'))
+        mt = self.tex.get(m_p)
+        ext_paths = [''] * EXT_PATHS
+        if mt is not None:
+            ext_paths[0] = self.images.add(np.ascontiguousarray(mt[..., :3] if mt.ndim == 3 else np.repeat(mt[..., None], 3, -1)), 'o')
+        tile = combxyz(ins.get('MaskTile'), (1.0, 1.0))[0]
+        e =[1.0, f('DiffuseOverride', 0.0)] + raw_rgb(ins.get('DiffuseOverrideColor'), [1.0, 1.0, 1.0])
+        e += [f('MaskSharpness', 1.0), f('UseOldMask', 0.0), f('LowMask', 0.0), f('HighMask', 1.0),
+              f('BottomMaskRange', 0.0), f('TopMaskRange', 1.0), f('BlendingShift', 0.0), tile,
+              f('Mask_Black_Point', 0.0), f('Mask_White_Point', 1.0), f('MaskFill', 0.0),
+              f('ScalarRoughness', 0.5), f('RoughnessOverride', 0.0)]
+        self._blend_ext = (e + [0.0] * (EXT_FLOATS - len(e)), ext_paths)
         self.stats['blend_layers_%d' % n] += 1
+        self.stats['blend_diffuse_override'] += 1 if f('DiffuseOverride', 0.0) > 0.0 else 0
         return p, paths
 
     def main_group(self, rec):
@@ -363,14 +429,16 @@ class Materials:
         nrm = self.tex.get(nrm_p)
         raw_base = None     # (wear-paint: the base before its tint, which the wear shows)
         if tree == 'pbr_std_wear_paint' and alb is not None:
-            # the base as the game draws it before paint and wear: BaseDiffuse x BaseDiffuseTint x BaseDiffuseTintScale
-            # (linear; the Blender tools' "W3 Wear Tinted Base"). The palace's roofs are green copper tinted red (0.88,
-            # 0.007, 0.007 x 0.6): without it they drew green where the game's are terracotta (a reference shot)
-            tint = rgb(ins.get('BaseDiffuseTint'), [1.0, 1.0, 1.0])
+            # the base as the game draws it before paint and wear (its shader cache, shadercache/FORMULAS.md):
+            # lerp(BaseDiffuse, BaseDiffuse x BaseDiffuseTint, BaseDiffuseTintScale), the tint raw (byte / 255). The
+            # Blender tools' "W3 Wear Tinted Base" multiplied by the decoded tint and the scale: a roof tinted (255, 25,
+            # 30) at 0.2 drew at a fifth of its brightness, deep red, where the game's keeps 82-100 %
+            tint = raw_rgb(ins.get('BaseDiffuseTint'), [1.0, 1.0, 1.0])
             scale = float(src_value(ins.get('BaseDiffuseTintScale'), 1.0))
-            if tint != [1.0, 1.0, 1.0] or scale != 1.0:
+            if tint != [1.0, 1.0, 1.0] and scale != 0.0:
                 raw_base = alb
-                lin = (alb[..., :3].astype(np.float32) / 255.0) ** 2.2 * np.array(tint, np.float32) * scale
+                lin = (alb[..., :3].astype(np.float32) / 255.0) ** 2.2
+                lin = lin * (1.0 + scale * (np.array(tint, np.float32) - 1.0))
                 alb = np.concatenate([np.uint8(np.round(np.clip(lin, 0, 1) ** (1 / 2.2) * 255)), alb[..., 3:]], -1)
                 self.stats['wear_paint_base_tinted'] += 1
         var = ins.get('VarianceColor')
@@ -430,7 +498,8 @@ class Materials:
             got = self.layer_blend(ins)
             if got:
                 self.blend[i] = got
-                self.names[-1]['layer_blend'] = {'values': got[0], 'images': got[1]}
+                self.ext[i] = self._blend_ext
+                self.names[-1]['layer_blend'] = {'values': got[0], 'images': got[1], 'ext': self._blend_ext}
         if tree == 'Witcher3_Main' and self.layers and 'snow.w2mg' in (rec.get('base') or '').lower() \
                 and isinstance(ins.get('SnowDiffuse'), dict):
             got = self.slope_layer(ins)
@@ -439,6 +508,7 @@ class Materials:
                 self.kind[i] = 2
                 self.names[-1]['slope_layer'] = {'values': got[0], 'images': got[1]}
         if tree == 'pbr_std_wear_paint' and self.layers:
+            self._wear_index = i
             got = self.wear_paint(ins, raw_base)
             self.blend[i] = got
             self.kind[i] = 1
@@ -1103,6 +1173,16 @@ def main():
                 xw3b += b''.join(body)
                 stats['wind_trees'] = len(trees)
                 stats['wind_meshes'] = len(wind_of)
+            if mats.ext:
+                # XEXT (any version; after the cards and the wind; a renderer without it ignores the file's tail):
+                # 'XEXT', u32 materials, u32 EXT_FLOATS, u32 EXT_PATHS, then per material its floats and 64 B paths
+                # (all zero: none)
+                body = [struct.pack('<4s3I', b'XEXT', len(mats.recs), EXT_FLOATS, EXT_PATHS)]
+                for i in range(len(mats.recs)):
+                    ev, ep = mats.ext.get(i, ([0.0] * EXT_FLOATS, [''] * EXT_PATHS))
+                    body.append(struct.pack('<%df' % EXT_FLOATS, *ev) + b''.join(name64(q) for q in ep))
+                xw3b += b''.join(body)
+                stats['ext_materials'] = len(mats.ext)
             zf.writestr(zipfile.ZipInfo('maps/%s.xw3b' % a.map), xw3b, compress_type=zipfile.ZIP_DEFLATED, compresslevel=1)
             stats['layer_blend_materials'] = len(mats.blend)
         if xw3t is not None:
