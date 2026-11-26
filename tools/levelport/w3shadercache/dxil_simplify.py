@@ -1,7 +1,7 @@
 """Condense dxc -dumpbin LLVM IR into short lines: cbuffer loads as cb<reg>.<comp>, samples, math ops."""
 import re, sys
 txt = open(sys.argv[1]).read()
-body = txt[txt.index('define void @ps_main'):]
+body = txt[txt.index('define void @'):]
 body = body[:body.index('\n}\n')]
 names = {}
 out = []

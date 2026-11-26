@@ -148,8 +148,20 @@ def terrain_tiles(work, sub='terrain'):
         props = rec['props']
         b = (float(props['tile_bounds_min_x']), float(props['tile_bounds_min_y']),
              float(props['tile_bounds_max_x']), float(props['tile_bounds_max_y']))
-        out.append((key, z['grid_' + key].astype(np.float64), props, control_lattice(props), b))
+        out.append((key, border_filler(z['grid_' + key].astype(np.float64)), props, control_lattice(props), b))
     return out
+
+
+def border_filler(G, jump=100.0):
+    """A tile's grid with a filler edge replaced by its neighbouring line: the world's last tiles (+x and +y, at 4000 m
+    in Toussaint) end in a row or column all at one height (884.99 m, the height range's top) that stood as a wall
+    along the horizon; a whole border line at one height, more than `jump` metres from the line inside it"""
+    for line, inner in (((-1, slice(None)), (-2, slice(None))), ((0, slice(None)), (1, slice(None))),
+                        ((slice(None), -1), (slice(None), -2)), ((slice(None), 0), (slice(None), 1))):
+        h, hi = G[line + (2,)], G[inner + (2,)]
+        if np.ptp(h) == 0.0 and abs(float(h[0]) - float(np.median(hi))) > jump:
+            G[line + (2,)] = hi
+    return G
 
 
 def jka_material(name, missing):

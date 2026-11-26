@@ -44,10 +44,50 @@ def srgb_to_linear(c):
     return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
 
 
+def linear_to_srgb(c):
+    c = max(0.0, min(1.0, c))
+    return c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1.0 / 2.4) - 0.055
+
+
 def hue(rgb255):
     """A colour's channels over its brightest (0..1, gamma as stored), linearised."""
     m = max(max(rgb255[:3]), 1e-6)
     return [srgb_to_linear(c / m) for c in rgb255[:3]]
+
+
+def game_fog_lines(curve_at, h, sky, fog=1.0, aerial=False):
+    """--game-fog: The Witcher 3's global fog as its shader computes it (static shader 00356,
+    shadercache/FOG_SKY.md), for the renderer's r_sceneW3Fog*. How the engine packs the env into the shader's registers
+    is not read from its code; this reading was chosen by looking (fog-20261126, b14/b15/b22 at 14:00):
+    - the fog colours linear at the sky's scale, without their curves' fourth value (x12-34: with it the far land
+      vanished into a cyan brighter than the sky)
+    - the vertical density negated (fogVertDensity x LightFront / LightBack, -0.005 x 10.6 at 14:00): full density up
+      to fogVertOffset's height (2184 m), thinning above it, so the land hazes and the zenith stays clear; as written
+      the fog thinned toward the ground
+    - the aerial perspective off unless --game-aerial (its colours, linear x their fourth value, darkened and browned
+      the city: luminance x 0.26 0.22 0.13 at f^0.13)"""
+    def sc(name, default):
+        return curve_at(name, (0, 0, 0, default), h)[3]
+    def col(name, scale, bright):
+        c = curve_at('m_globalFog.' + name, (180, 185, 190, 1), h)
+        return [srgb_to_linear(max(0.0, min(255.0, x)) / 255.0) * (max(c[3], 0.0) if bright else 1.0) * scale
+                for x in c[:3]]
+    g = 'm_globalFog.'
+    k = -sc(g + 'fogVertDensity', 0.0)
+    ff, fm, fb = (col(n, sky, False) for n in ('fogColorFront', 'fogColorMiddle', 'fogColorBack'))
+    af, am, ab = (col(n, 1.0, True) for n in ('aerialColorFront', 'aerialColorMiddle', 'aerialColorBack'))
+    return ['r_sceneW3Fog %.6f %.3f %.3f %.0f' % (sc(g + 'fogDensity', 0.0006) * fog, sc(g + 'fogFinalExp', 1.0),
+                                                   sc(g + 'aerialFinalExp', 1.0) if aerial else 0.0,
+                                                   sc(g + 'fogDistClamp', 5000.0)),
+            'r_sceneW3FogRamp %.2f %.2f %.6f %.6f' % (sc(g + 'fogAppearDistance', 0.0), sc(g + 'fogAppearRange', 1.0),
+                                                      k * sc(g + 'fogVertDensityLightFront', 1.0),
+                                                      k * sc(g + 'fogVertDensityLightBack', 1.0)),
+            'r_sceneW3FogFront %.5f %.5f %.5f %.1f' % tuple(ff + [sc(g + 'fogVertOffset', 0.0)]),
+            'r_sceneW3FogMiddle %.5f %.5f %.5f %.4f' % tuple(fm + [sc(g + 'fogVertDensityRimRange', 0.0)]),
+            'r_sceneW3FogBack %.5f %.5f %.5f %.4f' % tuple(fb + [sc(g + 'fogSkyDensityScale', 1.0)]),
+            'r_sceneW3AerialFront %.4f %.4f %.4f %.4f' % tuple(af + [sc('m_sky.horizonVerticalAttenuation', 0.0)]),
+            'r_sceneW3AerialMiddle %.4f %.4f %.4f %.4f' % tuple(am + [sc(g + 'fogSkyVertDensityLightFrontScale', 1.0)]),
+            'r_sceneW3AerialBack %.4f %.4f %.4f %.4f' % tuple(ab + [sc(g + 'fogSkyVertDensityLightBackScale', 1.0)])]
 
 
 def main():
@@ -66,6 +106,9 @@ def main():
     ap.add_argument('--ground', default='haze:0.85', help="the land under the horizon, sRGB 0-255 at the sky's scale ('' none)")
     ap.add_argument('--exposure', type=float, default=1.0)
     ap.add_argument('--fog', type=float, default=1.0, help="times the game's fog density")
+    ap.add_argument('--game-fog', action='store_true',
+                    help="also the game's own fog (r_sceneW3Fog*), in place of the haze's")
+    ap.add_argument('--game-aerial', action='store_true', help="--game-fog with its aerial perspective too")
     ap.add_argument('--grade', action='store_true', help="the game's grade (w3grade.py's .xlut) does the exposure")
     ap.add_argument('--grade-exposure', type=float, default=8.0,
                     help="the light handed to the game's grade (this renderer's light units to the game's)")
@@ -85,6 +128,14 @@ def main():
     ap.add_argument('--side-elevation', type=float, default=12.0,
                     help="the cycle's sun-side horizon colour (sunColorHorizon) shows as the drawn sun falls under this")
     ap.add_argument('--lamp-fade', type=float, default=0.5, help="hours a city lamp takes to light or go out")
+    ap.add_argument('--night-exposure', type=float, default=0.0,
+                    help="the cycle's eye adaptation top (EV) at full night (r_sceneExposureWindow's second value; 1 by "
+                         "day). 0 matches the game's night references; 2.5 was the earlier lift")
+    ap.add_argument('--light-side', default='60,10',
+                    help="the cycle's key light by night: where m_globalLight.sunColorCenterArea (the angle round the "
+                         "light that sees sunColor) falls from the first value to the second, the light blends to "
+                         "sunColorLightSide, which the rest of the view sees (teal moonlight; sunColor's violet blue "
+                         "lights only the moon's own direction then). '' keeps sunColor")
     a = ap.parse_args(argv)
 
     mat = importlib.import_module(PKG + '.repo_paths.materialize')
@@ -161,6 +212,8 @@ def main():
              'r_sceneAO %.2f' % a.ao, 'r_sceneAORadius %.2f' % a.ao_radius] + (
                  ['r_sceneShadowFar %.0f' % a.shadow_far] if a.shadow_far > 0 else []) + (
                  ['r_sceneFoliage %.2f' % a.foliage] if a.foliage > 0 else [])
+    if a.game_fog:
+        lines += game_fog_lines(curve_at, a.hour, a.sky, a.fog, a.game_aerial)
     if a.hours > 0:
         lines += cycle_lines(a, world, curve_at, sky_given)
     os.makedirs(os.path.join(a.out, 'maps'), exist_ok=True)
@@ -190,17 +243,52 @@ def cycle_lines(a, world, curve_at, sky_given):
     so --hour's keyframe is the calibrated environment above.
     - the sun: the trajectory's light (the moon's by night: the game swaps them in its light direction), its colour's
       hue; strength r_sceneSun x the colour's brightest channel over --hour's (moonlight ~0.26 of noon's sun)
+      By night (--light-side) the colour blends to sunColorLightSide by its scale: teal, ~0.15 of noon's
     - ambient: x m_globalLight.envProbeAmbientScaleShadow over --hour's (the probes' light in shade: 0.12 at
       midnight, 3.5 at 14:00)
     - the sky: its colours at the hour x the sky's scale with m_sky.globalSkyBrightness at the hour
     - the haze: its colour and density at the hour; the lights: r_sceneLightScale (0.03) x m_colorGroups.lightsDefault
       over --hour's
+    - the trees' leaves: r_sceneTreeTint, m_speedTree.randomColorsTrees' colour over --hour's (saturation kept)
     - lamps: the city lamps (maps/<map>.xlt) lit while the drawn sun stands under --lamp-elevation, over --lamp-fade"""
+    side_area = [float(x) for x in a.light_side.split(',')] if a.light_side else None
+    night_peak = [0.0]
     def sun_at(h):
         c = curve_at('m_globalLight.sunColor', (255, 255, 255, 1), h)
-        return c, max(max(c[:3]), 0.0)
+        s = max(max(c[:3]), 0.0)
+        if not side_area:
+            return c, s
+        area = curve_at('m_globalLight.sunColorCenterArea', (0, 0, 0, 360), h)[3]
+        w = max(0.0, min(1.0, (side_area[0] - area) / max(side_area[0] - side_area[1], 1e-3)))
+        if w <= 0.0:
+            return c, s
+        ls = curve_at('m_globalLight.sunColorLightSide', (0, 0, 0, 0), h)
+        # each colour's hue x its brightest channel x its scale (the light side's relative to sunColor's)
+        k = max(ls[3], 0.0) / max(c[3], 1e-3)
+        lsm = max(max(ls[:3]), 0.0)
+        # (by sunColor's fade at the moon/sun swap, relative to its full night: the light side holds on there)
+        lsm *= min(1.0, s / max(night_peak[0], 1e-3))
+        v = [(1.0 - w) * x * s + w * y * lsm * k
+             for x, y in zip(hue(c) if s > 1e-3 else [0.0] * 3, hue(ls) if lsm > 1e-3 else [0.0] * 3)]
+        m = max(max(v), 0.0)
+        return ([255.0 * linear_to_srgb(x / m) for x in v] + [c[3]]) if m > 1e-6 else c, m
     def scalar(name, default, h):
         return curve_at(name, (0, 0, 0, default), h)[3]
+    def tree_rgb(h):
+        # m_speedTree.randomColorsTrees: the mean of its three colours (sRGB, linearised) x each one's strength
+        cs = [curve_at('m_speedTree.randomColorsTrees.randomColor%d' % k, (255, 255, 255, 1), h) for k in range(3)]
+        return [sum(srgb_to_linear(max(c[i], 0.0) / 255.0) * c[3] for c in cs) / 3.0 for i in range(3)]
+    tree0 = tree_rgb(a.hour)
+    def tree_tint(h):
+        # the leaves' tint relative to --hour's (its look is the calibrated one): darker and blue-grey by night
+        return [x / max(y, 1e-4) for x, y in zip(tree_rgb(h), tree0)]
+    if side_area:
+        # sunColor's brightest where the light side has the whole light (its night)
+        for i in range(48):
+            h = i * 0.5
+            area = curve_at('m_globalLight.sunColorCenterArea', (0, 0, 0, 360), h)[3]
+            if area <= side_area[1]:
+                night_peak[0] = max(night_peak[0], max(curve_at('m_globalLight.sunColor', (255, 255, 255, 1), h)[:3]))
     _c, sun0 = sun_at(a.hour)
     amb0 = scalar('m_globalLight.envProbeAmbientScaleShadow', 1.0, a.hour)
     gsb0 = scalar('m_sky.globalSkyBrightness', 7.6, a.hour)
@@ -265,10 +353,11 @@ def cycle_lines(a, world, curve_at, sky_given):
         lum = lambda c: 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]  # noqa: E731
         sky_lum = max(lum(hor), side_w * lum(side))
         k = (sky_lum / max(sky_lum0, 1e-6)) / max(s / max(sun0, 1e-3), 0.25)   # (0.25: the moon's; twilight's ~0)
-        # eye adaptation's reach by night (the game's: luminanceLimitMin 0): the window's top raised with the shade's
-        # fall from --hour's, up to +1.5 EV
-        ev_up = 1.0 + min(1.5, max(0.0, math.log2(max(amb0, 1e-4) / max(scalar('m_globalLight.envProbeAmbientScaleShadow',
-                                                                                1.0, h), 1e-4)) / 3.0))
+        # eye adaptation's top by night: from 1 EV (--hour's) to --night-exposure as the shade's light falls from
+        # --hour's by 3 EV or more (the game's references at 23:30 sit ~0.85 EV under a +0.86 EV lift)
+        night = min(1.0, max(0.0, math.log2(max(amb0, 1e-4) / max(scalar('m_globalLight.envProbeAmbientScaleShadow',
+                                                                         1.0, h), 1e-4)) / 3.0))
+        ev_up = 1.0 + (a.night_exposure - 1.0) * night
         cloud_light = 1.5 * max(0.05, min(1.0, k))
         out += ['hour %.2f' % h,
                 'sun %.3f %.3f %.3f 100 %.2f %.2f' % (sc[0], sc[1], sc[2], yaw, elev),
@@ -282,7 +371,10 @@ def cycle_lines(a, world, curve_at, sky_given):
                 'r_sceneCloudLight %.4f' % cloud_light,
                 'r_sceneExposureWindow -1.2 %.3f' % ev_up,
                 'r_sceneSkySunSide %.5f %.5f %.5f %.4f' % (side[0], side[1], side[2], side_w),
-                'r_sceneSkyGlow %.6f %.6f %.6f %.2f' % (glow[0], glow[1], glow[2], glow_pow)]
+                'r_sceneSkyGlow %.6f %.6f %.6f %.2f' % (glow[0], glow[1], glow[2], glow_pow),
+                'r_sceneTreeTint %.4f %.4f %.4f 1' % tuple(tree_tint(h))]
+        if a.game_fog:
+            out += game_fog_lines(curve_at, h, sky, a.fog, a.game_aerial)
     return out
 
 

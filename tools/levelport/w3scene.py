@@ -614,6 +614,9 @@ def main():
     ap.add_argument('--light-scale', type=float, default=1.0, help='times the game brightness')
     ap.add_argument('--light-fog', type=float, default=0.3, help="each light's share in the haze")
     ap.add_argument('--terrain-step', type=int, default=1)
+    ap.add_argument('--keep-layers', nargs='*', default=[],
+                    help="layer path parts whose placements are kept outside the build box ('/background/': the game's "
+                         "horizon backdrop, painted panoramas that stand as a wall at the horizon here; not by default)")
     ap.add_argument('--far-step', type=int, default=8, help='the far terrain ring: every Nth vertex')
     ap.add_argument('--version', type=int, default=5, choices=(5, 6), help='scene version (the installed renderer: 5)')
     ap.add_argument('--no-wind', action='store_true', help="no SpeedTree wind section in maps/<map>.xw3b (the trees "
@@ -811,8 +814,12 @@ def main():
         M = np.array(p['matrix'], dtype=np.float64)
         t = M[:3, 3]
         if not (x0 - 50 <= t[0] <= x1 + 50 and y0 - 50 <= t[1] <= y1 + 50):
-            stats['placements_outside'] += 1
-            continue
+            # (the game's horizon backdrop, levels/bob/background/horizon.w2l: hills 4-9 km out, placed outside any box)
+            if any(k in (p.get('layer') or '') for k in a.keep_layers):
+                stats['placements_backdrop'] += 1
+            else:
+                stats['placements_outside'] += 1
+                continue
         # exact twins: a sector's packed copy beside its layer component (4,377 pairs within 2 cm,
         # 396 of them glass blended twice, reading darker than their neighbours); the first is kept
         twin = (p['mesh'], json.dumps(p['slots']), tuple(np.round(t * 50).astype(int)), tuple(np.round(M[:3, :3] * 100).astype(int).ravel()))
