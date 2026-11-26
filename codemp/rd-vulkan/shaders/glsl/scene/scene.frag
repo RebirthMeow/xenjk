@@ -719,6 +719,15 @@ float sunShadow( const vec3 P, const vec3 Ng )
 		if ( v < 0.0 )
 			continue;
 		lit = v;
+		// r_sceneShadowNearReach (sunDir.w - 1, units): the near cascade holds only casters within that reach toward the
+		// light; the farther ones shade from the kept middle cascade, read a reach nearer the light (what lies between
+		// is the near cascade's)
+		if ( i == 0 && fr.sunDir.w > 1.5 ) {
+			vec3 sm;
+			const float m = sunCascade( 1, P + fr.sunDir.xyz * ( fr.sunDir.w - 1.0 ), Ng, sm );
+			if ( m >= 0.0 )
+				lit = min( lit, m );
+		}
 		if ( i < 2 ) {
 			float t;
 			if ( i == 1 && midKept ) {

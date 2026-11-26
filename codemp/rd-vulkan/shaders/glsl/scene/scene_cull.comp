@@ -25,7 +25,7 @@ layout(std430, set = 0, binding = 2) readonly buffer Lods { Lod lods[]; };
 layout(std430, set = 0, binding = 3) readonly buffer PartCmd { uint partCmd[]; };
 layout(std430, set = 0, binding = 4) buffer Cmds { Cmd cmds[]; };
 layout(std430, set = 0, binding = 5) writeonly buffer Visible { uint visible[]; };
-// a near sun cascade (counts.y 1): the eye view's four sides and the light's direction of travel. A caster outside a
+// a near sun cascade (counts.y bit 0): the eye view's four sides and the light's direction of travel. A caster outside a
 // side whose shadow travels away from it can darken nothing the eye sees (r_sceneShadowReceivers)
 // hideEye (every view): the eye, from which an instance's hide distance is measured (CP2077's forceAutoHideDistance, scene
 // version 4, instance info.w); w: r_sceneHideScale (0: none hidden). travel.w > 0: the eye's views fade (r_sceneHideFade) over that band (units, r_sceneHideBand),
@@ -33,7 +33,9 @@ layout(std430, set = 0, binding = 5) writeonly buffer Visible { uint visible[]; 
 // cascades pop it at the near distance itself, so a mesh and its proxy never cast together there (it was 0.27 ms of
 // Watson's kabuki_street_b); -1: the static light shadows and the rain view, every full mesh and no far proxy
 // look.x (r_sceneProxyDebug): 1 no far proxy, 2 every one at any distance; look.y the LOD crossfade band; look.z r_sceneShadowLod; look.w r_sceneOnlyMesh (its mesh + 1; 0 all)
-layout(std430, set = 0, binding = 6) readonly buffer Receivers { vec4 eyePlanes[4]; vec4 travel; vec4 hideEye; vec4 look; } rc;
+// reach (counts.y bit 1, r_sceneShadowNearReach): the near cascade's casters within this far toward the light, a plane as
+// the view's are read
+layout(std430, set = 0, binding = 6) readonly buffer Receivers { vec4 eyePlanes[4]; vec4 travel; vec4 hideEye; vec4 look; vec4 reach; } rc;
 // occlusion: both far-depth pyramids (scene_occ.comp: the last frame's, then this frame's prepass's); the two cameras, the pyramid's levels and the counters (the slot's, read by the host two frames
 // later, r_sceneOcclusionStats); phase 1's hidden instances and phase 2's dispatch size
 layout(std430, set = 0, binding = 7) readonly buffer Pyramid { float pyr[]; };
@@ -228,7 +230,9 @@ void main()
 		if ( ( I.info.w != 0u && d > uintBitsToFloat( I.info.w ) * rc.hideEye.w ) || d < ( nd - pc.cull.w * min( rc.travel.w, 0.5 * nd ) ) * rc.hideEye.w )
 			return;
 	}
-	if ( pc.counts.y != 0u && !face )
+	if ( ( pc.counts.y & 2u ) != 0u && !face && dot( centre, rc.reach.xyz ) - rc.reach.w < -radius )
+		return;
+	if ( ( pc.counts.y & 1u ) != 0u && !face )
 		for ( int i = 0; i < 4; i++ )
 			if ( dot( centre, rc.eyePlanes[i].xyz ) - rc.eyePlanes[i].w < -radius - pc.cull.z && dot( rc.eyePlanes[i].xyz, rc.travel.xyz ) <= 0.0 )
 				return;

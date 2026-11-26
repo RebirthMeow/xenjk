@@ -344,6 +344,8 @@ static cvar_t *r_sceneShaderStats;
 static cvar_t *r_sceneClusters;
 static cvar_t *r_sceneViewCull;
 static cvar_t *r_sceneShadowReceivers;
+static cvar_t *r_sceneShadowNearReach;
+static float Scene_NearReach( void );	// (r_sceneShadowNearReach)
 static cvar_t *r_sceneInvocations;
 static cvar_t *r_sceneSkip;
 static cvar_t *r_sceneVrs;
@@ -1781,7 +1783,7 @@ static qboolean Scene_CreateViews( void )
 					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "scene view cull counts" ) )
 				return qfalse;
 		}
-		if ( !Scene_CreateBuffer( &sc.receivers[f], 112, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+		if ( !Scene_CreateBuffer( &sc.receivers[f], 128, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, "scene shadow receivers" ) )
 			return qfalse;
 		VK_CHECK( qvkMapMemory( vk.device, sc.receivers[f].mem, 0, VK_WHOLE_SIZE, 0, &sc.receiversPtr[f] ) );
@@ -2838,7 +2840,7 @@ static qboolean Scene_LightShadowsListed( const std::vector<sceneShadowView_t> &
 	// the chunks below go on their own fences
 	vk_end_command_buffer( vk_begin_command_buffer(), __func__ );
 	for ( int f = 0; f < NUM_COMMAND_BUFFERS; f++ ) {
-		Com_Memset( sc.receiversPtr[f], 0, 112 );	// as the per-material path's: no receivers, every full mesh, no far proxy
+		Com_Memset( sc.receiversPtr[f], 0, 128 );	// as the per-material path's: no receivers, every full mesh, no far proxy
 		( (float *)sc.receiversPtr[f] )[19] = -1.0f;
 	}
 	Scene_LightShadowSets( qtrue );
@@ -3012,7 +3014,7 @@ static void Scene_RenderLightShadows( const std::vector<sceneShadowView_t> &allV
 	// the cull's receivers: no near cascade here, and the static views take the full meshes alone, each of them (a hide
 	// distance is the eye's, not a light's) and never a far proxy (scene_cull.comp's travel.w -1); written now, as the
 	// buffer holds nothing yet (or a frame of the scene before)
-	Com_Memset( sc.receiversPtr[0], 0, 112 );
+	Com_Memset( sc.receiversPtr[0], 0, 128 );
 	( (float *)sc.receiversPtr[0] )[19] = -1.0f;
 
 	std::vector<char> cleared( layers, 0 );
@@ -8408,7 +8410,7 @@ void R_SceneVkBeginFrame( void )
 	if ( sunOn && r_sceneShadows->integer ) {
 		Com_Memcpy( fr->sunMvp, sc.sunMvp, sizeof( fr->sunMvp ) );
 		VectorCopy( sc.sunDir, fr->sunDir );
-		fr->sunDir[3] = 1.0f;
+		fr->sunDir[3] = 1.0f + Scene_NearReach();	// (scene.frag, scene_fog.comp: > 0.5 the cascades drawn; the reach past 1)
 		VectorScale( sc.sunCol, MAX( Env( r_sceneSun )->value, 0.0f ), fr->sunCol );
 		fr->sunCol[3] = sc.sunCol[3];
 		for ( int k = 0; k < 3; k++ )
@@ -8625,6 +8627,18 @@ void R_SceneVkBeginFrame( void )
 		// card casts its coarsest 3D LOD while the eye's LOD is 3D, Scene_MarkCardMeshes)
 		rv[26] = MAX( r_sceneShadowLod->value, 0.01f );
 		rv[27] = (float)MAX( r_sceneOnlyMesh->integer, 0 );	// (rc.look.w: a measuring view's one mesh, + 1; 0 all)
+		// (rc.reach, r_sceneShadowNearReach: the near cascade's box front toward the light plus the reach, as an inward
+		// plane: its back plane (planes[4], normal toward the light) less twice the box's half width (planes 0 and 1))
+		rv[28] = rv[29] = rv[30] = rv[31] = 0.0f;
+		for ( int v = 0; v < n; v++ ) {
+			const sceneView_t *view = &sc.views[v];
+			if ( view->cascade != 1 || Scene_NearReach() <= 0.0f )
+				continue;
+			const float half = -0.5f * ( view->planes[0][3] + view->planes[1][3] );
+			for ( int k = 0; k < 3; k++ )
+				rv[28 + k] = -view->planes[4][k];
+			rv[31] = -( view->planes[4][3] + 2.0f * half + Scene_NearReach() );
+		}
 	}
 	const qboolean receivers = ( r_sceneShadowReceivers->integer && sunOn ) ? qtrue : qfalse;
 	// the kept cascades whose static casters come from their cache this frame (RB_RenderFarCascade asks the same, after
@@ -8656,9 +8670,10 @@ void R_SceneVkBeginFrame( void )
 		// the near cascades only: the far one's casters are kept across frames while the view turns (r_sunShadowFarCache),
 		// and the middle one's with r_sunShadowMidCache
 		push.counts[1] = ( receivers && view->cascade >= 1 && view->cascade <= 2 && !vk_sun_shadow_kept( view->cascade - 1 ) ) ? 1 : 0;
+		push.counts[1] |= ( view->cascade == 1 && Scene_NearReach() > 0.0f ) ? 2u : 0u;	// (rc.reach)
 		push.counts[2] = ( occPhase1 && v == eyeView ) ? 1 : 0;
 		push.counts[3] = ( occStats ? 1 : 0 ) | ( v == eyeView ? 2 : 0 ) | ( (uint32_t)v << 8 );	// the eye's draws: its LODs to sort listed; the view
-		push.cull[2] = push.counts[1] ? 6.0f * sc.sunTexel[view->cascade - 1] : 0.0f;	// (the world shaders' PCF reaches ~4.4 texels)
+		push.cull[2] = ( push.counts[1] & 1u ) ? 6.0f * sc.sunTexel[view->cascade - 1] : 0.0f;	// (the world shaders' PCF reaches ~4.4 texels)
 		push.cull[3] = v == eyeView ? 1.0f : 0.0f;	// the view the hide fade dithers (scene.vert's eye.w): its proxies from a band early
 		// the groups that may hold something the view draws (r_sceneCullGroups: scene_groupcull.comp, below): the cull runs
 		// over theirs alone
@@ -8803,6 +8818,13 @@ qboolean vk_scene_view_skipped( int sceneView )
 {
 	const int v = sceneView - 1;
 	return ( sc.loaded && v >= 0 && v < sc.culledViews && ( sc.skippedViews & ( 1u << v ) ) ) ? qtrue : qfalse;
+}
+
+// r_sceneShadowNearReach: the reach (units) while the middle cascade is kept and the scene casts into it, else 0
+static float Scene_NearReach( void )
+{
+	return ( sc.loaded && r_sceneShadowNearReach->value > 0.0f && r_sceneShadowCascades->integer >= 2 && vk_sun_shadow_kept( 1 ) )
+		? r_sceneShadowNearReach->value : 0.0f;
 }
 
 uint32_t vk_scene_shadow_key( void )
@@ -10029,6 +10051,7 @@ void R_SceneRegister( void )
 	r_sceneHdr			= ri.Cvar_Get( "r_sceneHdr",			"1",					CVAR_ARCHIVE_ND, "Render scene: a map with a colour grade turns r_hdr 0's 8-bit colour target into r_hdr 2's float one at load, so its highlights reach the grade unclipped (0 keeps r_hdr's; read at map load)" );
 	r_sceneAsync		= ri.Cvar_Get( "r_sceneAsync",			"1",					CVAR_ARCHIVE_ND, "Render scene: the wet ground's reflections traced on the compute queue beside the frame's post passes (a device with a compute-only queue; 0: in the frame)" );
 	r_sceneInvocations	= ri.Cvar_Get( "r_sceneInvocations",	"0",					CVAR_TEMP, "Render scene (bench): print each frame the eye view's lit pass's vertex and fragment shader invocations and clipped primitives (SCENEINV lines)" );
+	r_sceneShadowNearReach = ri.Cvar_Get( "r_sceneShadowNearReach", "0",				CVAR_ARCHIVE_ND, "Render scene: the nearest sun cascade (drawn every frame) draws only casters within this many units toward the light past its box; the farther ones shade its receivers from the kept middle cascade (r_sunShadowMidCache) at its coarser texels. A low sun or moon's caster column otherwise runs through whole hillsides of buildings and trees every frame. 0 off" );
 	r_sceneShadowReceivers = ri.Cvar_Get( "r_sceneShadowReceivers", "1",				CVAR_ARCHIVE_ND, "Render scene: the near sun cascades leave out casters outside the eye's view whose shadows fall away from it (0: every caster in the cascade)" );
 	r_sceneFogLightMax	= ri.Cvar_Get( "r_sceneFogLightMax",	"0.3",					CVAR_ARCHIVE_ND, "Render scene: a soft ceiling on the source's light the haze sends the eye (linear, before exposure), x / (1 + x / max) by its luminance, for the few lights of millions (signs, floodlights) that wash the view out; dim glows are hardly changed (0: none)" );
 	r_sceneFogSegment	= ri.Cvar_Get( "r_sceneFogSegment",		"1",					CVAR_ARCHIVE_ND, "Render scene: each light's haze light averaged exactly along the eye's ray through each froxel (far lights at their full energy, near ones as before; r_sceneFogNearSamples no longer applies); 0 taken at the froxel's centre" );
