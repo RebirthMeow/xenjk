@@ -6663,7 +6663,7 @@ The day/night cycle (tools/levelport/w3env.py --hours), after the lines above:
                     direction; the direction steps once a game minute so the far cascade's cache holds between steps)
 The look values are read through Env( cvar ), which gives the environment's while the cvar is as it was at the load.
 */
-#define SCENE_ENV_VARS	96	// (more than the look values, 70: a line each; was 64)
+#define SCENE_ENV_VARS	96	// (more than the look values, 73: a line each; was 64)
 typedef struct {
 	cvar_t	*cv;
 	int		count;		// the cvar's modificationCount at the load: changed since, its own value wins
@@ -6700,7 +6700,8 @@ const cvar_t *Scene_Env( const cvar_t *cv )
 static void Scene_LoadEnv( const char *bspName, char *sceneMap, int size )
 {
 	static cvar_t **const look[] = { &r_sceneSun, &r_sceneAmbient, &r_sceneExposure, &r_sceneEmissive, &r_sceneGlow, &r_sceneGlowThreshold, &r_sceneTonemap, &r_sceneFog, &r_sceneFogDensity, &r_sceneFogHeight, &r_sceneFogMax, &r_sceneFogLight, &r_sceneFogPhase, &r_sceneFogAlbedo, &r_sceneFogFar, &r_sceneFogStart, &r_sceneFogMoon, &r_sceneGradeExposure, &r_sceneLightScale, &r_sceneGrade, &r_sceneFogLightMax, &r_sceneDayLamps, &r_sceneSky, &r_sceneSkyZenith, &r_sceneSkyHorizon, &r_sceneSkySun, &r_sceneSkyGround, &r_sceneSkyCurve, &r_sceneCharSun, &r_sceneNightOnlyByDay, &r_sceneDayOnlyAtNight, &r_sceneWet, &r_sceneFoliage, &r_sceneFoliageWrap, &r_sceneFoliageTrans, &r_sceneFoliageAO, &r_sceneTreeTint, &r_sceneAO, &r_sceneAORadius, &r_sceneShadowSoft, &r_sceneShadowFar, &r_sceneClouds, &r_sceneCloudScale, &r_sceneCloudEdge, &r_sceneCloudLight, &r_sceneCloudWind, &r_sceneTreeWind, &r_sceneTreeWindDir, &r_sceneEmissiveExposure, &r_sceneEmissiveRef, &r_sceneMoon, &r_sceneMoonSize, &r_sceneMoonGlow, &r_sceneMoonPath, &r_sceneMoonLight, &r_sceneClock, &r_sceneSkySunSide, &r_sceneSkyGlow, &r_sceneAutoExposure, &r_sceneExposureWindow, &r_sceneWindowExposure,
-		&r_sceneW3Fog[0], &r_sceneW3Fog[1], &r_sceneW3Fog[2], &r_sceneW3Fog[3], &r_sceneW3Fog[4], &r_sceneW3Fog[5], &r_sceneW3Fog[6], &r_sceneW3Fog[7], &r_sceneW3Clouds };
+		&r_sceneW3Fog[0], &r_sceneW3Fog[1], &r_sceneW3Fog[2], &r_sceneW3Fog[3], &r_sceneW3Fog[4], &r_sceneW3Fog[5], &r_sceneW3Fog[6], &r_sceneW3Fog[7], &r_sceneW3Clouds,
+		&r_sceneWaterReflect, &r_sceneWaterFresnel, &r_sceneWaterOwn };
 	char name[MAX_QPATH];
 	char *buf = NULL;
 
@@ -8329,14 +8330,14 @@ void R_SceneVkBeginFrame( void )
 	fr->water[2] = sc.waterHi;
 	fr->water[3] = MAX( r_sceneWaterRipple->value, 0.0f );
 	fr->water2[0] = MAX( r_sceneWaterClarity->value, 0.01f );
-	fr->water2[1] = MAX( r_sceneWaterReflect->value, 0.0f );
+	fr->water2[1] = MAX( Env( r_sceneWaterReflect )->value, 0.0f );
 	fr->water2[2] = r_sceneWaterShift->value;
 	fr->water2[3] = r_sceneWaterBreakup->integer ? 1.0f : 0.0f;
 	Com_Memset( fr->waterWaves, 0, sizeof( fr->waterWaves ) );	// (set again below when the waves run)
 	Com_Memset( fr->waterWaves2, 0, sizeof( fr->waterWaves2 ) );
-	if ( r_sceneWaterFresnel->string[0] ) {	// The Witcher 3's water reflectance, at the env's waterFresnel
-		fr->waterWaves2[2] = Com_Clamp( 0.001f, 100.0f, r_sceneWaterOwn->value );
-		fr->waterWaves2[3] = Com_Clamp( 0.01f, 6.0f, r_sceneWaterFresnel->value + 0.5f );
+	if ( Env( r_sceneWaterFresnel )->string[0] ) {	// The Witcher 3's water reflectance, at the env's waterFresnel
+		fr->waterWaves2[2] = Com_Clamp( 0.001f, 100.0f, Env( r_sceneWaterOwn )->value );
+		fr->waterWaves2[3] = Com_Clamp( 0.01f, 6.0f, Env( r_sceneWaterFresnel )->value + 0.5f );
 	}
 	fr->waterBed[3] = 0;	// (vk_scene_occlusion: the pyramid built after the eye's prepass)
 	fr->dlightCount[0] = r_sceneDlights->value > 0.0f ? (float)sc.numDlights : 0.0f;

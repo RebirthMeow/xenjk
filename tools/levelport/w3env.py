@@ -113,6 +113,10 @@ def main():
     ap.add_argument('--game-clouds', default='',
                     help="r_sceneW3Clouds: the game's clouds (their light, the cirrus' and the panorama's alpha, the share "
                          "of the sprites in use; needs w3clouds.py's pack); in place of --clouds' stand-in")
+    ap.add_argument('--game-water', default='',
+                    help="'fresnel own reflect': the game's water reflectance for this map only (r_sceneWaterFresnel, "
+                         "the env's waterFresnel, sunny_bob -0.24; r_sceneWaterOwn; r_sceneWaterReflect); Beauclair "
+                         "takes '-0.24 0.25 3'. (In the bat they were archived and reached every map's water)")
     ap.add_argument('--grade', action='store_true', help="the game's grade (w3grade.py's .xlut) does the exposure")
     ap.add_argument('--grade-exposure', type=float, default=8.0,
                     help="the light handed to the game's grade (this renderer's light units to the game's)")
@@ -220,6 +224,9 @@ def main():
         lines += game_fog_lines(curve_at, a.hour, a.sky, a.fog, a.game_aerial)
     if a.game_clouds:
         lines += ['r_sceneW3Clouds %s' % a.game_clouds]  # (scene.frag leaves --clouds' stand-in out then)
+    if a.game_water:
+        fresnel, own, reflect = a.game_water.split()
+        lines += ['r_sceneWaterFresnel %s' % fresnel, 'r_sceneWaterOwn %s' % own, 'r_sceneWaterReflect %s' % reflect]
     if a.hours > 0:
         lines += cycle_lines(a, world, curve_at, sky_given)
     os.makedirs(os.path.join(a.out, 'maps'), exist_ok=True)
