@@ -112,6 +112,7 @@ layout(std140, set = 0, binding = 5) uniform Frame {
 	vec4 skySide;		// r_sceneSkySunSide: rgb the horizon's colour on the sun's side (linear), w its share (0 none)
 	vec4 skyGlow;		// r_sceneSkyGlow: rgb the glow round the scene's light (the moon by night; linear), w its
 						// falloff (the power of the angle's cosine; 0 none)
+	vec4 treeTint;		// r_sceneTreeTint: SpeedTree leaves' (info.w 32) albedo times rgb (linear), w their saturation
 } fr;
 layout(set = 0, binding = 26) uniform sampler2DArray waveTex;	// the water's waves (scene_water.comp): x, y the slopes
 // scene_occ.comp's far-depth pyramids (linear view depth): the water's bed (fr.waterBed)
@@ -1810,6 +1811,12 @@ void main()
 	// a SpeedTree leaf (info.w 32, r_sceneFoliage): its card's normal (each card its own way: the trees lit and shaded
 	// leaf by leaf) pulled toward its tree's outward direction (scene.vert's vCanopy), so the canopy is lit and shaded as
 	// one rounded mass; its inner leaves darker
+	// r_sceneTreeTint: the hour's colour and saturation of the trees' leaves (The Witcher 3's m_speedTree.randomColorsTrees,
+	// relative to the calibrated hour: blue-grey and darker by night)
+	if ( gInfo.w == 32u && !water ) {
+		const float l = dot( albedo, vec3( 0.2126, 0.7152, 0.0722 ) );
+		albedo = max( mix( vec3( l ), albedo, fr.treeTint.w ), vec3( 0.0 ) ) * fr.treeTint.rgb;
+	}
 	const bool leaf = gInfo.w == 32u && fr.foliage.x > 0.0 && !water;
 	float leafAO = 1.0;
 	if ( leaf ) {

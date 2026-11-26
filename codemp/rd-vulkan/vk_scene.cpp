@@ -243,6 +243,7 @@ static cvar_t *r_sceneTerrainPush;
 static cvar_t *r_sceneFoliageWrap;
 static cvar_t *r_sceneFoliageTrans;
 static cvar_t *r_sceneFoliageAO;
+static cvar_t *r_sceneTreeTint;
 static cvar_t *r_sceneClouds;
 static cvar_t *r_sceneCloudScale;
 static cvar_t *r_sceneCloudEdge;
@@ -6681,7 +6682,7 @@ const cvar_t *Scene_Env( const cvar_t *cv )
 // `scene` names) in sceneMap
 static void Scene_LoadEnv( const char *bspName, char *sceneMap, int size )
 {
-	static cvar_t **const look[] = { &r_sceneSun, &r_sceneAmbient, &r_sceneExposure, &r_sceneEmissive, &r_sceneGlow, &r_sceneGlowThreshold, &r_sceneTonemap, &r_sceneFog, &r_sceneFogDensity, &r_sceneFogHeight, &r_sceneFogMax, &r_sceneFogLight, &r_sceneFogPhase, &r_sceneFogAlbedo, &r_sceneFogFar, &r_sceneFogStart, &r_sceneFogMoon, &r_sceneGradeExposure, &r_sceneLightScale, &r_sceneGrade, &r_sceneFogLightMax, &r_sceneDayLamps, &r_sceneSky, &r_sceneSkyZenith, &r_sceneSkyHorizon, &r_sceneSkySun, &r_sceneSkyGround, &r_sceneSkyCurve, &r_sceneCharSun, &r_sceneNightOnlyByDay, &r_sceneDayOnlyAtNight, &r_sceneWet, &r_sceneFoliage, &r_sceneFoliageWrap, &r_sceneFoliageTrans, &r_sceneFoliageAO, &r_sceneAO, &r_sceneAORadius, &r_sceneShadowSoft, &r_sceneShadowFar, &r_sceneClouds, &r_sceneCloudScale, &r_sceneCloudEdge, &r_sceneCloudLight, &r_sceneCloudWind, &r_sceneTreeWind, &r_sceneTreeWindDir, &r_sceneEmissiveExposure, &r_sceneEmissiveRef, &r_sceneMoon, &r_sceneMoonSize, &r_sceneMoonGlow, &r_sceneMoonPath, &r_sceneMoonLight, &r_sceneClock, &r_sceneSkySunSide, &r_sceneSkyGlow, &r_sceneAutoExposure, &r_sceneExposureWindow, &r_sceneWindowExposure };
+	static cvar_t **const look[] = { &r_sceneSun, &r_sceneAmbient, &r_sceneExposure, &r_sceneEmissive, &r_sceneGlow, &r_sceneGlowThreshold, &r_sceneTonemap, &r_sceneFog, &r_sceneFogDensity, &r_sceneFogHeight, &r_sceneFogMax, &r_sceneFogLight, &r_sceneFogPhase, &r_sceneFogAlbedo, &r_sceneFogFar, &r_sceneFogStart, &r_sceneFogMoon, &r_sceneGradeExposure, &r_sceneLightScale, &r_sceneGrade, &r_sceneFogLightMax, &r_sceneDayLamps, &r_sceneSky, &r_sceneSkyZenith, &r_sceneSkyHorizon, &r_sceneSkySun, &r_sceneSkyGround, &r_sceneSkyCurve, &r_sceneCharSun, &r_sceneNightOnlyByDay, &r_sceneDayOnlyAtNight, &r_sceneWet, &r_sceneFoliage, &r_sceneFoliageWrap, &r_sceneFoliageTrans, &r_sceneFoliageAO, &r_sceneTreeTint, &r_sceneAO, &r_sceneAORadius, &r_sceneShadowSoft, &r_sceneShadowFar, &r_sceneClouds, &r_sceneCloudScale, &r_sceneCloudEdge, &r_sceneCloudLight, &r_sceneCloudWind, &r_sceneTreeWind, &r_sceneTreeWindDir, &r_sceneEmissiveExposure, &r_sceneEmissiveRef, &r_sceneMoon, &r_sceneMoonSize, &r_sceneMoonGlow, &r_sceneMoonPath, &r_sceneMoonLight, &r_sceneClock, &r_sceneSkySunSide, &r_sceneSkyGlow, &r_sceneAutoExposure, &r_sceneExposureWindow, &r_sceneWindowExposure };
 	char name[MAX_QPATH];
 	char *buf = NULL;
 
@@ -8336,6 +8337,12 @@ void R_SceneVkBeginFrame( void )
 	fr->foliage[1] = Com_Clamp( 0.0f, 1.0f, Env( r_sceneFoliageWrap )->value );
 	fr->foliage[2] = MAX( Env( r_sceneFoliageTrans )->value, 0.0f );
 	fr->foliage[3] = Com_Clamp( 0.0f, 1.0f, Env( r_sceneFoliageAO )->value );
+	{	// r_sceneTreeTint: "r g b [saturation]"
+		float t[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		sscanf( Env( r_sceneTreeTint )->string, "%f %f %f %f", &t[0], &t[1], &t[2], &t[3] );
+		for ( int k = 0; k < 4; k++ )
+			fr->treeTint[k] = Com_Clamp( 0.0f, 4.0f, t[k] );
+	}
 	fr->clouds[0] = sc.skyOn ? Com_Clamp( 0.0f, 1.0f, Env( r_sceneClouds )->value ) : 0.0f;
 	fr->clouds[1] = MAX( Env( r_sceneCloudScale )->value, 0.05f );
 	fr->clouds[2] = Com_Clamp( 0.01f, 1.0f, Env( r_sceneCloudEdge )->value );
@@ -9972,6 +9979,7 @@ void R_SceneRegister( void )
 	r_sceneAORadius		= ri.Cvar_Get( "r_sceneAORadius",		"1.5",					CVAR_ARCHIVE_ND, "Render scene, r_sceneAO: how far round a surface occluders count (metres)" );
 	r_sceneAOSamples	= ri.Cvar_Get( "r_sceneAOSamples",		"8",					CVAR_ARCHIVE_ND, "Render scene, r_sceneAO: samples a half-size texel a frame (1..32; settled over frames)" );
 	r_sceneAOBlend		= ri.Cvar_Get( "r_sceneAOBlend",		"0.15",					CVAR_ARCHIVE_ND, "Render scene, r_sceneAO: the share of a new frame in the settled occlusion (lower: smoother, slower to follow motion)" );
+	r_sceneTreeTint		= ri.Cvar_Get( "r_sceneTreeTint",		"1 1 1 1",				CVAR_ARCHIVE_ND, "Render scene: SpeedTree leaves' albedo times r g b (linear), then their saturation (1 as stored): The Witcher 3's per-hour tree colours (m_speedTree.randomColorsTrees), an environment's keyframes" );
 	r_sceneFoliageAO	= ri.Cvar_Get( "r_sceneFoliageAO",		"0.6",					CVAR_ARCHIVE_ND, "Render scene, r_sceneFoliage: how much darker the canopy's inner leaves are (0 none, 1 black at its centre)" );
 	r_sceneClouds		= ri.Cvar_Get( "r_sceneClouds",			"0",					CVAR_ARCHIVE_ND, "Render scene, r_sceneSky: cumulus 1.5 km up over the share of the sky given (0 off; 0.35 scattered)" );
 	r_sceneCloudScale	= ri.Cvar_Get( "r_sceneCloudScale",		"2",					CVAR_ARCHIVE_ND, "Render scene, r_sceneClouds: the clouds' size (km)" );
