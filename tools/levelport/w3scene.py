@@ -937,6 +937,25 @@ def main():
     import w3tmesh
     assert a.far_step % a.terrain_step == 0
     tgrid, tsize = {}, None
+    # hand cuts (<work>/terrain_cuts.json: {"cuts": [{"box": [x0, y0, x1, y1] game metres, "note": why}]}): one-off
+    # spots where the game's own hole is narrower than the terrain left showing in front of a mesh (the inner ring's
+    # wall foot by the harbour stair, a ramp corner the hole line misses: report 20261126-142210_trianglehole)
+    # An entry with "max_z" lowers the ground's vertices in its box to that height instead (where nothing lies under
+    # the ground, a cut opens the sky)
+    cut_boxes, hand = [], []
+    if (Path(work) / 'terrain_cuts.json').exists():
+        hand = json.load(open(Path(work) / 'terrain_cuts.json', encoding='utf-8'))['cuts']
+        cut_boxes = [tuple(c['box']) for c in hand if 'max_z' not in c]
+    stats['terrain_hand_cuts'] = len(cut_boxes)
+    stats['terrain_hand_lowered'] = 0
+    for c in hand:
+        if 'max_z' in c:
+            bx0, by0, bx1, by1 = c['box']
+            for t in tiles:
+                G = t[1]
+                m = (G[..., 0] >= bx0) & (G[..., 0] <= bx1) & (G[..., 1] >= by0) & (G[..., 1] <= by1) & (G[..., 2] > c['max_z'])
+                G[..., 2][m] = c['max_z']
+                stats['terrain_hand_lowered'] += int(m.sum())
     raw = {(round(t[4][0]), round(t[4][1])): t[1] for t in tiles}
     for key, G, props, lattice, bounds, far in tiles:
         s = a.far_step if far else a.terrain_step
@@ -955,6 +974,12 @@ def main():
         GN = np.cross(np.gradient(P, axis=1), np.gradient(P, axis=0))[1:-1, 1:-1]
         GN /= np.maximum(np.linalg.norm(GN, axis=-1, keepdims=True), 1e-12)
         sub = w3tmesh.hole_cells(lattice, G.shape[0]) if (lattice is not None and not far) else None
+        if sub is not None:
+            for bx0, by0, bx1, by1 in cut_boxes:     # (hand cuts: split the cells they touch, cut like holes)
+                cx = (G[:-1, :-1, 0] + G[1:, 1:, 0]) / 2
+                cy = (G[:-1, :-1, 1] + G[1:, 1:, 1]) / 2
+                half = abs(float(G[0, 1, 0] - G[0, 0, 0])) / 2
+                sub |= (cx + half > bx0) & (cx - half < bx1) & (cy + half > by0) & (cy - half < by1)
         tgrid[key] = w3tmesh.Tile(key, G, GN, sub)
         tsize = round(bounds[2] - bounds[0])
     at = {(round(t[4][0]), round(t[4][1])): tgrid[t[0]] for t in tiles}
@@ -993,7 +1018,10 @@ def main():
                 pos = V - c
                 if lattice is not None and not far and fine.any():
                     keep = ~fine
-                    keep[fine] = solid_share(lattice, bounds, V[tri[fine]].mean(1)[:, :2]) >= 0.5
+                    cxy = V[tri[fine]].mean(1)[:, :2]
+                    keep[fine] = solid_share(lattice, bounds, cxy) >= 0.5
+                    for bx0, by0, bx1, by1 in cut_boxes:
+                        keep[np.flatnonzero(fine)[(cxy[:, 0] > bx0) & (cxy[:, 0] < bx1) & (cxy[:, 1] > by0) & (cxy[:, 1] < by1)]] = False
                     stats['terrain_hole_tris'] += int((~keep).sum())
                     tri = tri[keep]
                 if not len(tri):

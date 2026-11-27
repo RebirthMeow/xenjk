@@ -80,10 +80,14 @@ def control_lattice(props):
 def solid_share(lattice, bounds, xy):
     """The share of the game's terrain drawn at world points xy (N x 2): its four control taps' bilinear weights on
     the taps that are not holes (control word 0), as its shader's alpha. bounds: the tile's min x, min y, max x, max y."""
+    # The taps sit at texel centres, (k + 0.5) / res of the tile (a texture sampled at the tile UV): measured over the
+    # city's 1694 hole cells, the ground under the cut is steepest and least often flat at +0.5 tap (wall feet; slope
+    # 2.06 against 1.99 at 0 and 1.97 at +1). Read at the taps' corners, every hole sat 0.24 m off its wall's foot:
+    # flat walkway cut (open sky) beside a ramp left standing (grass through the pavement), terrain-20261126/
     m = lattice.shape[0]
     x0, y0, x1, y1 = bounds
-    gx = np.clip((xy[:, 0] - x0) / (x1 - x0), 0.0, 1.0) * (m - 1)
-    gy = np.clip((xy[:, 1] - y0) / (y1 - y0), 0.0, 1.0) * (m - 1)
+    gx = np.clip((xy[:, 0] - x0) / (x1 - x0) * (m - 1) - 0.5, 0.0, m - 1.0)
+    gy = np.clip((xy[:, 1] - y0) / (y1 - y0) * (m - 1) - 0.5, 0.0, m - 1.0)
     cx = np.minimum(np.floor(gx).astype(int), m - 2)
     cy = np.minimum(np.floor(gy).astype(int), m - 2)
     fx, fy = gx - cx, gy - cy

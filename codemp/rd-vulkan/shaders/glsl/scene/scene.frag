@@ -1987,7 +1987,9 @@ void main()
 		const uint lb = uint( h0.x ), m = uint( h0.y );
 		const int nl = int( h0.w );
 		const vec2 world = vPos.xy / UNITS_PER_METRE + h1.xy;
-		const vec2 grid = clamp( vUV1, 0.0, 1.0 ) * float( m - 1u );
+		// (the taps at texel centres, (k + 0.5) / res of the tile, as w3build.solid_share cuts the holes: the city's
+		// holes lie on their walls' feet only so)
+		const vec2 grid = clamp( vUV1 * float( m - 1u ) - 0.5, 0.0, float( m - 1u ) );
 		const uvec2 c0 = min( uvec2( floor( grid ) ), uvec2( m - 2u ) );
 		const vec2 fr2 = grid - vec2( c0 );
 		const float wts[4] = float[4]( ( 1.0 - fr2.x ) * ( 1.0 - fr2.y ), fr2.x * ( 1.0 - fr2.y ), ( 1.0 - fr2.x ) * fr2.y, fr2.x * fr2.y );

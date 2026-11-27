@@ -25,10 +25,11 @@ def hole_cells(lattice, n):
     m = lattice.shape[0]
     r = (m - 1) // (n - 1)
     assert r * (n - 1) == m - 1, (m, n)
-    H = lattice == 0
+    # (the taps at texel centres, w3build.solid_share: a cell reads from one tap below its first to its last)
+    H = np.pad(lattice == 0, ((1, 0), (1, 0)), mode='edge')
     out = np.zeros((n - 1, n - 1), bool)
-    for di in range(r + 1):
-        for dj in range(r + 1):
+    for di in range(r + 2):
+        for dj in range(r + 2):
             out |= H[di:di + r * (n - 1):r, dj:dj + r * (n - 1):r]
     return out
 
