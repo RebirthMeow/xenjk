@@ -2541,6 +2541,7 @@ Ghoul2 Insert End
 	cgs.media.bdecal_saberglow = trap->R_RegisterShader("gfx/damage/saberglowmark");
 	cgs.media.bdecal_burn1 = trap->R_RegisterShader("gfx/damage/bodybigburnmark1");
 	cgs.media.mSaberDamageGlow = trap->R_RegisterShader("gfx/effects/saberDamageGlow");
+	CG_Gore_Register();
 
 	CG_RegisterCvars();
 
@@ -2615,6 +2616,7 @@ Ghoul2 Insert End
 	CG_InitLocalEntities();
 
 	CG_InitMarkPolys();
+	CG_Gore_Clear();
 
 	// remove the last loading update
 	cg.infoScreenText[0] = 0;

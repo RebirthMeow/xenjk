@@ -1038,6 +1038,11 @@ static void CG_General( centity_t *cent ) {
 			clEnt = &cg_entities[cent->currentState.otherEntityNum2];
 		}
 
+		if (!dismember_settings && cg_gore.integer)
+		{ //xenjk gore: blood on shows dismemberment in full unless cg_dismember asks for less
+			dismember_settings = 2;
+		}
+
 		if (!dismember_settings)
 		{ //This client does not wish to see dismemberment.
 			return;
@@ -1216,7 +1221,14 @@ static void CG_General( centity_t *cent ) {
 				BG_GiveMeVectorFromMatrix(&matrix, ORIGIN, boltOrg);
 				BG_GiveMeVectorFromMatrix(&matrix, NEGATIVE_Y, boltAng);
 
-				trap->FX_PlayEffectID(cgs.effects.mBlasterSmoke, boltOrg, boltAng, -1, -1, qfalse);
+				if (CG_Gore_Severed())
+				{ //xenjk gore: the cut end bleeds instead of smoking
+					CG_Gore_LimbCut(cent->currentState.number, boltOrg, boltAng);
+				}
+				else
+				{
+					trap->FX_PlayEffectID(cgs.effects.mBlasterSmoke, boltOrg, boltAng, -1, -1, qfalse);
+				}
 			}
 
 			cent->bolt4 = newBolt;
@@ -1240,7 +1252,14 @@ static void CG_General( centity_t *cent ) {
 				BG_GiveMeVectorFromMatrix(&matrix, ORIGIN, boltOrg);
 				BG_GiveMeVectorFromMatrix(&matrix, NEGATIVE_Y, boltAng);
 
-				trap->FX_PlayEffectID(cgs.effects.mBlasterSmoke, boltOrg, boltAng, -1, -1, qfalse);
+				if (CG_Gore_Severed())
+				{ //xenjk gore: the stump bleeds in pulses instead of smoking
+					CG_Gore_Stump(clEnt->currentState.number, newBolt, boltOrg, boltAng);
+				}
+				else
+				{
+					trap->FX_PlayEffectID(cgs.effects.mBlasterSmoke, boltOrg, boltAng, -1, -1, qfalse);
+				}
 			}
 
 			if (cent->currentState.modelGhoul2 == G2_MODELPART_RARM || cent->currentState.modelGhoul2 == G2_MODELPART_RHAND || cent->currentState.modelGhoul2 == G2_MODELPART_WAIST)
@@ -1301,9 +1320,16 @@ static void CG_General( centity_t *cent ) {
 				{
 					boltAng[1] = 1;
 				}
-				trap->FX_PlayEffectID(cgs.effects.mBlasterSmoke, boltOrg, boltAng, -1, -1, qfalse);
-
-				cent->trailTime = cg.time + 400;
+				if (CG_Gore_Severed())
+				{ //xenjk gore: a blood trail, not smoke puffs
+					CG_Gore_LimbTrail(cent->currentState.number, boltOrg, boltAng);
+					cent->trailTime = cg.time + 60;
+				}
+				else
+				{
+					trap->FX_PlayEffectID(cgs.effects.mBlasterSmoke, boltOrg, boltAng, -1, -1, qfalse);
+					cent->trailTime = cg.time + 400;
+				}
 			}
 		}
 

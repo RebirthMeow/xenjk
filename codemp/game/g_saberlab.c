@@ -49,7 +49,7 @@ extern void ClientThink_real( gentity_t *ent );
 extern qboolean G_SetSaber( gentity_t *ent, int saberNum, char *saberName, qboolean siegeOverride );
 extern qboolean G_SaberModelSetup( gentity_t *ent );
 
-enum { LAB_HOLSTER, LAB_IDLE, LAB_SWING, LAB_MASH };
+enum { LAB_HOLSTER, LAB_IDLE, LAB_SWING, LAB_MASH, LAB_THROW };
 enum { LAB_OFF, LAB_SETTLE, LAB_ACT };
 
 #define LAB_SEQ 384
@@ -198,6 +198,10 @@ static void LabResetFighter( int i ) {
 	cl->ps.fd.forcePowersKnown |= ( 1 << FP_SABER_OFFENSE ) | ( 1 << FP_SABER_DEFENSE );
 	cl->ps.fd.forcePowerLevel[FP_SABER_OFFENSE] = f->off;
 	cl->ps.fd.forcePowerLevel[FP_SABER_DEFENSE] = f->def;
+	if ( f->action == LAB_THROW ) {   // saber throw at rank 3 (the throw itself is the stock or spear throw)
+		cl->ps.fd.forcePowersKnown |= ( 1 << FP_SABERTHROW );
+		cl->ps.fd.forcePowerLevel[FP_SABERTHROW] = FORCE_LEVEL_3;
+	}
 	cl->ps.fd.saberAnimLevel = cl->ps.fd.saberAnimLevelBase = cl->ps.fd.saberDrawAnimLevel = f->style;
 
 	cl->ps.weapon = WP_SABER;
@@ -299,6 +303,9 @@ static void LabCommand( int i, int t, usercmd_t *cmd ) {
 	case LAB_MASH:
 		if ( f->hz > 0 && ( ( rel - f->start ) * f->hz * 2 / 1000 ) % 2 == 0 )
 			cmd->buttons = BUTTON_ATTACK;
+		break;
+	case LAB_THROW:
+		cmd->buttons = BUTTON_ALT_ATTACK;
 		break;
 	default:
 		return;
@@ -466,6 +473,7 @@ static int LabAction( const char *s ) {
 	if ( !Q_stricmp( s, "holster" ) ) return LAB_HOLSTER;
 	if ( !Q_stricmp( s, "swing" ) ) return LAB_SWING;
 	if ( !Q_stricmp( s, "mash" ) ) return LAB_MASH;
+	if ( !Q_stricmp( s, "throw" ) ) return LAB_THROW;
 	return LAB_IDLE;
 }
 

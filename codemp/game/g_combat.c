@@ -2091,6 +2091,122 @@ extern qboolean g_endPDuel;
 extern qboolean g_noPDuelCheck;
 extern void saberReactivate(gentity_t *saberent, gentity_t *saberOwner);
 extern void saberBackToOwner(gentity_t *saberent);
+/*
+==================
+G_GoreDeath
+
+xenjk gore (g_gore): explosive kills tear limbs off and throw them away from
+the blast; disruptor headshots take the head. Deaths only, so nothing changes
+for the living. Saber kills go through G_CheckForDismemberment, which g_gore
+makes certain rather than a chance.
+==================
+*/
+void G_GetDismemberLoc( gentity_t *self, vec3_t boltPoint, int limbType );
+void G_GetDismemberBolt( gentity_t *self, vec3_t boltPoint, int limbType );
+void G_Dismember( gentity_t *ent, gentity_t *enemy, vec3_t point, int limbType, float limbRollBase, float limbPitchBase, int deathAnim, qboolean postDeath );
+static gentity_t *gGoreLastLimb;	// the limb G_Dismember spawned last (g_gore throws it harder)
+qboolean gGoreDisintegrating;		// set by a fully charged sniper shot (g_weapon.c)
+
+static qboolean G_GoreExplosive( int mod )
+{
+	switch ( mod )
+	{
+	case MOD_REPEATER_ALT_SPLASH:
+	case MOD_FLECHETTE_ALT_SPLASH:
+	case MOD_ROCKET:
+	case MOD_ROCKET_SPLASH:
+	case MOD_ROCKET_HOMING:
+	case MOD_ROCKET_HOMING_SPLASH:
+	case MOD_THERMAL:
+	case MOD_THERMAL_SPLASH:
+	case MOD_TRIP_MINE_SPLASH:
+	case MOD_TIMED_MINE_SPLASH:
+	case MOD_DET_PACK_SPLASH:
+	case MOD_CONC:
+		return qtrue;
+	default:
+		return qfalse;
+	}
+}
+
+static void G_GoreCut( gentity_t *self, int part, int anim, const vec3_t blast, float force )
+{
+	vec3_t boltPoint, away;
+
+	if ( self->client )
+	{
+		G_GetDismemberBolt( self, boltPoint, part );
+	}
+	else
+	{
+		G_GetDismemberLoc( self, boltPoint, part );
+	}
+	gGoreLastLimb = NULL;
+	G_Dismember( self, self, boltPoint, part, 90, 0, anim, qfalse );
+	if ( gGoreLastLimb && blast && force > 0.0f )
+	{ //thrown away from the blast, and up
+		VectorSubtract( boltPoint, blast, away );
+		away[2] = 0.0f;
+		if ( VectorNormalize( away ) < 0.001f )
+		{
+			VectorSet( away, flrand( -1.0f, 1.0f ), flrand( -1.0f, 1.0f ), 0.0f );
+			VectorNormalize( away );
+		}
+		VectorScale( away, force * flrand( 0.7f, 1.2f ), gGoreLastLimb->epVelocity );
+		gGoreLastLimb->epVelocity[0] += flrand( -0.25f, 0.25f ) * force;
+		gGoreLastLimb->epVelocity[1] += flrand( -0.25f, 0.25f ) * force;
+		gGoreLastLimb->epVelocity[2] += force * flrand( 0.5f, 0.9f );
+	}
+}
+
+static void G_GoreDeath( gentity_t *self, gentity_t *inflictor, int damage, int mod, int anim )
+{
+	if ( !g_gore.integer || !self->ghoul2 || self->localAnimIndex > 1 )
+	{
+		return;
+	}
+	if ( self->client && self->client->NPC_class == CLASS_PROTOCOL )
+	{
+		return;
+	}
+
+	if ( G_GoreExplosive( mod ) && damage >= 40 )
+	{
+		int parts[5] = { G2_MODELPART_HEAD, G2_MODELPART_LARM, G2_MODELPART_RARM, G2_MODELPART_LLEG, G2_MODELPART_RLEG };
+		int i, n = damage >= 100 ? Q_irand( 2, 4 ) : Q_irand( 1, 2 );
+		const float *blast = inflictor ? inflictor->r.currentOrigin : self->r.currentOrigin;
+
+		for ( i = 4; i > 0; i-- )
+		{ //shuffle, then take the first n
+			int j = Q_irand( 0, i ), t = parts[i];
+			parts[i] = parts[j];
+			parts[j] = t;
+		}
+		if ( self->client )
+		{
+			G_UpdateClientAnims( self, 1.0f );
+		}
+		for ( i = 0; i < n; i++ )
+		{
+			G_GoreCut( self, parts[i], anim, blast, 160.0f + 2.0f * Com_Clamp( 0.0f, 100.0f, (float)damage - 40.0f ) );
+		}
+		{ //the body burst: clients throw blood and meat (cg_gore.c). NPCs get no obituary, so this
+		  //is how a client hears of theirs. Stock cgame ignores EV_GIB_PLAYER.
+			gentity_t *te = G_TempEntity( self->r.currentOrigin, EV_GIB_PLAYER );
+			te->s.otherEntityNum = self->s.number;
+			te->s.eventParm = n;
+		}
+	}
+	else if ( mod == MOD_DISRUPTOR_SNIPER && !gGoreDisintegrating && G_GetHitLocation( self, self->pos1 ) == HL_HEAD )
+	{
+		if ( self->client )
+		{
+			G_UpdateClientAnims( self, 1.0f );
+		}
+		G_GoreCut( self, G2_MODELPART_HEAD, anim, NULL, 0.0f );
+	}
+}
+
 void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int meansOfDeath ) {
 	gentity_t	*ent;
 	int			anim;
@@ -2796,6 +2912,10 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 				G_UpdateClientAnims(self, 1.0f);
 				G_CheckForDismemberment(self, attacker, self->pos1, damage, anim, qfalse);
 			}
+			else
+			{
+				G_GoreDeath( self, inflictor, damage, meansOfDeath, anim );
+			}
 		}
 		else if (self->NPC && self->client && self->client->NPC_class != CLASS_MARK1 &&
 			self->client->NPC_class != CLASS_VEHICLE)
@@ -3404,6 +3524,7 @@ void G_Dismember( gentity_t *ent, gentity_t *enemy, vec3_t point, int limbType, 
 
 	VectorCopy( point, newPoint );
 	limb = G_Spawn();
+	gGoreLastLimb = limb;
 	limb->classname = "playerlimb";
 
 	/*
@@ -4155,6 +4276,11 @@ void G_CheckForDismemberment(gentity_t *ent, gentity_t *enemy, vec3_t point, int
 	int hitLoc = -1, hitLocUse = -1;
 	vec3_t boltPoint;
 	int dismember = g_dismember.integer;
+
+	if ( g_gore.integer && dismember < 100 )
+	{ //xenjk gore: a killing cut always takes what the blade hit
+		dismember = 100;
+	}
 
 	if (ent->localAnimIndex > 1)
 	{

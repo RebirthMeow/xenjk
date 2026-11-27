@@ -2121,6 +2121,7 @@ void ClientThink_real( gentity_t *ent ) {
 		client->ps.pm_type = PM_NOCLIP;
 	} else if ( client->ps.stats[STAT_HEALTH] <= 0 ) {
 		client->ps.pm_type = PM_DEAD;
+		SaberSpear_ClientPinned(ent);
 	} else {
 		if (client->ps.forceGripChangeMovetype)
 		{

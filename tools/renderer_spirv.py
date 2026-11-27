@@ -56,6 +56,11 @@ def _tool(env, *names):
 
 GODOT = _tool('GODOT_EXE', 'godot', 'godot4')
 GLSLANG = _tool('GLSLANG_EXE', 'glslangValidator', 'glslang')
+if not GLSLANG.exists() and os.environ.get('VULKAN_SDK'):   # the Vulkan SDK's (its installer sets VULKAN_SDK)
+    for _n in ('glslangValidator.exe', 'glslang.exe', 'glslangValidator', 'glslang'):
+        if (Path(os.environ['VULKAN_SDK']) / 'Bin' / _n).exists():
+            GLSLANG = Path(os.environ['VULKAN_SDK']) / 'Bin' / _n
+            break
 
 GD_SCRIPT = r'''extends SceneTree
 func _init():

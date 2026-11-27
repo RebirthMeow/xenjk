@@ -85,6 +85,8 @@ set(MPCGameCgameFiles
 	"${MPDir}/cgame/cg_light.c"
 	"${MPDir}/cgame/cg_localents.c"
 	"${MPDir}/cgame/cg_main.c"
+	"${MPDir}/cgame/cg_gore.c"
+	"${MPDir}/cgame/cg_gore_pool.c"
 	"${MPDir}/cgame/cg_marks.c"
 	"${MPDir}/cgame/cg_miscg2.c"
 	"${MPDir}/cgame/cg_modelwarm.c"

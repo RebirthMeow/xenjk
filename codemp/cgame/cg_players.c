@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "cg_local.h"
 #include "ghoul2/G2.h"
 #include "game/bg_saga.h"
+#include "game/bg_saberspear.h"
 
 extern vmCvar_t	cg_thirdPersonAlpha;
 
@@ -2251,8 +2252,8 @@ static void _PlayerFootStep( const vec3_t origin,
 
 static void CG_PlayerFootsteps( centity_t *cent, footstepType_t footStepType )
 {
-	if ( !cg_footsteps.integer )
-	{
+	if ( !cg_footsteps.integer && !cg_gore.integer )
+	{ //xenjk gore: bloody prints need the foot even with footstep sounds off
 		return;
 	}
 
@@ -2299,7 +2300,12 @@ static void CG_PlayerFootsteps( centity_t *cent, footstepType_t footStepType )
 				cg.time, cgs.gameModels, cent->modelScale);
 		BG_GiveMeVectorFromMatrix( &boltMatrix, ORIGIN, sideOrigin );
 		sideOrigin[2] += 15;	//fudge up a bit for coplanar
-		_PlayerFootStep( sideOrigin, cent->pe.legs.yawAngle, 6, cent, footStepType );
+		CG_Gore_Footstep( cent->currentState.number, sideOrigin, cent->pe.legs.yawAngle,
+			( footStepType == FOOTSTEP_R || footStepType == FOOTSTEP_HEAVY_R ) ? qtrue : qfalse );
+		if ( cg_footsteps.integer )
+		{
+			_PlayerFootStep( sideOrigin, cent->pe.legs.yawAngle, 6, cent, footStepType );
+		}
 	}
 }
 
@@ -3572,6 +3578,120 @@ static int CG_RagAnimForPositioning(centity_t *cent)
 	}
 }
 
+// Spear pin (game g_saberspear.c): ragdoll effector goals for a body hanging from the pinned part. The game holds the
+// entity origin so the pelvis (the ragdoll root) hangs below the pin; these put the other limbs straight below it.
+// Offsets are across the body (positive: its right side) and up from the pelvis, from the measured skeleton
+// (game/bg_saberspear.h).
+typedef struct {
+	const char	*bone;
+	float		side;
+	float		up;
+} cgSpearHang_t;
+
+static const cgSpearHang_t cg_spearHang[] = {
+	{ "thoracic",	0.0f,	16.0f },
+	{ "ceyebrow",	0.0f,	27.0f },
+	{ "rradiusX",	8.0f,	4.0f },
+	{ "rhand",		8.0f,	0.0f },
+	{ "lradiusX",	-8.0f,	4.0f },
+	{ "lhand",		-8.0f,	0.0f },
+	{ "rfemurX",	5.0f,	-7.0f },
+	{ "rtibia",		6.0f,	-15.0f },
+	{ "rtalus",		7.0f,	-29.0f },
+	{ "lfemurX",	-5.0f,	-7.0f },
+	{ "ltibia",		-6.0f,	-15.0f },
+	{ "ltalus",		-7.0f,	-29.0f },
+	{ NULL,			0.0f,	0.0f }
+};
+
+static qboolean CG_SpearBonePos(centity_t *cent, const vec3_t angles, const char *bone, vec3_t pos)
+{
+	mdxaBone_t m;
+	int bolt = trap->G2API_AddBolt(cent->ghoul2, 0, bone);
+
+	if (bolt < 0 || !trap->G2API_GetBoltMatrix(cent->ghoul2, 0, bolt, &m, angles, cent->lerpOrigin, cg.time,
+		cgs.gameModels, cent->modelScale))
+	{
+		return qfalse;
+	}
+	BG_GiveMeVectorFromMatrix(&m, ORIGIN, pos);
+	return qtrue;
+}
+
+static void CG_SpearHang(centity_t *cent, const vec3_t angles, centity_t *spear, int part)
+{
+	static const vec3_t up = { 0.0f, 0.0f, 1.0f };
+	const float *pin = spear->currentState.origin2;
+	vec3_t bladeDir, side, rPos, lPos, goal;
+	float rightSign = 1.0f, shift = 0.0f, pelvisZ;
+	int i;
+
+	if (part != SPEAR_PIN_WAIST)
+	{ //the pelvis follows the entity origin, which the game places
+		trap->G2API_RagEffectorGoal(cent->ghoul2, spearPinBone[part], (float *)pin);
+	}
+	if (!SpearPinHangs(part))
+	{ //a pinned leg: the body slumps on the floor
+		return;
+	}
+
+	VectorSubtract(pin, spear->lerpOrigin, bladeDir);
+	bladeDir[2] = 0.0f;
+	if (VectorNormalize(bladeDir) < 0.1f)
+	{
+		VectorSet(bladeDir, 1.0f, 0.0f, 0.0f);
+	}
+	CrossProduct(bladeDir, up, side);
+	//keep each limb on its own side: which way the body's right side faces now
+	if (CG_SpearBonePos(cent, angles, "rhumerus", rPos) && CG_SpearBonePos(cent, angles, "lhumerus", lPos))
+	{
+		vec3_t d;
+
+		VectorSubtract(rPos, lPos, d);
+		if (DotProduct(d, side) < 0.0f)
+		{
+			rightSign = -1.0f;
+		}
+	}
+	//hung by an arm, the body hangs below that shoulder, beside the pin
+	if (part == SPEAR_PIN_RARM || part == SPEAR_PIN_RHAND)
+	{
+		shift = -6.0f;
+	}
+	else if (part == SPEAR_PIN_LARM || part == SPEAR_PIN_LHAND)
+	{
+		shift = 6.0f;
+	}
+	pelvisZ = pin[2] - spearPinPelvisBelow[part];
+
+	for (i = 0; cg_spearHang[i].bone; i++)
+	{
+		const char *bone = cg_spearHang[i].bone;
+
+		if (!Q_stricmp(bone, spearPinBone[part]))
+		{
+			continue;
+		}
+		if ((part == SPEAR_PIN_RARM && !Q_stricmp(bone, "rhand")) || (part == SPEAR_PIN_LARM && !Q_stricmp(bone, "lhand")))
+		{ //the pinned arm's hand just beyond the blade
+			VectorCopy(pin, goal);
+			goal[2] += 4.0f;
+		}
+		else if ((part == SPEAR_PIN_RHAND && !Q_stricmp(bone, "rradiusX")) ||
+			(part == SPEAR_PIN_LHAND && !Q_stricmp(bone, "lradiusX")))
+		{
+			VectorCopy(pin, goal);
+			goal[2] -= 4.0f;
+		}
+		else
+		{
+			VectorMA(pin, rightSign * (cg_spearHang[i].side + shift), side, goal);
+			goal[2] = pelvisZ + cg_spearHang[i].up;
+		}
+		trap->G2API_RagEffectorGoal(cent->ghoul2, bone, goal);
+	}
+}
+
 //rww - cgame interface for the ragdoll stuff.
 //Returns qtrue if the entity is now in a ragdoll state, otherwise qfalse.
 qboolean CG_RagDoll(centity_t *cent, vec3_t forcedAngles)
@@ -3837,7 +3957,22 @@ qboolean CG_RagDoll(centity_t *cent, vec3_t forcedAngles)
 				grabEnt = &cg_entities[cent->currentState.ragAttach];
 			}
 
-			if (grabEnt->ghoul2)
+			if (grabEnt->currentState.eType == ET_GENERAL && grabEnt->currentState.weapon == WP_SABER &&
+				grabEnt->currentState.userInt1)
+			{ //pinned to a wall by a spear-thrown saber (game g_saberspear.c): the part the blade went through is
+			  //held on it and the body hangs from there
+				int part = grabEnt->currentState.generic1;
+
+				if (part < 0 || part >= SPEAR_PIN_COUNT)
+				{
+					part = SPEAR_PIN_CHEST;
+				}
+				CG_SpearHang(cent, forcedAngles, grabEnt, part);
+				trap->G2API_RagForceSolve(cent->ghoul2, qtrue);
+				cent->ragPinned = qtrue;
+				cent->overridingBones = cg.time + 1000;
+			}
+			else if (grabEnt->ghoul2)
 			{
 				mdxaBone_t matrix;
 				vec3_t bOrg;
@@ -3962,6 +4097,17 @@ qboolean CG_RagDoll(centity_t *cent, vec3_t forcedAngles)
 		{ //reset things to their normal rag state
 			vec3_t pcjMin, pcjMax;
 			vec3_t dVel;
+
+			if (cent->ragPinned)
+			{ //the spear pulled out: let the body drop
+				int i;
+
+				for (i = 0; cg_spearHang[i].bone; i++)
+				{
+					trap->G2API_RagEffectorGoal(cent->ghoul2, cg_spearHang[i].bone, NULL);
+				}
+				cent->ragPinned = qfalse;
+			}
 
 			//got the hand pos of him, now we want to make our hand go to it
 			trap->G2API_RagEffectorGoal(cent->ghoul2, "rhand", NULL);
@@ -6151,6 +6297,11 @@ void CG_AddSaberBlade( centity_t *cent, centity_t *scent, refEntity_t *saber, in
 	}
 
 	VectorMA( org_, saberLen, axis_[0], end );
+
+	if ( !dontDraw && saberLen > 0 )
+	{ //xenjk gore: a blade that cut someone drips
+		CG_Gore_Blade( cent->currentState.number, saberNum, bladeNum, org_, end );
+	}
 
 	VectorAdd( end, axis_[0], end );
 
@@ -10300,10 +10451,18 @@ stillDoSaber:
 
 				cent->bolt2 = cg.time;
 
-				saberEnt->currentState.apos.trBase[0] = cent->bolt3;
-				saberEnt->lerpAngles[0] = cent->bolt3;
+				if (saberEnt->currentState.userInt1)
+				{ //spear throw (game g_saberspear.c): the server's angles point the blade along the flight
+					VectorCopy(saberEnt->currentState.apos.trBase, saberEnt->lerpAngles);
+					cent->bolt3 = 90;
+				}
+				else
+				{
+					saberEnt->currentState.apos.trBase[0] = cent->bolt3;
+					saberEnt->lerpAngles[0] = cent->bolt3;
+				}
 
-				if (!saberEnt->currentState.saberInFlight && saberEnt->currentState.bolt2 != 123)
+				if (!saberEnt->currentState.userInt1 && !saberEnt->currentState.saberInFlight && saberEnt->currentState.bolt2 != 123)
 				{ //owner is pulling is back
 					if ( !(ci->saber[0].saberFlags&SFL_RETURN_DAMAGE)
 						|| cent->currentState.saberHolstered )

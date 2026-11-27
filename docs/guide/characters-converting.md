@@ -124,7 +124,8 @@ New files (copy whole):
 | `tools/hair/hc_eval.c`, `hc_eval.py`, `hc_replay.c`, `hcd_to_hcr.py`, `hc_frames.c`, `simcheck_run.py` | Hair solver as a library for fitting, dump replay, per-frame step check, in-game check |
 | `tools/characters/pack_dds_convert.py` | PNG/TGA/JPG in a pack get BC7 (or BC1) DDS beside them |
 | `tools/characters/pack_layer_dds.py`, `pack_layer_rgba8.py` | DDS for layer arrays (BC7; RGBA8 for arrays BC7 cannot hold) |
-| `tools/characters/pack_bc1.py` | Opaque non-colour maps re-encoded as BC1 when within 40 dB |
+| `tools/characters/pack_bc1.py` | Opaque non-colour maps re-encoded as BC1 when within 40 dB; `--colour` adds opaque albedo at 37 dB |
+| `tools/characters/pack_mip_cap.py` | DDS top mips above `r_ddsMaxSize` (4096) dropped, no re-encode; `--detail-psnr 45` also drops a top level with no detail of its own |
 | `tools/characters/pack_texture_dedupe.py` | One file per byte-identical texture group, shader references rewritten |
 | `tools/characters/fma_mip_fix.py` | Rebuild mip chains a premultiplying resize blackened |
 | `tools/characters/packio.py` | The pack rewrite (copy with entries replaced, dropped or added) and box filter those tools share |
@@ -340,6 +341,10 @@ python -I tools/characters/pack_dds_convert.py zz_<m>_b.pk3 zz_<m>_c.pk3 --repor
 python -I tools/characters/pack_layer_dds.py   zz_<m>_c.pk3 zz_<m>_d.pk3 --report layers.json
 python -I tools/characters/pack_bc1.py         zz_<m>_d.pk3 zz_<m>_e.pk3 --report bc1.json
 ```
+
+For a smaller pack, first drop the levels the renderer never uploads, then encode the opaque albedo as BC1 too:
+`pack_mip_cap.py zz_<m>_e.pk3 zz_<m>_f.pk3 --detail-psnr 45` and `pack_bc1.py zz_<m>_f.pk3 zz_<m>_g.pk3 --colour`. Keep the pk3 stored
+(not deflated): textures stream from it by byte range.
 
 `pack_layer_rgba8.py <in.pk3> <dump dir> <out.pk3>` covers layer arrays BC7 cannot hold, from the renderer's own
 `r_arrayDump 1` output. `cook_tangents.py --out DIR [--pack OUT.pk3]` pre-computes tangents so a hero's first load

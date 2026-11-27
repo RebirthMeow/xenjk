@@ -98,7 +98,7 @@ anchor facing b, and b stands `dist` away facing a.
 | `x.client` | 0 / 1 | the bot's client number |
 | `x.style` | medium | fast, medium, strong, desann, tavion, dual, staff (or the SS_ number) |
 | `x.off` / `x.def` | 3 / 3 | saber offense and defense level |
-| `x.act` | idle | `holster` (saber off, cannot block), `idle` (saber up, blocks), `swing` (attack held over the window), `mash` (attack toggled at `hz`) |
+| `x.act` | idle | `holster` (saber off, cannot block), `idle` (saber up, blocks), `swing` (attack held over the window), `mash` (attack toggled at `hz`), `throw` (alt-attack held over the window, with saber throw at rank 3) |
 | `x.start` / `x.hold` | 0 / 0 | action window, ms after the act start |
 | `x.fm` / `x.rm` / `x.up` | 0 | movement keys held through the window; they choose the attack direction |
 | `x.hz` | 0 | mash presses per second |

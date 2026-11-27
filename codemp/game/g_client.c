@@ -1086,6 +1086,7 @@ static qboolean CopyToBodyQue( gentity_t *ent ) {
 
 	body->s.eType = ET_BODY;
 	body->s.eFlags = EF_DEAD;		// clear EF_TALK, etc
+	body->s.ragAttach = 0;			// a spear pin (g_saberspear.c) is handed over below
 
 	if (ent->client && (ent->client->ps.eFlags & EF_DISINTEGRATION))
 	{
@@ -1155,6 +1156,7 @@ static qboolean CopyToBodyQue( gentity_t *ent ) {
 	}
 
 	VectorCopy ( body->s.pos.trBase, body->r.currentOrigin );
+	SaberSpear_BodyCopied( ent, body );	// a corpse pinned by a spear throw stays pinned
 	trap->LinkEntity ((sharedEntity_t *)body);
 
 	return qtrue;

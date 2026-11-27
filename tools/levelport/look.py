@@ -98,12 +98,19 @@ def main(argv=None):
     ap.add_argument('--bin64', action='store_true', help="the 64-bit client (GameData/bin64, the Play_*.bat one): a "
                     "scene whose file is larger than the 32-bit client can allocate")
     ap.add_argument('--png', action='store_true', help='lossless screenshots (a debug view read per pixel)')
+    ap.add_argument('--exe', help='a client to run in place of the installed one, from its own folder (SDL2.dll and '
+                    'the renderer beside it); the installed GameData stays the base')
+    ap.add_argument('--game-dll', action='append', default=[],
+                    help="a module (cgame/ui DLL) staged in the run's home base, where the client looks first")
+    ap.add_argument('--hold', type=int, default=0, help='extra milliseconds at each view before its screenshot')
     a = ap.parse_args(argv)
     out = Path(a.out or paths.LEVELPORT / 'look' / ('%s-%s' % (a.map, time.strftime('%Y%m%d-%H%M%S')))).resolve()
     base = out / 'home' / 'base'
     base.mkdir(parents=True, exist_ok=True)
     for p in [a.pk3] + a.extra_pk3:
         stage(p, base / Path(p).name)
+    for p in a.game_dll:
+        shutil.copy2(p, base / Path(p).name)
     with zipfile.ZipFile(a.pk3) as z:
         views = views_from_bsp(z.read('maps/%s.bsp' % a.map), a.views)
     pitches = {}
@@ -130,10 +137,15 @@ def main(argv=None):
             frames = round(abs(pitches[k]) / 30.0 * float(sets['com_maxfps']))
             key = 'lookup' if pitches[k] > 0 else 'lookdown'
             lines += ['cl_pitchspeed 30', '+' + key, 'wait %d' % frames, '-' + key, 'cl_pitchspeed 140']
+        if a.hold:
+            lines += ['wait %d' % max(1, round(a.hold / 1000.0 * float(sets['com_maxfps'])))]
         lines += ['wait 200', 'viewpos', ('screenshot_png v%02d' if a.png else 'screenshot v%02d') % k, 'wait 60']
     lines += ['echo LOOK done', 'wait 30', 'quit']
     (base / 'look.cfg').write_text('\n'.join(lines) + '\n', encoding='utf-8')
-    if a.bin64:
+    if a.exe:
+        exe = Path(a.exe).resolve()
+        cwd = exe.parent
+    elif a.bin64:
         exe, cwd = rb.ASSETS / 'bin64' / 'xenjk.x86_64.exe', rb.ASSETS / 'bin64'
     else:
         exe, cwd = rb.ASSETS / 'xenjk.x86.exe', rb.ASSETS

@@ -302,6 +302,8 @@ static consoleCommand_t	commands[] = {
 	{ "director",					CG_Director_f }, // shot files: camera path and actors (cg_director.c)
 	{ "forcenext",					CG_NextForcePower_f },
 	{ "forceprev",					CG_PrevForcePower_f },
+	{ "gore_pool",					CG_Gore_Pool_f }, // with cg_goreDebug 1: a blood pool on the floor in view (cg_gore_pool.c)
+	{ "gore_spray",					CG_Gore_Spray_f }, // with cg_goreDebug 1: gore_spray [drops] [chunks] at the surface in view (cg_gore.c)
 	{ "invnext",					CG_NextInventory_f },
 	{ "invprev",					CG_PrevInventory_f },
 	{ "loaddeferred",				CG_LoadDeferredPlayers },

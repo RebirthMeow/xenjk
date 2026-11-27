@@ -1,13 +1,15 @@
 """pack_bc1.py -- opaque non-colour maps of a character pack re-encoded as BC1 when BC1 holds them closely.
 
-    python -I tools/characters/pack_bc1.py <in.pk3> <out.pk3> [--min-psnr 40] [--report r.json] [--dry-run]
+    python -I tools/characters/pack_bc1.py <in.pk3> <out.pk3> [--min-psnr 40] [--colour [--colour-psnr 37]] [--report r.json] [--dry-run]
 
 A converted character pack stores its physical maps (ORM, RMO ...), masks and detail maps as BC7 (16 bytes a 4x4
 block) or as PNG/TGA. BC1 is 8 bytes a block. A map is re-encoded when all of this holds:
 - the shader texts of the pack read it only in non-colour roles: physical maps (ormMap, rmoMap ... and the companion
   names the renderer searches: X_orm, X_rmo ...), materialMask, tintMask, specularMap. Colour maps (map, clampMap,
   diffuseMap, implicit shaders, detailMap, emissive maps, layer images), normal maps (_n, _nh, normalMap,
-  detailNormalMap) and layer masks are never touched, and nor is a texture no shader names;
+  detailNormalMap) and layer masks are never touched, and nor is a texture no shader names. --colour also takes
+  colour maps read only as a stage's map, clampMap or diffuseMap (an opaque albedo), against --colour-psnr (default
+  37 dB: BC1 albedo as games ship it; the 40 dB bar stays for the non-colour maps);
 - every pixel of its top level is opaque (alpha >= 254: BC1 keeps one bit of alpha, written as opaque);
 - its sides are powers of two, at least 4;
 - a BC1 encode of its top level, decoded, is within --min-psnr dB of the decoded source in each of R, G and B.
@@ -36,6 +38,9 @@ TEX_EXT = ('.dds', '.png', '.tga', '.jpg', '.jpeg')
 KEYTOK = re.compile(r'(?i)(\S+)\s+(models/players/[^\s"]+)')
 NON_COLOUR_KEYS = {'ormmap', 'ormsmap', 'rmomap', 'rmosmap', 'moxrmap', 'mosrmap', 'specmap', 'specularmap',
                    'physicalmap', 'materialmask', 'tintmask'}
+# --colour: albedo read as a stage's base map; '}' is the name of a shader that follows a closing brace, the texture
+# that shader's implicit image (a colour read too)
+COLOUR_KEYS = {'map', 'clampmap', 'diffusemap', '}'}
 PHYS_SUFFIXES = ('_rmo', '_rmos', '_moxr', '_mosr', '_orm', '_orms')
 DXGI = {71: 'bc1', 72: 'bc1', 80: 'bc4', 83: 'bc5', 98: 'bc7', 99: 'bc7', 77: 'bc3', 78: 'bc3'}
 FOURCC = {b'DXT1': 'bc1', b'DXT5': 'bc3', b'ATI1': 'bc4', b'BC4U': 'bc4', b'ATI2': 'bc5', b'BC5U': 'bc5'}
@@ -111,15 +116,15 @@ def roles_of(z):
     return roles
 
 
-def eligible(name, roles):
+def eligible(name, roles, colour=False):
     b = base(name)
     r = roles.get(b)
     if b.endswith(PHYS_SUFFIXES) and not r:
         return True  # a companion the renderer searches for by name (X_orm ...) that no keyword names
-    return bool(r) and r <= NON_COLOUR_KEYS
+    return bool(r) and r <= (NON_COLOUR_KEYS | COLOUR_KEYS if colour else NON_COLOUR_KEYS)
 
 
-def convert(inp, out, min_psnr, dry):
+def convert(inp, out, min_psnr, dry, colour=False, colour_psnr=37.0):
     z = zipfile.ZipFile(inp)
     roles = roles_of(z)
     new, recs, fails = {}, [], []
@@ -127,7 +132,7 @@ def convert(inp, out, min_psnr, dry):
         n = i.filename
         if not n.lower().startswith('models/players/') or not n.lower().endswith(TEX_EXT):
             continue
-        if not eligible(n, roles):
+        if not eligible(n, roles, colour):
             continue
         rec = {'name': n, 'roles': sorted(roles.get(base(n), ())), 'in_bytes': i.file_size}
         recs.append(rec)
@@ -153,13 +158,15 @@ def convert(inp, out, min_psnr, dry):
         dec = bc1_decode(bc1(a), w, h)
         ch = [round(psnr(a[:, :, k], dec[:, :, k]), 2) for k in range(3)]
         rec['psnr'] = ch
-        if min(ch) < min_psnr:
-            rec['skip'] = 'BC1 below %.1f dB in a channel' % min_psnr
+        bar = colour_psnr if colour and not eligible(n, roles) else min_psnr
+        rec['bar'] = bar
+        if min(ch) < bar:
+            rec['skip'] = 'BC1 below %.1f dB in a channel' % bar
             continue
         data, levels = dds_bc1(a)
         # proof: the written top level decodes as tested, and each level has its size
         got = dds_top(data)
-        ok = got is not None and got[1] == 'bc1' and min(psnr(a[:, :, k], got[0][:, :, k]) for k in range(3)) >= min_psnr
+        ok = got is not None and got[1] == 'bc1' and min(psnr(a[:, :, k], got[0][:, :, k]) for k in range(3)) >= bar
         lw, lh = w, h
         for lv in levels:
             ok = ok and len(lv) == max(1, (lw + 3) // 4) * max(1, (lh + 3) // 4) * 8
@@ -175,8 +182,8 @@ def convert(inp, out, min_psnr, dry):
     saved = sum(r['in_bytes'] - r['out_bytes'] for r in recs if 'out_bytes' in r)
     rep = {'in': inp, 'out': out if not dry else None, 'converted': len(new), 'candidates': len(recs),
            'saved_bytes': saved, 'proof_failures': fails, 'textures': recs}
-    print('%s: %d of %d non-colour maps to BC1, %.1f MB saved, %d proof failures%s' % (
-        os.path.basename(inp), len(new), len(recs), saved / 2**20, len(fails), ' (dry run)' if dry else ''), flush=True)
+    print('%s: %d of %d %s to BC1, %.1f MB saved, %d proof failures%s' % (
+        os.path.basename(inp), len(new), len(recs), 'opaque maps' if colour else 'non-colour maps', saved / 2**20, len(fails), ' (dry run)' if dry else ''), flush=True)
     return rep
 
 
@@ -185,10 +192,12 @@ def main():
     ap.add_argument('inp')
     ap.add_argument('out')
     ap.add_argument('--min-psnr', type=float, default=40.0)
+    ap.add_argument('--colour', action='store_true')
+    ap.add_argument('--colour-psnr', type=float, default=37.0)
     ap.add_argument('--report')
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args()
-    rep = convert(a.inp, a.out, a.min_psnr, a.dry_run)
+    rep = convert(a.inp, a.out, a.min_psnr, a.dry_run, a.colour, a.colour_psnr)
     if a.report:
         with open(a.report, 'w', encoding='utf-8') as f:
             json.dump(rep, f, indent=1)

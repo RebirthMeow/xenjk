@@ -68,7 +68,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define	MAX_STEP_CHANGE		32
 
 #define	MAX_VERTS_ON_POLY	10
-#define	MAX_MARK_POLYS		256
+#define	MAX_MARK_POLYS		1024	// xenjk: 256 before blood marks (cg_gore.c)
 
 #define STAT_MINUS			10	// num frame for '-' stats digit
 
@@ -437,6 +437,7 @@ typedef struct centity_s {
 	qboolean		isRagging;
 	qboolean		ownerRagging;
 	int				overridingBones;
+	qboolean		ragPinned;		// ragdoll held on a spear-thrown saber (game g_saberspear.c)
 
 	int				bodyFadeTime;
 	vec3_t			pushEffectOrigin;
@@ -481,6 +482,11 @@ typedef struct markPoly_s {
 	int			time;
 	qhandle_t	markShader;
 	qboolean	alphaFade;		// fade alpha instead of rgb
+	int			lifeTime;		// ms; 0 = the stock MARK_TOTAL_TIME
+	qboolean	blood;			// colour dries over its life (cg_gore.c)
+	qhandle_t	wetShader;		// blood: additive wet shine drawn over it while fresh
+	vec3_t		lightDir;		// blood: the light grid's direction at the mark
+	vec3_t		normal;			// blood: the surface normal
 	float		color[4];
 	poly_t		poly;
 	polyVert_t	verts[MAX_VERTS_ON_POLY];
@@ -1964,6 +1970,38 @@ void CG_OutOfAmmoChange( int oldWeapon );	// should this be in pmove?
 //
 void	CG_InitMarkPolys( void );
 void	CG_AddMarks( void );
+// cg_gore.c
+void	CG_Gore_Register( void );
+void	CG_Gore_Clear( void );
+void	CG_Gore_AddDrops( void );
+int		CG_Gore_MarkLife( void );
+void	CG_Gore_MarkColor( int age, vec3_t out );
+void	CG_Gore_Light( const vec3_t point, const vec3_t normal, vec3_t out, vec3_t dirOut );
+float	CG_Gore_Wetness( int age );
+void	CG_Gore_Sheen( const vec3_t xyz, const vec3_t normal, const vec3_t lightDir, const float *light, float wet, byte *out );
+void	CG_Gore_SaberHit( int attacker, int victim, const vec3_t point, const vec3_t bladeDir, int strength );
+void	CG_Gore_Blade( int owner, int saberNum, int bladeNum, const vec3_t base, const vec3_t tip );
+void	CG_Gore_Footstep( int entityNum, const vec3_t origin, float yaw, qboolean right );
+struct localEntity_s;
+void	CG_Gore_ChunkTrail( struct localEntity_s *le );
+void	CG_Gore_ChunkLand( struct localEntity_s *le, trace_t *tr );
+void	CG_Gore_MissileHit( int victim, int weapon, const vec3_t point, const vec3_t normal );
+void	CG_Gore_Obituary( int victim, int mod );
+void	CG_Gore_Gib( int victim, const vec3_t origin, int limbs );
+qboolean CG_Gore_Bleeds( int entityNum );
+void	CG_Gore_FloorBlood( const vec3_t origin, float radius );
+void	CG_Gore_PoolRegister( void );
+void	CG_Gore_PoolClear( void );
+void	CG_Gore_AddPools( void );
+void	CG_Gore_Pool_f( void );
+void	CG_Gore_Spray_f( void );
+qboolean CG_Gore_Severed( void );
+void	CG_Gore_LimbCut( int limbEnt, const vec3_t org, const vec3_t dir );
+void	CG_Gore_LimbTrail( int limbEnt, const vec3_t org, const vec3_t dir );
+void	CG_Gore_Stump( int owner, int bolt, const vec3_t org, const vec3_t dir );
+void	CG_Gore_ImpactMarkAxis( qhandle_t markShader, qhandle_t wetShader, const vec3_t origin, const vec3_t normal,
+				const vec3_t down, float halfWidth, float halfHeight, int lifeTime );
+
 void	CG_ImpactMark( qhandle_t markShader,
 				    const vec3_t origin, const vec3_t dir,
 					float orientation,

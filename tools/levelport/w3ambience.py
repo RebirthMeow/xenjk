@@ -49,6 +49,16 @@ Grains stay baked into loops: cgame passes cg.time as a local set's last-wave ti
     python tools/levelport/w3ambience.py --summary <summary.json> --map-pk3 <zz_w3_city.pk3> --out <pack folder>
         [--map w3_city] [--max-speakers 120] [--budget-mb 150] [--game DIR] [--keep-stage]
 
+--zones (the client's ambience player, cgame/cg_ambience.c) writes maps/<map>.amb in place of the .ent: every exterior
+city area as a zone (its polygon and a height band, heard from its nearest point, all round you inside it), every point
+emitter as a point, each event a set with its kind (a baked loop, one-shots at gaps, or the four-channel crowd murmur
+of a walla area), reach (the component's maxDistance), gain, falloff curve and hours. One-shot events keep their clips
+as separate WAVs. --rules takes wwise_rules.json (the containers' gaps, volumes, attenuation curves and hours decoded
+from the banks); without it gaps come from EVENTS and hours from the names.
+
+    python tools/levelport/w3ambience.py --zones [--rules wwise_rules.json] --summary <summary.json>
+        --map-pk3 <zz_w3_city.pk3> --out <pack folder>
+
 Writes <out>/stage/ (sound/w3_city/*.wav, maps/<map>.ent), <out>/zz_<map>_sound.pk3 and <out>/w3ambience.json (the
 events, their sources, modes, durations, the speakers and the memory estimate: 16-bit at 44.1 kHz once loaded).
 vgmstream-cli decodes the .wem sources (Wwise Opus/Vorbis); ffmpeg downmixes and resamples.
@@ -428,6 +438,237 @@ def speaker(e, wav, p):
             '"origin" "%.1f %.1f %.1f"\n"w3_event" "%s"\n}\n' % (wav, p[0], p[1], p[2], e))
 
 
+# ---- zones: maps/<map>.amb for the client's ambience player -------------------------------------------------------
+
+SKIP_WORDS = ('rain', '_tent_', 'roof', 'mus_loc', 'q70', 'corpse', 'cave', 'basement', 'storage', '_in_')
+DENSE_WORDS = ('water', 'fire', 'fountain', 'waterfall', 'wind_forest', 'insect', 'cricket', 'grasshopper', 'frog')
+NIGHT_WORDS = ('night', 'cricket', 'frog', 'owl')
+DAY_WORDS = ('bird', 'seagull', 'bee_', 'bumblebee', 'grasshopper', 'crowd', 'market', 'village', 'tit_wings', 'vireo')
+ZONE_BELOW_M, ZONE_ABOVE_M = 3.0, 15.0     # an area's height band round its polygon (the census has no height)
+GRAIN_CLIPS = 24                           # clips kept for a one-shot event
+DEFAULT_GAPS = (2.0, 8.0)                  # seconds between one-shots when neither the rules nor EVENTS give them
+
+
+def name_hours(e):
+    """day or night by the event's name (when the rules give no hours); (0, 0) always"""
+    n = e.lower()
+    if any(w in n for w in NIGHT_WORDS):
+        return (20.5, 5.5)
+    if any(w in n for w in DAY_WORDS):
+        return (5.5, 20.5)
+    return (0.0, 0.0)
+
+
+def event_spec(e):
+    return EVENTS.get(CANON.get(e.lower(), ''), (None, None, 4, None, None))
+
+
+def zone_kind(e, clips, rule):
+    """'loop' (long sources), 'dense' (short sources baked into a texture loop) or 'grains' (one-shots at gaps)"""
+    if clips and min(len(c) for c in clips) >= LOOP_MIN_S * RATE:
+        return 'loop'
+    if rule.get('gap_ms'):
+        return 'grains'
+    mode = event_spec(e)[0]
+    if mode in ('loop', 'dense'):
+        return mode
+    if mode == 'sparse':
+        return 'grains'
+    return 'dense' if any(w in e.lower() for w in DENSE_WORDS) else 'grains'
+
+
+def band_site(bands, band, q3):
+    """(index, site) of the band's site nearest q3, or None"""
+    sites = (bands.get(band) or {}).get('sites') or []
+    best = None
+    for i, st in enumerate(sites):
+        p = st.get('q3_pos')
+        if p:
+            d = math.dist(p[:2], q3[:2])
+            if best is None or d < best[0]:
+                best = (d, i, st)
+    return (best[1], best[2]) if best else None
+
+
+def db_gain(db):
+    return 10.0 ** (db / 20.0)
+
+
+def normalised(c):
+    peak = float(np.abs(c).max()) if len(c) else 0.0
+    return c * (0.99 / peak) if peak > 0.99 else c
+
+
+def zones_main(a, rows):
+    out = Path(a.out)
+    stage = out / 'stage'
+    if stage.exists():
+        shutil.rmtree(stage)
+    rules, bands = {}, {}
+    if a.rules:
+        rj = json.load(open(a.rules, encoding='utf-8'))
+        ev = rj.get('events', rj)
+        rules = {k.lower(): v for k, v in ev.items() if isinstance(v, dict)}
+        bands = rj.get('bands', {}) or {}
+    else:
+        print('w3ambience: no --rules: gaps from EVENTS, hours from the names, the default falloff')
+    # the exterior city rows by event; a walla area keeps its four events together
+    inst = collections.defaultdict(list)      # set key -> [('zone'|'point', data)]
+    reach_m = {}
+    for r in rows:
+        if r['interior_guess'] or 'beauclair' not in r['layer'] or r['layer'].startswith(('quests/', 'sounds/quest')):
+            continue
+        evs = [e for e in r['events'] if not e.lower().endswith('.bnk')]
+        if r.get('music_band') and not evs:
+            evs = ['mus_em_bob_bard_group_ext']
+        evs = [e for e in evs if not any(w in e.lower() for w in SKIP_WORDS) and not e.lower().endswith('_int')]
+        if not evs:
+            continue
+        m = r['max_distance_m'] or 40.0
+        if r['polygon_q3']:
+            poly = r['polygon_q3']
+            zs = [q[2] for q in poly]
+            data = ('zone', (min(zs) - ZONE_BELOW_M * UPM, max(zs) + ZONE_ABOVE_M * UPM,
+                             [(q[0], q[1]) for q in poly]))
+        else:
+            data = ('point', tuple(r['q3_pos']))
+        quad_tags = ('_FL', '_FR', '_RL', '_RR')
+        if r['walla'] and len(evs) >= 4 and all(e[-3:].upper() in quad_tags for e in evs[:4]):
+            key = ('walla', tuple(sorted(evs[:4], key=lambda e: quad_tags.index(e[-3:].upper()))))
+        else:
+            key = ('one', evs[0])
+        if r.get('music_band'):
+            site = band_site(bands, r['music_band'], r['q3_pos'])
+            if site is not None and site[1].get('exterior') is False:
+                continue                                   # an indoor band (its event is the interior one)
+            key = key + (r['music_band'], site[0] if site else 0)
+        elif evs[0].lower().startswith('mus_em_'):
+            continue                                       # a bard emitter without its band's activator
+        inst[key].append(data)
+        reach_m[key] = max(reach_m.get(key, 0.0), m)
+    vgm = tool('vgmstream-cli', 'vgmstream.vgmstream_*/vgmstream-cli.exe')
+    ffmpeg = tool('ffmpeg', 'Gyan.FFmpeg_*/ffmpeg-*/bin/ffmpeg.exe')
+    banks = Banks(Cache(a.game))
+    rng = np.random.default_rng(7)
+    sounds, snd_index = [], {}                 # [(path, ms)], wav name -> index
+    sets, lines_inst, report = [], [], {}
+    loaded = 0.0
+
+    def add_sound(name, x):
+        nonlocal loaded
+        if name not in snd_index:
+            write_wav(stage / 'sound' / a.map / ('%s.wav' % name), x)
+            loaded += len(x) * 2                 # held at its own rate (the 64-bit client's soundlist)
+            snd_index[name] = len(sounds)
+            sounds.append(('sound/%s/%s.wav' % (a.map, name), int(len(x) * 1000 / RATE)))
+        return snd_index[name]
+
+    def prio(k):
+        e = k[1][0] if k[0] == 'walla' else k[1]
+        return (event_spec(e)[2], -len(inst[k]), e)
+
+    clip_cache = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        def clips_of(e):
+            if e not in clip_cache:
+                cl = [decode(w, vgm, ffmpeg, tmp) for _sid, w in banks.sources(e)[:64]]
+                clip_cache[e] = [c for c in cl if len(c) > RATE // 50]
+            return clip_cache[e]
+
+        for key in sorted(inst, key=prio):
+            evs = list(key[1]) if key[0] == 'walla' else [key[1]]
+            rule = rules.get(evs[0].lower(), {})
+            if loaded / 1e6 > a.budget_mb:
+                print('w3ambience: over the %.0f MB budget; %s and the rest dropped' % (a.budget_mb, evs[0]))
+                break
+            idx = []
+            if key[0] == 'walla':
+                kind = 'walla'
+                for e in evs:
+                    cl = clips_of(e)
+                    if not cl:
+                        break
+                    idx.append(add_sound(wav_name(e), bake(cl, 'loop', 60, None, rng)))
+                if len(idx) != 4:
+                    print('w3ambience: walla %s lacks media; dropped' % evs[0])
+                    continue
+            else:
+                e = evs[0]
+                cl = clips_of(e)
+                if not cl:
+                    print('w3ambience: %s has no media; dropped' % e)
+                    continue
+                kind = zone_kind(e, cl, rule)
+                if kind == 'grains':
+                    for k, c in enumerate(cl[:GRAIN_CLIPS]):
+                        idx.append(add_sound('%s_%02d' % (wav_name(e)[:40], k), normalised(c)))
+                else:
+                    seconds = 300 if e.lower().startswith('mus_') else (60 if kind == 'loop' else 30)
+                    idx.append(add_sound(wav_name(e), bake(cl, kind, seconds, event_spec(e)[4], rng)))
+                    kind = 'loop'
+            band = key[2] if len(key) > 2 else None
+            hours = tuple(rule['hours']) if rule.get('hours') else name_hours(evs[0])
+            if band:
+                b = bands.get(band) or {}
+                sites = b.get('sites') or []
+                sh = sites[key[3]].get('hours') if key[3] < len(sites) else None
+                hours = tuple(sh or b.get('hours') or (0.0, 0.0))
+            gap = rule.get('gap_ms') or [int(g * 1000) for g in (event_spec(evs[0])[4] or DEFAULT_GAPS)]
+            vol = rule.get('volume_db')
+            if isinstance(vol, dict):
+                vol = vol.get('chain') or [vol.get('base', 0.0), vol.get('rand_min', 0.0), vol.get('rand_max', 0.0)]
+            vol = vol if isinstance(vol, (list, tuple)) and vol and not isinstance(vol[0], (list, dict)) else [0.0]
+            gain = db_gain(float(vol[0]))
+            vol_rand = min(1.0, max(0.0, 1.0 - db_gain(float(vol[1])))) if len(vol) > 1 and vol[1] else 0.15
+            att = rule.get('attenuation') or {}
+            reach = float(att.get('max_m') or reach_m[key]) * UPM
+            flags = 0
+            if rule.get('transition') == 'trigger_rate':
+                flags |= 2                                 # the gap runs start to start
+            if (rule.get('positioning') or {}).get('type') == 'listener_with_automation':
+                flags |= 4                                 # one-shots round the listener
+            si = sum(1 for x in sets if x.startswith('set '))
+            sets.append('set %d %s %.3f %.0f %.2f %.2f %d %d %.2f %d %d %s' % (
+                si, kind, gain, reach, hours[0], hours[1], int(gap[0]), int(gap[1]), vol_rand, flags, len(idx),
+                ' '.join(map(str, idx))))
+            curve = att.get('curve')
+            if curve and len(curve) >= 2:
+                mx = float(att.get('max_m') or curve[-1][0]) or 1.0
+                pts = [(min(1.0, float(d) / mx), db_gain(float(db))) for d, db in curve][:8]
+                sets.append('curve %d %d %s' % (si, len(pts), ' '.join('%.3f %.4f' % p for p in pts)))
+            for kd, data in inst[key]:
+                if kd == 'zone':
+                    zmin, zmax, poly = data
+                    lines_inst.append('zone %d %.0f %.0f %d %s' % (si, zmin, zmax, len(poly),
+                                                                    ' '.join('%.0f %.0f' % q for q in poly)))
+                else:
+                    lines_inst.append('point %d %.0f %.0f %.0f' % ((si,) + tuple(data)))
+            report[' '.join(evs) + ((' @' + band) if band else '')] = {
+                'kind': kind, 'sounds': len(idx), 'places': len(inst[key]), 'reach_m': round(reach / UPM, 1),
+                'hours': hours, 'gain': round(gain, 3), 'gap_ms': list(gap), 'flags': flags, 'rules': bool(rule)}
+            print('  %-52s %-6s %2d sounds %3d places, %3.0f m, hours %s' % (
+                evs[0][:52], kind, len(idx), len(inst[key]), reach / UPM, hours))
+    text = ['amb 1', "# tools/levelport/w3ambience.py --zones: The Witcher 3's city ambience"]
+    text += ['snd %d %s %d' % (i, pth, ms) for i, (pth, ms) in enumerate(sounds)]
+    text += sets + lines_inst
+    (stage / 'maps').mkdir(parents=True, exist_ok=True)
+    (stage / 'maps' / ('%s.amb' % a.map)).write_text('\n'.join(text) + '\n', encoding='latin-1')
+    pk3 = out / ('zz_%s_sound.pk3' % a.map)
+    with zipfile.ZipFile(str(pk3) + '.tmp', 'w', zipfile.ZIP_DEFLATED) as z:
+        for f in sorted(stage.rglob('*')):
+            if f.is_file():
+                z.write(f, f.relative_to(stage).as_posix())
+    os.replace(str(pk3) + '.tmp', pk3)
+    json.dump({'map': a.map, 'mode': 'zones', 'sets': len(report), 'sounds': len(sounds),
+               'places': len(lines_inst), 'loaded_mb': round(loaded / 1e6, 1),
+               'pk3_mb': round(pk3.stat().st_size / 1e6, 1), 'rules': a.rules, 'detail': report},
+              open(out / 'w3ambience.json', 'w', encoding='utf-8'), indent=1)
+    if not a.keep_stage:
+        shutil.rmtree(stage)
+    print('w3ambience --zones -> %s: %d sets, %d sounds, %d areas and points, %.1f MB once loaded, pk3 %.1f MB' % (
+        pk3, len(report), len(sounds), len(lines_inst), loaded / 1e6, pk3.stat().st_size / 1e6))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--summary', required=True)
@@ -438,7 +679,12 @@ def main():
     ap.add_argument('--budget-mb', type=float, default=150.0)
     ap.add_argument('--game', default=os.environ.get('W3_GAME', '<Steam library>/steamapps/common/The Witcher 3'))
     ap.add_argument('--keep-stage', action='store_true', help='keep <out>/stage after the pk3 is written')
+    ap.add_argument('--zones', action='store_true', help="maps/<map>.amb for the client's ambience player, no speakers")
+    ap.add_argument('--rules', help="wwise_rules.json: the containers' gaps, volumes, curves and hours (--zones)")
     a = ap.parse_args()
+    if a.zones:
+        zones_main(a, json.load(open(a.summary, encoding='utf-8'))['all'])
+        return
     out = Path(a.out)
     stage = out / 'stage'
     if stage.exists():

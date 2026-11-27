@@ -306,6 +306,7 @@ RB_SurfacePolychain
 void RB_SurfacePolychain( const srfPoly_t *p ) {
 	int		i;
 	int		numv;
+	vec3_t	normal = { 0.0f, 0.0f, 1.0f };
 
 #ifdef USE_VBO
 	VBO_Flush();
@@ -317,9 +318,24 @@ void RB_SurfacePolychain( const srfPoly_t *p ) {
 	tess.surfType = SF_POLY;
 #endif
 
+	// polys carry no normals, but lit stages read one (character shadows normalise it: a zero
+	// normal turned whole decals black under a character's shadow). The fan's own plane, facing
+	// either way; a degenerate fan keeps up.
+	if ( p->numVerts >= 3 ) {
+		vec3_t a, b, n;
+
+		VectorSubtract( p->verts[1].xyz, p->verts[0].xyz, a );
+		VectorSubtract( p->verts[2].xyz, p->verts[0].xyz, b );
+		CrossProduct( b, a, n );
+		if ( VectorNormalize( n ) > 0.0f ) {
+			VectorCopy( n, normal );
+		}
+	}
+
 	// fan triangles into the tess array
 	numv = tess.numVertexes;
 	for ( i = 0; i < p->numVerts; i++ ) {
+		VectorCopy( normal, tess.normal[numv] );
 		VectorCopy( p->verts[i].xyz, tess.xyz[numv] );
 		tess.texCoords[0][numv][0] = p->verts[i].st[0];
 		tess.texCoords[0][numv][1] = p->verts[i].st[1];

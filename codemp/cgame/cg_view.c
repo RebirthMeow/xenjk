@@ -2866,6 +2866,7 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView, qboolean demo
 
 	if ( !cg.hyperspace ) {
 		CG_AddLocalEntities();
+		CG_Gore_AddDrops();
 	}
 	CG_ConcTraceVisual_AddWorld();
 

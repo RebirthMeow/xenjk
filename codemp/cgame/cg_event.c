@@ -2217,6 +2217,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 				{
 					fxDir[1] = 1;
 				}
+				CG_Gore_SaberHit( es->otherEntityNum2, es->otherEntityNum, es->origin, fxDir, es->eventParm );
 				trap->S_StartSound(es->origin, es->number, CHAN_AUTO, hitSound );
 				trap->FX_PlayEffectID( hitPersonFxID, es->origin, fxDir, -1, -1, qfalse );
 				trap->FX_PlayEffectID( hitPersonFxID, es->origin, fxDir, -1, -1, qfalse );
@@ -2233,6 +2234,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 				{
 					fxDir[1] = 1;
 				}
+				CG_Gore_SaberHit( es->otherEntityNum2, es->otherEntityNum, es->origin, fxDir, es->eventParm );
 				trap->S_StartSound(es->origin, es->number, CHAN_AUTO, hitSound );
 				if ( es->eventParm == 3 )
 				{	// moderate or big hits.
@@ -2499,6 +2501,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		if (es->weapon)
 		{ //client
 			FX_DisruptorHitPlayer( cent->lerpOrigin, dir, qtrue );
+			CG_Gore_MissileHit( -1, WP_DISRUPTOR, cent->lerpOrigin, dir );
 		}
 		else
 		{ //non-client
@@ -2905,10 +2908,12 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 		else if (cent->currentState.eFlags & EF_ALT_FIRING)
 		{
 			CG_MissileHitPlayer( es->weapon, position, dir, es->otherEntityNum, qtrue);
+			CG_Gore_MissileHit( es->otherEntityNum, es->weapon, position, dir );
 		}
 		else
 		{
 			CG_MissileHitPlayer( es->weapon, position, dir, es->otherEntityNum, qfalse);
+			CG_Gore_MissileHit( es->otherEntityNum, es->weapon, position, dir );
 		}
 
 		if (cg_ghoul2Marks.integer &&
@@ -3343,6 +3348,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 	case EV_OBITUARY:
 		DEBUGNAME("EV_OBITUARY");
 		CG_Obituary( es );
+		CG_Gore_Obituary( es->otherEntityNum, es->eventParm );
 		break;
 
 	//
@@ -3376,6 +3382,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 
 	case EV_GIB_PLAYER:
 		DEBUGNAME("EV_GIB_PLAYER");
+		CG_Gore_Gib( es->otherEntityNum, es->pos.trBase, es->eventParm );	//xenjk gore: a body burst (g_combat.c G_GoreDeath)
 		//trap->S_StartSound( NULL, es->number, CHAN_BODY, cgs.media.gibSound );
 		//CG_GibPlayer( cent->lerpOrigin );
 		break;

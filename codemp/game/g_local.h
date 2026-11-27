@@ -603,6 +603,8 @@ struct gclient_s {
 	int			bodyGrabTime;
 	int			bodyGrabIndex;
 
+	int			saberPinUntil;	// g_saberspear.c: this corpse is pinned to a wall until then
+
 	int			pushEffectTime;
 
 	int			invulnerableTimer;
@@ -1436,6 +1438,13 @@ void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower );
 void WP_SaberPositionUpdate( gentity_t *self, usercmd_t *ucmd );
 int WP_SaberCanBlock(gentity_t *self, vec3_t point, int dflags, int mod, qboolean projectile, int attackStr);
 void WP_SaberInitBladeData( gentity_t *ent );
+
+// g_saberspear.c
+qboolean SaberSpear_Active( void );
+void SaberSpear_Launch( gentity_t *saberent, gentity_t *owner, const vec3_t dir );
+void SaberSpear_Think( gentity_t *saberent );
+void SaberSpear_ClientPinned( gentity_t *ent );
+qboolean SaberSpear_BodyCopied( gentity_t *ent, gentity_t *body );
 void WP_InitForcePowers( gentity_t *ent );
 void WP_SpawnInitForcePowers( gentity_t *ent );
 void WP_ForcePowersUpdate( gentity_t *self, usercmd_t *ucmd );

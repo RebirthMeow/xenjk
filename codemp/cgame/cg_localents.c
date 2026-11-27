@@ -158,6 +158,7 @@ void CG_FragmentBounceMark( localEntity_t *le, trace_t *trace ) {
 //	int radius;
 
 	if ( le->leMarkType == LEMT_BLOOD ) {
+		CG_Gore_ChunkLand( le, trace );	//xenjk gore: meat chunks splat where they land
 	//	radius = 16 + (rand()&31);
 	//	CG_ImpactMark( cgs.media.bloodMarkShader, trace->endpos, trace->plane.normal, Q_flrand(0.0f, 1.0f)*360, 1,1,1,1, qtrue, radius, qfalse );
 	} else if ( le->leMarkType == LEMT_BURN ) {
@@ -313,6 +314,9 @@ void CG_AddFragment( localEntity_t *le ) {
 		// add a blood trail
 		if ( le->leBounceSoundType == LEBS_BLOOD ) {
 			CG_BloodTrail( le );
+		}
+		else if ( le->leMarkType == LEMT_BLOOD ) {
+			CG_Gore_ChunkTrail( le );	//xenjk gore: drops off a flying chunk
 		}
 
 		return;

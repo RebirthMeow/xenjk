@@ -8708,6 +8708,12 @@ nextStep:
 				VectorScale(dir, 400, saberent->s.pos.trDelta );
 				saberent->s.pos.trTime = level.time;
 
+				if (SaberSpear_Active())
+				{ //spear throw (g_saberspear.c)
+					saberent->think = SaberSpear_Think;
+					SaberSpear_Launch(saberent, self, dir);
+				}
+
 				if ( self->client->saber[0].spinSound )
 				{
 					saberent->s.loopSound = self->client->saber[0].spinSound;
@@ -8886,6 +8892,13 @@ nextStep:
 							|| !saberEnt->inuse
 							|| !saberEnt->ghoul2 )
 						{//wtf?
+							rSaberNum++;
+							rBladeNum = 0;
+							continue;
+						}
+						if ( saberEnt->s.userInt1 )
+						{//a spear throw (g_saberspear.c) does its own hits; its blade points ahead and would kill
+						 //before the spear's hit, which pins
 							rSaberNum++;
 							rBladeNum = 0;
 							continue;

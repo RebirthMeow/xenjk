@@ -128,11 +128,19 @@ passed to the renderer.
 #define	MAX_MARK_FRAGMENTS	128
 #define	MAX_MARK_POINTS		384
 
-void CG_ImpactMark( qhandle_t markShader, const vec3_t origin, const vec3_t dir,
-				   float orientation, float red, float green, float blue, float alpha,
-				   qboolean alphaFade, float radius, qboolean temporary ) {
-	matrix3_t		axis;
-	float			texCoordScale;
+/*
+=================
+CG_ProjectMark
+
+Shared by CG_ImpactMark and CG_Gore_ImpactMarkAxis. axis[0] is the plane
+normal; axis[1] and axis[2] are the texture's s and t directions, spanning
+halfS and halfT units either side of origin.
+=================
+*/
+static int CG_ProjectMark( qhandle_t markShader, const vec3_t origin, matrix3_t axis, float halfS, float halfT,
+				   float red, float green, float blue, float alpha,
+				   qboolean alphaFade, qboolean temporary, int lifeTime, qboolean blood,
+				   qhandle_t wetShader, const vec3_t lightDir ) {
 	vec3_t			originalPoints[4];
 	byte			colors[4];
 	int				i, j, k;
@@ -140,45 +148,18 @@ void CG_ImpactMark( qhandle_t markShader, const vec3_t origin, const vec3_t dir,
 	markFragment_t	markFragments[MAX_MARK_FRAGMENTS], *mf;
 	vec3_t			markPoints[MAX_MARK_POINTS];
 	vec3_t			projection;
-
-	assert(markShader);
-
-	if ( !cg_marks.integer ) {
-		return;
-	}
-	else if (cg_marks.integer == 2)
-	{
-		trap->R_AddDecalToScene(markShader, origin, dir, orientation, red, green, blue, alpha,
-			alphaFade, radius, temporary);
-		return;
-	}
-
-	if ( radius <= 0 ) {
-		trap->Error( ERR_DROP, "CG_ImpactMark called with <= 0 radius" );
-	}
-
-	//if ( markTotal >= MAX_MARK_POLYS ) {
-	//	return;
-	//}
-
-	// create the texture axis
-	VectorNormalize2( dir, axis[0] );
-	PerpendicularVector( axis[1], axis[0] );
-	RotatePointAroundVector( axis[2], axis[0], axis[1], orientation );
-	CrossProduct( axis[0], axis[2], axis[1] );
-
-	texCoordScale = 0.5 * 1.0 / radius;
+	float			sScale = 0.5f / halfS, tScale = 0.5f / halfT;
 
 	// create the full polygon
 	for ( i = 0 ; i < 3 ; i++ ) {
-		originalPoints[0][i] = origin[i] - radius * axis[1][i] - radius * axis[2][i];
-		originalPoints[1][i] = origin[i] + radius * axis[1][i] - radius * axis[2][i];
-		originalPoints[2][i] = origin[i] + radius * axis[1][i] + radius * axis[2][i];
-		originalPoints[3][i] = origin[i] - radius * axis[1][i] + radius * axis[2][i];
+		originalPoints[0][i] = origin[i] - halfS * axis[1][i] - halfT * axis[2][i];
+		originalPoints[1][i] = origin[i] + halfS * axis[1][i] - halfT * axis[2][i];
+		originalPoints[2][i] = origin[i] + halfS * axis[1][i] + halfT * axis[2][i];
+		originalPoints[3][i] = origin[i] - halfS * axis[1][i] + halfT * axis[2][i];
 	}
 
 	// get the fragments
-	VectorScale( dir, -20, projection );
+	VectorScale( axis[0], -20, projection );
 	numFragments = trap->R_MarkFragments( 4, (const vec3_t *) originalPoints, projection, MAX_MARK_POINTS, markPoints[0], MAX_MARK_FRAGMENTS, markFragments );
 
 	colors[0] = red * 255;
@@ -202,8 +183,8 @@ void CG_ImpactMark( qhandle_t markShader, const vec3_t origin, const vec3_t dir,
 			VectorCopy( markPoints[mf->firstPoint + j], v->xyz );
 
 			VectorSubtract( v->xyz, origin, delta );
-			v->st[0] = 0.5 + DotProduct( delta, axis[1] ) * texCoordScale;
-			v->st[1] = 0.5 + DotProduct( delta, axis[2] ) * texCoordScale;
+			v->st[0] = 0.5 + DotProduct( delta, axis[1] ) * sScale;
+			v->st[1] = 0.5 + DotProduct( delta, axis[2] ) * tScale;
 			for ( k=0; k<4; k++ )
 				v->modulate[k] = colors[k];
 		}
@@ -218,6 +199,13 @@ void CG_ImpactMark( qhandle_t markShader, const vec3_t origin, const vec3_t dir,
 		mark = CG_AllocMark();
 		mark->time = cg.time;
 		mark->alphaFade = alphaFade;
+		mark->lifeTime = lifeTime;
+		mark->blood = blood;
+		mark->wetShader = wetShader;
+		if ( lightDir ) {
+			VectorCopy( lightDir, mark->lightDir );
+		}
+		VectorCopy( axis[0], mark->normal );
 		mark->markShader = markShader;
 		mark->poly.numVerts = mf->numPoints;
 		mark->color[0] = red;
@@ -227,8 +215,85 @@ void CG_ImpactMark( qhandle_t markShader, const vec3_t origin, const vec3_t dir,
 		memcpy( mark->verts, verts, mf->numPoints * sizeof( verts[0] ) );
 		markTotal++;
 	}
+	return numFragments;
 }
 
+/*
+=================
+CG_ImpactMark
+
+origin should be a point within a unit of the plane
+dir should be the plane normal
+
+temporary marks will not be stored or randomly oriented, but immediately
+passed to the renderer.
+=================
+*/
+void CG_ImpactMark( qhandle_t markShader, const vec3_t origin, const vec3_t dir,
+				   float orientation, float red, float green, float blue, float alpha,
+				   qboolean alphaFade, float radius, qboolean temporary ) {
+	matrix3_t		axis;
+
+	assert(markShader);
+
+	if ( !cg_marks.integer ) {
+		return;
+	}
+	else if (cg_marks.integer == 2)
+	{
+		trap->R_AddDecalToScene(markShader, origin, dir, orientation, red, green, blue, alpha,
+			alphaFade, radius, temporary);
+		return;
+	}
+
+	if ( radius <= 0 ) {
+		trap->Error( ERR_DROP, "CG_ImpactMark called with <= 0 radius" );
+	}
+
+	// create the texture axis
+	VectorNormalize2( dir, axis[0] );
+	PerpendicularVector( axis[1], axis[0] );
+	RotatePointAroundVector( axis[2], axis[0], axis[1], orientation );
+	CrossProduct( axis[0], axis[2], axis[1] );
+
+	CG_ProjectMark( markShader, origin, axis, radius, radius, red, green, blue, alpha,
+		alphaFade, temporary, 0, qfalse, 0, NULL );
+}
+
+/*
+=================
+CG_Gore_ImpactMarkAxis
+
+A blood mark (cg_gore.c). down, when given, is a direction in the plane the
+texture's t axis follows (texture top at -down); otherwise the mark is
+randomly rotated. The mark keeps the light at its spot in color[] and its
+opacity in color[3]; CG_AddMarks multiplies in the blood's drying albedo.
+=================
+*/
+void CG_Gore_ImpactMarkAxis( qhandle_t markShader, qhandle_t wetShader, const vec3_t origin, const vec3_t normal,
+				const vec3_t down, float halfWidth, float halfHeight, int lifeTime ) {
+	matrix3_t	axis;
+	vec3_t		color, lightDir;
+
+	if ( !cg_marks.integer || !markShader || halfWidth <= 0 || halfHeight <= 0 ) {
+		return;
+	}
+
+	VectorNormalize2( normal, axis[0] );
+	if ( down ) {
+		VectorCopy( down, axis[2] );
+	} else {
+		PerpendicularVector( axis[1], axis[0] );
+		RotatePointAroundVector( axis[2], axis[0], axis[1], flrand( 0.0f, 360.0f ) );
+	}
+	CrossProduct( axis[0], axis[2], axis[1] );	// the stock winding; reversed, R_MarkFragments clips everything
+
+	CG_Gore_Light( origin, axis[0], color, lightDir );
+	if ( !CG_ProjectMark( markShader, origin, axis, halfWidth, halfHeight, color[0], color[1], color[2], 0.95f,
+		qtrue, qfalse, lifeTime, qtrue, wetShader, lightDir ) && cg_goreDebug.integer ) {
+		Com_Printf( "gore: mark at (%.0f %.0f %.0f) found no surface\n", origin[0], origin[1], origin[2] );
+	}
+}
 
 /*
 ===============
@@ -243,6 +308,7 @@ void CG_AddMarks( void ) {
 	markPoly_t	*mp, *next;
 	int			t;
 	int			fade;
+	int			life;
 
 	if ( !cg_marks.integer ) {
 		return;
@@ -254,8 +320,10 @@ void CG_AddMarks( void ) {
 		// still have it
 		next = mp->nextMark;
 
+		life = mp->lifeTime ? mp->lifeTime : MARK_TOTAL_TIME;
+
 		// see if it is time to completely remove it
-		if ( cg.time > mp->time + MARK_TOTAL_TIME ) {
+		if ( cg.time > mp->time + life ) {
 			CG_FreeMarkPoly( mp );
 			continue;
 		}
@@ -279,8 +347,46 @@ void CG_AddMarks( void ) {
 			}
 		}
 
+		if ( mp->blood ) {
+			// blood (cg_gore.c): its drying albedo times the light kept in
+			// color[], fading by alpha; 0..255 bytes, unlike the stock path below
+			vec3_t	albedo;
+			byte	rgba[4];
+			float	f = 1.0f;
+
+			t = mp->time + life - cg.time;
+			if ( t < MARK_FADE_TIME ) {
+				f = (float)t / MARK_FADE_TIME;
+			}
+			CG_Gore_MarkColor( cg.time - mp->time, albedo );
+			for ( j = 0 ; j < 3 ; j++ ) {
+				rgba[j] = (byte)Com_Clamp( 0.0f, 255.0f, 255.0f * albedo[j] * mp->color[j] );
+			}
+			rgba[3] = (byte)Com_Clamp( 0.0f, 255.0f, 255.0f * mp->color[3] * f );
+			for ( j = 0 ; j < mp->poly.numVerts ; j++ ) {
+				memcpy( mp->verts[j].modulate, rgba, 4 );
+			}
+			if ( DistanceSquared( mp->verts[0].xyz, cg.refdef.vieworg ) < 4096.0f * 4096.0f ) {
+				trap->R_AddPolysToScene( mp->markShader, mp->poly.numVerts, mp->verts, 1 );
+				if ( mp->wetShader ) {
+					// fresh blood shines: the same shape again, added, lit per vertex from the view
+					float wet = CG_Gore_Wetness( cg.time - mp->time ) * f;
+					if ( wet > 0.01f ) {
+						polyVert_t	wv[MAX_VERTS_ON_POLY];
+
+						memcpy( wv, mp->verts, mp->poly.numVerts * sizeof( wv[0] ) );
+						for ( j = 0 ; j < mp->poly.numVerts ; j++ ) {
+							CG_Gore_Sheen( wv[j].xyz, mp->normal, mp->lightDir, mp->color, wet, wv[j].modulate );
+						}
+						trap->R_AddPolysToScene( mp->wetShader, mp->poly.numVerts, wv, 1 );
+					}
+				}
+			}
+			continue;
+		}
+
 		// fade all marks out with time
-		t = mp->time + MARK_TOTAL_TIME - cg.time;
+		t = mp->time + life - cg.time;
 		if ( t < MARK_FADE_TIME ) {
 			fade = 255 * t / MARK_FADE_TIME;
 			if ( mp->alphaFade ) {

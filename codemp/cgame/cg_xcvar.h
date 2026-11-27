@@ -96,6 +96,12 @@ XCVAR_DEF( cg_debugPosition,					"0",					NULL,					CVAR_CHEAT )
 XCVAR_DEF( cg_debugEvents,						"0",					NULL,					CVAR_CHEAT )
 XCVAR_DEF( cg_duelHeadAngles,					"0",					NULL,					CVAR_NONE )
 XCVAR_DEF( cg_dismember,						"0",					NULL,					CVAR_ARCHIVE )
+XCVAR_DEF( cg_gore,							"1",					NULL,					CVAR_ARCHIVE )	// cg_gore.c: 0 off, 1 blood, 2 heavy
+XCVAR_DEF( cg_goreSaber,						"1",					NULL,					CVAR_ARCHIVE )	// 0: saber wounds stay cauterised
+XCVAR_DEF( cg_gorePools,						"1",					NULL,					CVAR_ARCHIVE )	// 0: no pools under the dead (cg_gore_pool.c)
+XCVAR_DEF( cg_goreLook,						"2",					NULL,					CVAR_ARCHIVE )	// blood art: 1 flat stains (v1), 2 spatter spots: mist, spray, wall drips, wet shine (v2); 3 local reference art
+XCVAR_DEF( cg_goreDebug,						"0",					NULL,					CVAR_NONE )	// prints sprays and landings
+XCVAR_DEF( cg_goreTime,						"90",					NULL,					CVAR_ARCHIVE )	// seconds a blood mark lasts
 XCVAR_DEF( cg_deferPlayers,						"1",					NULL,					CVAR_ARCHIVE )
 XCVAR_DEF( cg_errorDecay,						"100",					NULL,					CVAR_NONE )
 XCVAR_DEF( cg_fallingBob,						"1",					NULL,					CVAR_ARCHIVE )

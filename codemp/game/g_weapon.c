@@ -693,6 +693,8 @@ static void WP_DisruptorMainFire( gentity_t *ent )
 }
 
 
+extern qboolean gGoreDisintegrating;
+
 qboolean G_CanDisruptify(gentity_t *ent)
 {
 	if (!ent || !ent->inuse || !ent->client || ent->s.eType != ET_NPC ||
@@ -940,7 +942,9 @@ void WP_DisruptorAltFire( gentity_t *ent )
 					VectorCopy(traceEnt->client->ps.viewangles, preAng);
 				}
 
+				gGoreDisintegrating = fullCharge;	// a disintegrating body keeps its head (g_gore)
 				G_Damage( traceEnt, ent, ent, forward, tr.endpos, damage, DAMAGE_NO_KNOCKBACK, MOD_DISRUPTOR_SNIPER );
+				gGoreDisintegrating = qfalse;
 
 				if (traceEnt->client && preHealth > 0 && traceEnt->health <= 0 && fullCharge &&
 					G_CanDisruptify(traceEnt))
