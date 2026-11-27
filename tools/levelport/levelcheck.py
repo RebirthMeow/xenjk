@@ -789,7 +789,9 @@ def cmd_holes(a):
 CELL = 16.0
 ZMAX = 400.0 * U    # the district builds' cp2gltf --col-height 400 m (cp77_tiles.py): nothing above it has collision
 WATER_UNDER = 4.5 * U   # a water bed's top lies this far under its surface at most (cp2gltf WATER_DEPTH 4 m)
-NOT_FLOOR = re.compile(r'/vegetation/(palms|trees)/|/umbrella/|parasol')   # scene meshes (materials.json), see load_scene
+# (FF7 Rebirth, ff7rscene.py: the Massive tree, grass and small-nature streams)
+NOT_FLOOR = re.compile(r'/vegetation/(palms|trees)/|/umbrella/|parasol|'
+                       r'_\d\dTree_|Tree_Terrain_Strip/|Grass_Terrain_Strip/|NatureMini|_Grass_|_Leaf|_Leaves', re.I)   # scene meshes (materials.json), see load_scene
 SCENE_VERT = np.dtype([('pos', '<f4', 3), ('nrm', 'i1', 4), ('tan', 'i1', 4), ('uv', '<f4', 2)])
 
 

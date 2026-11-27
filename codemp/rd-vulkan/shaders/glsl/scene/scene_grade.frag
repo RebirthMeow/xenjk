@@ -28,9 +28,39 @@ layout(location = 0) out vec4 outColor;
 // scene.frag's toDisplay inverse: the frame's encoding -> the light its tone curve was given (after exposure); past
 // TONE_TOP the headroom a float colour target keeps (r_hdr 2), e-folds of light per TONE_LOG
 const float TONE_TOP = 0.999, TONE_LOG = 0.1;
+// r_sceneTonemap 2: Gran Turismo 7's tone curve (Polyphony Digital, SDR at a 100 nit paper white, as ShaderInjector's
+// TONEMAP_GRAN_TURISMO_7): a toe, a linear section and a shoulder converging on the peak, per channel; gt7Inverse takes
+// the per-channel curve back (its ICtCp chroma blend, scene.frag's alone, is not inverted)
+const float GT7_MID = 0.538, GT7_LIN = 0.444, GT7_TOE = 1.28;
+const float GT7_KA = 1.185333, GT7_KB = -1.349340, GT7_KC = -1.348921;	// (alpha 0.25, peak 1)
+float gt7Curve( const float x )
+{
+	if ( x <= 0.0 )
+		return 0.0;
+	if ( x < GT7_LIN ) {
+		const float wl = smoothstep( 0.0, GT7_MID, x );
+		return ( 1.0 - wl ) * GT7_MID * pow( x / GT7_MID, GT7_TOE ) + wl * x;
+	}
+	return min( GT7_KA + GT7_KB * exp( x * GT7_KC ), 1.0 );
+}
+float gt7Inverse( const float y )
+{
+	if ( y <= 0.0 )
+		return 0.0;
+	if ( y >= GT7_LIN )
+		return log( max( ( min( y, 0.99999 ) - GT7_KA ) / GT7_KB, 1e-6 ) ) / GT7_KC;
+	float x = y;
+	for ( int i = 0; i < 6; i++ ) {	// (Newton on the toe's blend: monotonic, a few steps)
+		const float e = 1e-4, f = gt7Curve( x ) - y, df = ( gt7Curve( x + e ) - gt7Curve( x ) ) / e;
+		x = clamp( x - f / max( df, 1e-3 ), 0.0, GT7_LIN );
+	}
+	return x;
+}
 vec3 toneInverse( vec3 y )
 {
 	y = pow( clamp( y, 0.0, TONE_TOP ), vec3( 2.2 ) );
+	if ( pc.p.x > 1.5 )	// (r_sceneTonemap 2: GT7)
+		return vec3( gt7Inverse( y.r ), gt7Inverse( y.g ), gt7Inverse( y.b ) );
 	if ( pc.p.x > 0.5 ) {
 		const vec3 a = 2.51 - 2.43 * y, b = 0.03 - 0.59 * y, c = -0.14 * y;
 		return ( -b + sqrt( b * b - 4.0 * a * c ) ) / ( 2.0 * a );

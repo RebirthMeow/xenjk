@@ -193,6 +193,15 @@ def node_matrix(nd):
     return m
 
 
+def _buffer_bytes(folder, uri):
+    """A .gltf buffer: a file beside it, or embedded (data:...;base64,)"""
+    if uri.startswith('data:'):
+        import base64
+        return base64.b64decode(uri.split(',', 1)[1])
+    from urllib.parse import unquote
+    return (folder / unquote(uri)).read_bytes()
+
+
 class Document:
     """A loaded .glb/.gltf. walk() yields (node index, node dict, world 4x4, parent chain of node indices)."""
 
@@ -207,7 +216,7 @@ class Document:
             self.buffers = [self.bin]
         else:
             self.doc = json.loads(raw)
-            self.buffers = [(path.parent / b['uri']).read_bytes() for b in self.doc.get('buffers', [])]
+            self.buffers = [_buffer_bytes(path.parent, b['uri']) for b in self.doc.get('buffers', [])]
         self.nodes = self.doc.get('nodes', [])
         self.materials = self.doc.get('materials', [])
 

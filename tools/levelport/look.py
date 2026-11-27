@@ -92,6 +92,8 @@ def main(argv=None):
     ap.add_argument('--renderer', default='rd-vulkan')
     ap.add_argument('--cvar', action='append', default=[], help='name=value set in autoexec, before the map loads')
     ap.add_argument('--extra-pk3', action='append', default=[], help='another pk3 staged beside the map (a render scene)')
+    ap.add_argument('--benchcam-views', action='store_true',
+                    help='each --viewpos "x y z yaw pitch" pins the camera with benchcam (exact, any pitch; positive looks down)')
     ap.add_argument('--viewpos', action='append', default=[],
                     help='"x y z yaw [pitch]": a view of your own in place of the spawns (pitch in degrees, up positive)')
     ap.add_argument('--player', action='store_true', help='look as a player (body and saber in view) instead of a spectator')
@@ -130,8 +132,11 @@ def main(argv=None):
     join = ['team free', 'wait 300', 'noclip'] if a.player else ['team spectator', 'wait 300']
     lines = ['devmap %s' % a.map, 'wait 2500', 'togglemenu', 'wait 100', *join, *a.set, 'wait 100']
     for k, (p, yaw) in enumerate(views):
-        lines += ['setviewpos %d %d %d %d' % (p[0], p[1], p[2] + 16, yaw), 'wait 100']
-        if pitches.get(k):
+        if a.benchcam_views:
+            lines += ['benchcam %g %g %g %g %g' % (p[0], p[1], p[2] + 16, yaw, pitches.get(k, 0.0)), 'wait 100']
+        else:
+            lines += ['setviewpos %d %d %d %d' % (p[0], p[1], p[2] + 16, yaw), 'wait 100']
+        if pitches.get(k) and not a.benchcam_views:
             # setviewpos levels the view; tilt it by holding look-up/down at 30 deg/s for the frames it takes at the
             # capped frame rate (close, not exact: the 'viewpos' line in qconsole.log has the angle it reached)
             frames = round(abs(pitches[k]) / 30.0 * float(sets['com_maxfps']))

@@ -323,6 +323,15 @@ typedef struct {
 	float		w3clouds[4];	// r_sceneW3Clouds: The Witcher 3's clouds (scene.frag w3Clouds; x 0 off): x their light, y the cirrus, z the
 							// panorama's alpha, w the share of the cumulus sprites' slots in use
 	float		w3clouds2[4];	// x: r_sceneW3CirrusAlong
+	float		ple[4];			// FF7 Rebirth's probe GI (maps/<map>.xple, binding 30): x the probes' scale (r_sceneSun / the source's
+								// sun lux x r_scenePle; 0: off or none loaded), y the reflected ray's share (r_scenePleSpec),
+								// z its reflection capture's image (-1 none), w the capture's scale (x r_scenePleRefl)
+	float		shade[4];		// x r_sceneMicroShadow, y r_sceneSpecOcclusion, z r_sceneSpecDirect, w r_sceneContactShadow
+								// (each a share, 0 off; w only with r_sceneAO)
+	float		shade2[4];		// x r_sceneOrenNayar, y r_sceneAOMultiBounce (each a share, 0 off); z, w r_sceneToneAdjust's
+								// gain (2^EV) and gamma (0 off)
+	float		shade3[4];		// x r_scenePleRadiance, y r_sceneCameraFill, z, w r_sceneFogFarDensity's start (m) and multiple
+	float		shade4[4];		// x r_sceneBounce, y r_sceneSsrGlossy, z its roughness (0: off)
 } sceneFrame_t;
 
 // a traffic signal's cycle (maps/<map>.signals, cp2gltf SceneSignals): its group's program from its intersection's
@@ -350,6 +359,10 @@ typedef struct {
 	float		wet[4];			// x: wetness, y: puddle share, z: exposure, w: tone curve
 	float		opts[4];		// x: rays a texel with history (1 or 2)
 	float		opts2[4];		// x: the cosine past which a surface is level ground (r_sceneSsrFlat; 2: never)
+	float		refl[4];		// x: 1 when binding 7 holds the area's reflection capture (misses take it), y: its scale
+	float		contact[4];		// xyz: toward the sun; w: the contact shadow's length (units; 0 off)
+	float		contact2[4];	// x: its steps, y: the thickness past the depth's rounding (units), z: the eye distance it fades out by
+	float		gloss[4];		// x: 1 to trace every dry texel (r_sceneSsrGlossy), y: its roughness, z: 1 for r_sceneBounce
 } sceneSsrParams_t;
 
 typedef struct {
@@ -369,7 +382,8 @@ typedef struct {
 	sceneBuffer_t	vertices, indices, instances, meshes, lods, partCmd, cmdTemplate, lights, cells, cellLights, lightBoxes,
 					fogVolumes,		// the haze's local volumes (maps/<map>.xfog; one zeroed record when none)
 					detailParams,	// per material: its detail's tiles per UV unit (0 none), normal, roughness, colour strength
-					w3Stream;		// maps/<map>.xw3b's vertex stream (second UV, raw colour), 3 words a vertex; 16 B when none
+					w3Stream,		// maps/<map>.xw3b's vertex stream (second UV, raw colour), 3 words a vertex; 16 B when none
+					ple;			// maps/<map>.xple, the probe GI as words (vk_scene_ple.cpp); 16 B when none
 	uint32_t		numDetailed;
 	uint32_t		numW3Blend;		// the materials blending texture-array layers by vertex colour (maps/<map>.xw3b)
 	sceneBuffer_t	frame[NUM_COMMAND_BUFFERS];
@@ -535,6 +549,10 @@ typedef struct {
 	VkImage					aoImage[2];
 	VkDeviceMemory			aoMem[2];
 	VkImageView				aoView[2];
+	// r_sceneBounce: the light the occluders the AO found send back (rgb, a the view depth), alternating with them
+	VkImage					bounceImage[2];
+	VkDeviceMemory			bounceMem[2];
+	VkImageView				bounceView[2];
 	VkDescriptorSetLayout	ssrLayout;
 	VkPipelineLayout		ssrPipeLayout;
 	VkPipeline				ssrPipe;
@@ -737,6 +755,28 @@ extern cvar_t *r_sceneExposure;
 extern cvar_t *r_sceneExposureDebug;
 extern cvar_t *r_sceneExposureMeter;
 extern cvar_t *r_sceneExposureSpeed;
+extern cvar_t *r_sceneExposureVolumes;
+extern cvar_t *r_sceneToneHue;
+extern cvar_t *r_sceneMicroShadow;
+extern cvar_t *r_sceneSpecOcclusion;
+extern cvar_t *r_sceneSpecDirect;
+extern cvar_t *r_sceneContactShadow;
+extern cvar_t *r_sceneContactLength;
+extern cvar_t *r_sceneContactThickness;
+extern cvar_t *r_sceneContactSteps;
+extern cvar_t *r_sceneContactFar;
+extern cvar_t *r_sceneOrenNayar;
+extern cvar_t *r_sceneAOMultiBounce;
+extern cvar_t *r_sceneToneAdjust;
+extern cvar_t *r_scenePleRadiance;
+extern cvar_t *r_sceneCameraFill;
+extern cvar_t *r_sceneFogFarDensity;
+extern cvar_t *r_sceneBounce;
+extern cvar_t *r_sceneSsrGlossy;
+void Scene_ToneAdjust( float *gain, float *gamma );
+float Scene_ToneCurve( float v );
+float Scene_ToneCurveInverse( float y );
+float Scene_ToneDisplay( float v, float exposure );
 extern cvar_t *r_sceneExposureWindow;
 extern cvar_t *r_sceneEyeRelative;
 extern cvar_t *r_sceneFog;
@@ -783,6 +823,7 @@ VkDescriptorSetLayout Scene_SetLayout( const VkDescriptorType *types, const VkSh
 void			Scene_WriteSet( VkDescriptorSet set, const sceneBuffer_t **bufs, const VkDescriptorType *types, int count );
 // vk_scene.cpp: a scene image by its path (tr.whiteImage when it is missing or empty; found says which)
 image_t			*Scene_Image( const char *path, qboolean *found );
+void			Scene_TextureInfo( const image_t *image, VkDescriptorImageInfo *ii );	// its descriptor (its sampler as created)
 void			Scene_EyeViewProj( float out[16], const float proj[16], qboolean relative );
 VkPipeline		Scene_DecalPipeline( VkShaderModule vs, VkShaderModule fs );	// (the mesh decals' and the projected decals')
 void			Scene_ImageBarrier( VkCommandBuffer cb, VkImage image, VkImageLayout from, VkImageLayout to, VkAccessFlags srcAccess,
@@ -805,6 +846,12 @@ void			Scene_MarkCardMeshes( const char *scnName, xscnMesh_t *meshes, uint32_t n
 uint32_t		Scene_WindTrees( void );
 void			Scene_WindFrame( float *out, int timeMs, float strength, float gust, const float dirW[3] );
 void			Scene_WindFree( void );
+
+// vk_scene_ple.cpp
+void			Scene_LoadPle( const char *scnName );
+extern float	scenePleSunLux;	// the loaded probes' source sun (lux); 0: none loaded
+extern image_t	*scenePleReflImage;	// that capture's image (NULL none)
+extern int		scenePleRefl;	// its baked reflection capture's index in the GPU-driven image array (maps/<map>_refl.dds); -1 none
 
 // vk_scene_cp77.cpp
 void			Scene_LoadSignals( const char *scnName );
@@ -834,7 +881,8 @@ float			Scene_FxTime( const uint32_t when );	// an effect placement's share now:
 void			Scene_FreeGrade( void );
 void			Scene_MeterDestroy( void );
 float			Scene_Exposure( void );
-float			Scene_MeterFrame( int f );
+float			Scene_MeterFrame( int f, const float *eye );
+void			Scene_LoadExposureVolumes( const char *scnName );
 // r_sceneGradeCompute's help (registered at video start here, and with the rest in R_SceneRegister)
 #define SCENE_GRADE_COMPUTE_HELP	"Render scene: the colour grade runs in place over the resolved frame (a compute pass; the colour image a storage image too, set at video start) instead of over a copy (0)"
 

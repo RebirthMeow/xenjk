@@ -92,6 +92,7 @@ set(MPVulkanRendererFiles
 	"${MPDir}/rd-vulkan/vk_scene_files.cpp"
 	"${MPDir}/rd-vulkan/vk_scene_post.cpp"
 	"${MPDir}/rd-vulkan/vk_scene_w3.cpp"
+	"${MPDir}/rd-vulkan/vk_scene_ple.cpp"
 	"${MPDir}/rd-vulkan/shaders/spirv/scene_shader_data.c"
 	"${MPDir}/rd-vulkan/vk_cmd.cpp"
 	"${MPDir}/rd-vulkan/vk_cubemap.cpp"

@@ -1184,6 +1184,8 @@ int vk_format_block_bytes( VkFormat format ) {
 		case VK_FORMAT_BC3_UNORM_BLOCK:
 		case VK_FORMAT_BC5_UNORM_BLOCK:
 		case VK_FORMAT_BC7_UNORM_BLOCK:
+		case VK_FORMAT_BC6H_UFLOAT_BLOCK:
+		case VK_FORMAT_BC6H_SFLOAT_BLOCK:
 			return 16;
 		default:
 			return 0;

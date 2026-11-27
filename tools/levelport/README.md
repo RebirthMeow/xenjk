@@ -85,6 +85,12 @@ Asset extras `levelport`: `units_per_metre`, `source`, `source_game`, `worldspaw
   [--vertexlit] [--light-from source.bsp] [--worldspawn k=v] [--scale 1.2]`: writes and compiles the map, packs
   `zz_<map>.pk3`. `--scale` sizes the whole level in Quake units (JKA's player is taller than Quake's; see
   `.codex-research/levelport/scale-20261017/NOTES.md`) and carries over to the light transfer.
+- `plateau2gltf.py <udx> <mesh code> <out.glb>`: one 1 km tile of a PLATEAU (Japan MLIT open 3D city model,
+  CityGML v5) release. Exports buildings at their best LOD, roads (the LOD3 traffic areas; LOD1/2 road surfaces have
+  height 0, so they are laid on the terrain), bridges, furniture, vegetation, LOD4 underground malls with their doors
+  left open, and the terrain TIN cropped to the tile. Materials are generated flat colours, and spawns go on roads and
+  mall floors. First test 2026-11-26: Shinjuku station tile 53394536, build `shinjuku-2` with `--vertexlit --vis none
+  --sky-haze`. The licence allows commercial use and modification with credit (PLATEAU site policy, section 3).
 - `cp2gltf.py sectors|scan|fetch|decimate|build [--area kabuki]`: Cyberpunk 2077 world areas, stage by stage
   into `.codex-research/levelport/cp77/<area>/` (see "Cyberpunk 2077" below). Needs WolvenKit CLI (`WOLVENKIT_CLI`,
   `WOLVENKIT_DOTNET`) and Blender 5.1 for `decimate`. `cp77mat.py` converts the materials.

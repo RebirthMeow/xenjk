@@ -41,7 +41,8 @@ layout(std140, set = 0, binding = 5) uniform Frame {
 	vec4 skyAmbient;	// linear
 	vec4 groundAmbient;
 	vec4 params;		// x: light scale, y: exposure, z: emissive scale, w: debug view
-	vec4 params2;		// x: glow scale, y: glow threshold (linear, after exposure), z: tone curve (0 exponential, 1 filmic)
+	vec4 params2;		// x: glow scale, y: glow threshold (linear, after exposure), z: tone curve (0 exponential, 1 filmic;
+						// 1 .. 1.5 filmic with r_sceneToneHue's share 0 .. 1; 3 GT7)
 	mat4 sunMvp[3];		// the cascades' matrices (Vulkan clip space)
 	vec4 sunDir;		// toward the sun; w: 1 when this frame's cascades were drawn
 	vec4 sunCol;		// linear rgb; w: cascade size in texels
@@ -130,6 +131,16 @@ layout(std140, set = 0, binding = 5) uniform Frame {
 	vec4 w3clouds;		// r_sceneW3Clouds (w3Clouds; x 0 off): x their light, y the cirrus' alpha, z the panorama's, w the
 						// share of the cumulus sprites' slots in use
 	vec4 w3clouds2;		// x: r_sceneW3CirrusAlong (the cirrus' fade where its streaks run toward the eye)
+	vec4 ple;			// the baked probe GI (binding 31): x its scale (r_sceneSun / the source's sun x r_scenePle; 0 none), y the
+						// share of its reflected light along the mirrored ray in place of the flat F0 / 4 (r_scenePleSpec)
+	vec4 shade;			// x r_sceneMicroShadow, y r_sceneSpecOcclusion, z r_sceneSpecDirect, w r_sceneContactShadow (each a
+						// share, 0 off; w only with r_sceneAO, whose pass marches it)
+	vec4 shade2;		// x r_sceneOrenNayar, y r_sceneAOMultiBounce (each a share, 0 off); z, w r_sceneToneAdjust: the gain
+						// (2^EV) and the gamma (0: off)
+	vec4 shade3;		// x r_scenePleRadiance (a share), y r_sceneCameraFill (its brightness), z, w r_sceneFogFarDensity: where it
+						// starts (metres) and the density's multiple past it (1: off)
+	vec4 shade4;		// x r_sceneBounce (its strength; 0 off, only with r_sceneAO), y r_sceneSsrGlossy's share, z its
+						// roughness (0 off)
 } fr;
 layout(set = 0, binding = 26) uniform sampler2DArray waveTex;	// the water's waves (scene_water.comp): x, y the slopes
 // scene_occ.comp's far-depth pyramids (linear view depth): the water's bed (fr.waterBed)
@@ -151,6 +162,8 @@ layout(set = 0, binding = 9) uniform sampler2D reflectTex1;
 // surface, g its view depth
 layout(set = 0, binding = 28) uniform sampler2D aoTex0;
 layout(set = 0, binding = 29) uniform sampler2D aoTex1;
+layout(set = 0, binding = 32) uniform sampler2D bounceTex0;	// r_sceneBounce's (scene_ssr.comp), as the occlusion's
+layout(set = 0, binding = 33) uniform sampler2D bounceTex1;
 layout(set = 0, binding = 7) uniform sampler3D fogLightTex;	// scene_fog.comp: rgb the light scattered toward the eye
 
 // the source's shadow-casting lights (vk_scene.cpp, "light shadows"): per light 0, or its first face + 1 with bit 31 set
@@ -313,6 +326,209 @@ layout(set = 0, binding = 25) uniform sampler2D decalEmissionTex;	// their emiss
 
 const float UNITS_PER_METRE = 37.5;
 const float PI = 3.14159265;
+
+// FF7 Rebirth's baked probe GI (vk_scene_ple.cpp, maps/<map>.xple; fr.ple.x its scale, 0: none): the surface's point
+// looked up in the environments' sparse grids, its cell's 8 corner probes blended in log2 space (each weighted by
+// whether one of the cell's occluder triangles stands between them), and the blend's ambient cube evaluated along a
+// direction, as the game's SampleGI pass does (frostbone25's ShaderInjector, MIT, documents its layout)
+layout(std430, set = 0, binding = 31) readonly buffer Ple { uint ple[]; };
+struct PleField { vec3 base; vec3 pos; vec3 neg; };
+
+float pleF( const uint i ) { return uintBitsToFloat( ple[i] ); }
+
+// the share of the segment from o along d (length len) no occluder triangle of bound b crosses (Moller-Trumbore)
+float pleVisible( const uint t, const uint b, const vec3 o, const vec3 d, const float len )
+{
+	const uint range = ple[ple[t + 29u] + b];
+	const uint count = range & 0xffu;
+	if ( count == 0u )
+		return 1.0;
+	const uint table = ple[t + 29u] + ple[t + 30u] + ( range >> 8u ), tris = ple[t + 28u];
+	for ( uint k = 0u; k < count; k++ ) {
+		const uint f = tris + ple[table + k] * 9u;
+		const vec3 v0 = vec3( pleF( f ), pleF( f + 1u ), pleF( f + 2u ) );
+		const vec3 e1 = vec3( pleF( f + 3u ), pleF( f + 4u ), pleF( f + 5u ) ) - v0;
+		const vec3 e2 = vec3( pleF( f + 6u ), pleF( f + 7u ), pleF( f + 8u ) ) - v0;
+		const vec3 p = cross( d, e2 );
+		const float det = dot( e1, p );
+		if ( abs( det ) < 1e-6 )
+			continue;
+		const float inv = 1.0 / det;
+		const vec3 s = o - v0;
+		const float u = dot( s, p ) * inv;
+		if ( u < 0.0 || u > 1.0 )
+			continue;
+		const vec3 q = cross( s, e1 );
+		const float v = dot( d, q ) * inv;
+		if ( v < 0.0 || u + v > 1.0 )
+			continue;
+		const float h = dot( e2, q ) * inv;
+		if ( h >= 1e-6 && h < len )
+			return 0.0;
+	}
+	return 1.0;
+}
+
+// the probes' field at scene point P; false where no environment's grid holds it
+bool pleField( const vec3 P, out PleField field )
+{
+	field = PleField( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
+	const uint envs = ple[0];
+	// the scene's units to the source's centimetres, Quake axes to UE's (y negated)
+	const vec3 q = P / pleF( 4u ) + vec3( pleF( 1u ), pleF( 2u ), pleF( 3u ) );
+	const vec3 ue = vec3( q.x, -q.y, q.z );
+	for ( uint e = 0u; e < envs; e++ ) {
+		const uint t = 8u + e * 32u;
+		const vec3 local = ue - vec3( pleF( t ), pleF( t + 1u ), pleF( t + 2u ) );
+		const vec4 p = vec4( local, 1.0 );
+		const vec3 g = vec3( dot( p, vec4( pleF( t + 8u ), pleF( t + 12u ), pleF( t + 16u ), pleF( t + 20u ) ) ),
+			dot( p, vec4( pleF( t + 9u ), pleF( t + 13u ), pleF( t + 17u ), pleF( t + 21u ) ) ),
+			dot( p, vec4( pleF( t + 10u ), pleF( t + 14u ), pleF( t + 18u ), pleF( t + 22u ) ) ) );
+		const uvec3 gs = uvec3( ple[t + 4u], ple[t + 5u], ple[t + 6u] );
+		if ( any( lessThan( g, vec3( 0.0 ) ) ) || any( greaterThanEqual( g, vec3( gs ) ) ) )
+			continue;
+		const uvec3 gi = uvec3( floor( g ) );
+		const uint h = ple[t + 7u];
+		// a coarse grid's entry; its top nibble: the hierarchy bits a second lookup resolves
+		const uint cs = ( h - 1u ) & 31u;
+		const uvec3 cc = gi >> cs;
+		const uvec3 cd = ( gs + ( 1u << cs ) - 1u ) >> cs;
+		const uint index = ple[t + 27u];
+		uint entry = ple[index + ( cc.z * cd.y + cc.y ) * cd.x + cc.x];
+		if ( entry == 0xffffffffu )
+			continue;
+		const uint refine = entry >> 28u;
+		entry &= 0x0fffffffu;
+		if ( refine != 0u ) {
+			const uvec3 fc = ( gi - ( cc << cs ) ) >> ( ( refine - 1u ) & 31u );
+			const uint row = 1u << ( ( h - refine ) & 31u );
+			entry = ple[index + entry + fc.x + fc.y * row + fc.z * row * row];
+			if ( entry == 0xffffffffu )
+				return false;
+			entry &= 0x0fffffffu;
+		}
+		if ( entry == 0x0fffffffu )
+			return false;
+		const uint b = ple[t + 26u] + entry * 12u;
+		const vec3 f = clamp( ( g - vec3( ple[b + 8u], ple[b + 9u], ple[b + 10u] ) ) / float( ple[b + 11u] & 0xffu ), 0.0, 1.0 );
+		float c[9] = float[9]( 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 );
+		float total = 0.0;
+		for ( uint k = 0u; k < 8u; k++ ) {
+			const int pi = int( ple[b + k] );
+			if ( pi < 0 )
+				continue;
+			const uint pp = ple[t + 24u] + uint( pi ) * 4u;
+			const vec3 toProbe = vec3( pleF( pp ), pleF( pp + 1u ), pleF( pp + 2u ) ) - local;
+			const float dist = length( toProbe );
+			const vec3 sel = vec3( k & 1u, ( k >> 1u ) & 1u, ( k >> 2u ) & 1u );
+			const vec3 cw = mix( 1.0 - f, f, sel );
+			const float w = cw.x * cw.y * cw.z * ( dist > 0.0 ? pleVisible( t, entry, local, toProbe / dist, dist ) : 1.0 );
+			if ( w <= 0.0 )
+				continue;
+			const uint cb = ple[t + 25u] + uint( pi ) * 9u;
+			for ( uint j = 0u; j < 9u; j++ )
+				c[j] += log2( max( pleF( cb + j ), 1e-9 ) ) * w;
+			total += w;
+		}
+		if ( total <= 0.0 )
+			return false;
+		for ( uint j = 0u; j < 9u; j++ )
+			c[j] = exp2( c[j] / total );
+		field = PleField( vec3( c[0], c[1], c[2] ), vec3( c[3], c[4], c[5] ), vec3( c[6], c[7], c[8] ) );
+		return true;
+	}
+	return false;
+}
+
+// the field's light along scene direction d: its colour, scaled by the axis lobes' cosine-squared blend
+vec3 pleEval( const PleField field, const vec3 d )
+{
+	const vec3 u = vec3( d.x, -d.y, d.z ), a = max( u, 0.0 ), n = max( -u, 0.0 );
+	const float lum = dot( field.base, vec3( 0.2126, 0.7152, 0.0722 ) );
+	return lum > 0.0 ? field.base * ( ( dot( field.pos, a * a ) + dot( field.neg, n * n ) ) / lum ) : vec3( 0.0 );
+}
+
+// r_scenePleRadiance (ShaderInjector's SampleGI): the probe's ambient cube as order-2 spherical harmonics (its L0, L1
+// and the two L2 terms a cube holds), in the cube's axes (y mirrored, as pleEval). The cube is irradiance (lit by the
+// cosine lobe); for a reflection the bands are deconvolved back to radiance (L1 x 3 / 2pi, L2 x 4 / pi over L0's 1 / pi)
+// and blurred again by the surface's roughness (HPG 2025, eq. 12: band l by exp(-l(l+1) alpha / 2)), so a glossy
+// surface mirrors a darker, more directional probe light than its blurry irradiance. With it the probe's dominant light
+// (along L1): reflections facing away from it occluded by half, and a broad GGX highlight from it (from its opposite at
+// 0.05 where the surface faces away), x 2 pi (1 + its directionality): the open sky's glint on shaded glossy surfaces
+const float SH_Y00 = 0.2820947918, SH_Y1 = 0.4886025119, SH_Y20 = 0.3153915653, SH_Y22 = 0.5462742153;
+struct PleSH { vec3 chroma; float c0, c1, c2, c3, c6, c8; };
+PleSH pleSH( const PleField f )
+{
+	const vec3 avg = 0.5 * ( f.pos + f.neg ), dif = 0.5 * ( f.pos - f.neg );
+	const float lum = dot( f.base, vec3( 0.2126, 0.7152, 0.0722 ) );
+	const float ok = lum > 1e-6 ? 1.0 : 0.0;
+	return PleSH( ok > 0.0 ? f.base / lum : vec3( 0.0 ), ok * SH_Y00 * 4.1887902 * ( avg.x + avg.y + avg.z ),
+		ok * SH_Y1 * PI * dif.y, ok * SH_Y1 * PI * dif.z, ok * SH_Y1 * PI * dif.x,
+		ok * SH_Y20 * 1.675516 * ( 2.0 * avg.z - avg.x - avg.y ), ok * SH_Y22 * 1.675516 * ( avg.x - avg.y ) );
+}
+float pleSHEval( const PleSH s, const vec3 u )
+{
+	return s.c0 * SH_Y00 + SH_Y1 * dot( vec3( s.c3, s.c1, s.c2 ), u ) + s.c6 * SH_Y20 * ( 3.0 * u.z * u.z - 1.0 )
+		+ s.c8 * SH_Y22 * ( u.x * u.x - u.y * u.y );
+}
+vec3 pleRadiance( const PleField f, const vec3 N, const vec3 V, const vec3 R, const float rough, const float NdotV )
+{
+	const PleSH s = pleSH( f );
+	const vec3 u = vec3( R.x, -R.y, R.z ), n = vec3( N.x, -N.y, N.z ), v = vec3( V.x, -V.y, V.z );
+	const float alpha2 = rough * rough * rough * rough;
+	const float w1raw = exp( -alpha2 ), w2raw = w1raw * w1raw * w1raw;
+	const vec2 w = clamp( ( vec2( w1raw, w2raw ) - vec2( 0.3678794412, 0.0497870684 ) ) * vec2( 1.5819767069, 1.0523956965 ), 0.0, 1.0 );
+	float r = s.c0 / PI * SH_Y00 + w.x * 0.47746482927568 * SH_Y1 * dot( vec3( s.c3, s.c1, s.c2 ), u )
+		+ w.y * 1.273239544735162 * ( s.c6 * SH_Y20 * ( 3.0 * u.z * u.z - 1.0 ) + s.c8 * SH_Y22 * ( u.x * u.x - u.y * u.y ) );
+	// the dominant light
+	const vec3 m = vec3( s.c3, s.c1, s.c2 );
+	const float ml = length( m );
+	const vec3 dl = ml > 1e-6 ? m / ml : vec3( 0.0, 0.0, 1.0 );
+	const float directionality = clamp( ( SH_Y00 / SH_Y1 ) * ml / max( s.c0, 1e-6 ), 0.0, 1.0 );
+	r *= mix( 1.0, clamp( dot( u, dl ) * 0.5 + 0.5, 0.0, 1.0 ), 0.5 );
+	const float hl = max( max( pleSHEval( s, dl ), 0.0 ) - max( s.c0 * SH_Y00, 0.0 ), 0.0 ) * directionality;
+	const float sn = dot( n, dl );
+	const vec3 hd = sn < 0.0 ? -dl : dl;
+	const float NoL = abs( sn );
+	float spec = 0.0;
+	if ( NoL > 1e-5 && NdotV > 1e-5 && hl > 0.0 ) {
+		const float k = ( rough + 1.0 ) * ( rough + 1.0 ) * 0.125;
+		const float NoH = clamp( dot( n, normalize( v + hd ) ), 0.0, 1.0 );
+		const float dd = NoH * NoH * ( alpha2 - 1.0 ) + 1.0;
+		const float D = alpha2 / max( PI * dd * dd, 1e-6 );
+		spec = D * ( NdotV / ( NdotV * ( 1.0 - k ) + k ) ) * ( NoL / ( NoL * ( 1.0 - k ) + k ) ) / ( 4.0 * NdotV )
+			* ( sn < 0.0 ? 0.05 : 1.0 ) * PI * 2.0 * ( 1.0 + directionality );
+	}
+	return s.chroma * max( r + hl * spec, 0.0 );
+}
+
+#ifdef GPU_DRIVEN
+// the area's baked reflection capture (fr.ple.z its image, maps/<map>_refl.dds) along scene direction R at a
+// roughness: its BC6H cube's faces (+X -X +Y -Y over +Z -Z, UE axes) in a 4 x 2 atlas, the level UE's for that
+// roughness (its levels are prefiltered: ComputeReflectionCaptureMipFromRoughness, 9 levels of a 256 cube), in the
+// probes' light units (x fr.ple.w)
+vec3 pleReflect( const vec3 R, const float rough )
+{
+	const vec3 d = vec3( R.x, -R.y, R.z ), a = abs( d );
+	int face;
+	vec2 uv;
+	if ( a.x >= a.y && a.x >= a.z ) {
+		face = d.x > 0.0 ? 0 : 1;
+		uv = vec2( d.x > 0.0 ? -d.z : d.z, -d.y ) / a.x;
+	} else if ( a.y >= a.z ) {
+		face = d.y > 0.0 ? 2 : 3;
+		uv = vec2( d.x, d.y > 0.0 ? d.z : -d.z ) / a.y;
+	} else {
+		face = d.z > 0.0 ? 4 : 5;
+		uv = vec2( d.z > 0.0 ? d.x : -d.x, -d.y ) / a.z;
+	}
+	const float mip = clamp( 7.0 + 1.2 * log2( max( rough, 0.001 ) ), 0.0, 6.0 );
+	const float inset = 0.5 / float( 256 >> int( ceil( mip ) ) );	// (no filtering across a face's edge)
+	uv = clamp( uv * 0.5 + 0.5, inset, 1.0 - inset );
+	const vec2 at = ( vec2( face & 3, face >> 2 ) + uv ) * vec2( 0.25, 0.5 );
+	return textureLod( sceneTex[SCENE_TEX_INDEX( uint( fr.ple.z ) )], at, mip ).rgb * fr.ple.w;
+}
+#endif
 const float WET_ROUGH = 0.2;	// wet ground's roughness at most; scene_ssr.comp spreads its rays by the same
 
 vec3 toLinear( vec3 c ) { return pow( max( c, vec3( 0.0 ) ), vec3( 2.2 ) ); }
@@ -422,17 +638,96 @@ float tubeFalloff( const vec3 C, const vec4 S, const vec3 P, const float near2, 
 // the same functions) gets back the light that was drawn, neon cores included; an 8-bit one clips it where the tone
 // curve alone would. The rest of the frame (models, effects) draws in 0..1 and reads as before.
 const float TONE_TOP = 0.999, TONE_LOG = 0.1;
+vec3 acesFit( vec3 c ) { return clamp( ( c * ( 2.51 * c + 0.03 ) ) / ( c * ( 2.43 * c + 0.59 ) + 0.14 ), 0.0, 1.0 ); }
+// r_sceneTonemap 2: Gran Turismo 7's tone curve (Polyphony Digital, SDR at a 100 nit paper white, as ShaderInjector's
+// TONEMAP_GRAN_TURISMO_7): a toe, a linear section and a shoulder converging on the peak, per channel; gt7Inverse takes
+// the per-channel curve back (its ICtCp chroma blend, scene.frag's alone, is not inverted)
+const float GT7_MID = 0.538, GT7_LIN = 0.444, GT7_TOE = 1.28;
+const float GT7_KA = 1.185333, GT7_KB = -1.349340, GT7_KC = -1.348921;	// (alpha 0.25, peak 1)
+float gt7Curve( const float x )
+{
+	if ( x <= 0.0 )
+		return 0.0;
+	if ( x < GT7_LIN ) {
+		const float wl = smoothstep( 0.0, GT7_MID, x );
+		return ( 1.0 - wl ) * GT7_MID * pow( x / GT7_MID, GT7_TOE ) + wl * x;
+	}
+	return min( GT7_KA + GT7_KB * exp( x * GT7_KC ), 1.0 );
+}
+float gt7Inverse( const float y )
+{
+	if ( y <= 0.0 )
+		return 0.0;
+	if ( y >= GT7_LIN )
+		return log( max( ( min( y, 0.99999 ) - GT7_KA ) / GT7_KB, 1e-6 ) ) / GT7_KC;
+	float x = y;
+	for ( int i = 0; i < 6; i++ ) {	// (Newton on the toe's blend: monotonic, a few steps)
+		const float e = 1e-4, f = gt7Curve( x ) - y, df = ( gt7Curve( x + e ) - gt7Curve( x ) ) / e;
+		x = clamp( x - f / max( df, 1e-3 ), 0.0, GT7_LIN );
+	}
+	return x;
+}
+// GT7's chroma: the per-channel result's intensity, the input's chroma (fading out toward the peak), 60 / 40
+float gt7PQ( const float v )	// inverse ST 2084 of frame-buffer light (1 = 100 nits)
+{
+	const float ym = pow( max( v * 0.01, 0.0 ), 0.1593017578125 );
+	return pow( ( 0.8359375 + 18.8515625 * ym ) / ( 1.0 + 18.6875 * ym ), 78.84375 );
+}
+float gt7PQInverse( const float n )
+{
+	const float np = pow( clamp( n, 0.0, 1.0 ), 1.0 / 78.84375 );
+	return pow( max( np - 0.8359375, 0.0 ) / ( 18.8515625 - 18.6875 * np ), 1.0 / 0.1593017578125 ) * 100.0;
+}
+vec3 gt7ICtCp( const vec3 c )
+{
+	const float l = gt7PQ( dot( c, vec3( 1688.0, 2146.0, 262.0 ) ) / 4096.0 );
+	const float m = gt7PQ( dot( c, vec3( 683.0, 2951.0, 462.0 ) ) / 4096.0 );
+	const float s = gt7PQ( dot( c, vec3( 99.0, 309.0, 3688.0 ) ) / 4096.0 );
+	return vec3( 0.5 * ( l + m ), ( 6610.0 * l - 13613.0 * m + 7003.0 * s ) / 4096.0, ( 17933.0 * l - 17390.0 * m - 543.0 * s ) / 4096.0 );
+}
+vec3 gt7ICtCpInverse( const vec3 i )
+{
+	const float l = gt7PQInverse( i.x + 0.00860904 * i.y + 0.11103 * i.z );
+	const float m = gt7PQInverse( i.x - 0.00860904 * i.y - 0.11103 * i.z );
+	const float s = gt7PQInverse( i.x + 0.560031 * i.y - 0.320627 * i.z );
+	return max( vec3( 3.43661 * l - 2.50645 * m + 0.0698454 * s, -0.79133 * l + 1.9836 * m - 0.192271 * s,
+		-0.0259499 * l - 0.0989137 * m + 1.12486 * s ), vec3( 0.0 ) );
+}
+vec3 gt7Tone( const vec3 c )
+{
+	const vec3 skew = vec3( gt7Curve( c.r ), gt7Curve( c.g ), gt7Curve( c.b ) );
+	const vec3 u = gt7ICtCp( max( c, vec3( 0.0 ) ) ), su = gt7ICtCp( skew );
+	const float chroma = 1.0 - smoothstep( 0.98, 1.16, u.x / gt7ICtCp( vec3( 1.0 ) ).x );
+	return min( mix( skew, gt7ICtCpInverse( vec3( su.x, u.yz * chroma ) ), 0.6 ), vec3( 1.0 ) );
+}
 vec3 toneCurve( vec3 c )
 {
-	if ( fr.params2.z > 0.5 )
-		c = clamp( ( c * ( 2.51 * c + 0.03 ) ) / ( c * ( 2.43 * c + 0.59 ) + 0.14 ), 0.0, 1.0 );	// ACES fit (Narkowicz): a toe and a shoulder
-	else
+	if ( fr.params2.z > 2.5 ) {
+		c = gt7Tone( c );
+	} else if ( fr.params2.z > 0.5 ) {
+		// ACES fit (Narkowicz): a toe and a shoulder, per channel. Its toe darkens a dim colour's small channels far more
+		// than its large one (x0.38 at 1% against x1.5 at 18%): a dim warm room's beige walls came out orange (Costa's
+		// hotel lobby, saturation 0.56 in the albedo, 0.78 drawn). r_sceneToneHue's share of the toe is taken on the
+		// luminance with the colour's ratios kept; the shoulder stays per channel (bright light still desaturates)
+		const vec3 p = acesFit( c );
+		const float share = clamp( ( fr.params2.z - 1.0 ) * 2.0, 0.0, 1.0 );
+		if ( share > 0.0 ) {
+			const float L = max( dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ), 1e-6 );
+			const vec3 h = clamp( c * ( acesFit( vec3( L ) ).x / L ), 0.0, 1.0 );
+			c = mix( p, h, share * ( 1.0 - smoothstep( 0.1, 0.8, L ) ) );
+		} else {
+			c = p;
+		}
+	} else {
 		c = vec3( 1.0 ) - exp( -c );
+	}
 	return pow( c, vec3( 1.0 / 2.2 ) );
 }
 vec3 toneInverse( vec3 y )
 {
 	y = pow( clamp( y, 0.0, TONE_TOP ), vec3( 2.2 ) );
+	if ( fr.params2.z > 2.5 )
+		return vec3( gt7Inverse( y.r ), gt7Inverse( y.g ), gt7Inverse( y.b ) );
 	if ( fr.params2.z > 0.5 ) {
 		const vec3 a = 2.51 - 2.43 * y, b = 0.03 - 0.59 * y, c = -0.14 * y;
 		return ( -b + sqrt( b * b - 4.0 * a * c ) ) / ( 2.0 * a );
@@ -440,10 +735,15 @@ vec3 toneInverse( vec3 y )
 	return -log( 1.0 - y );
 }
 
+// r_sceneToneAdjust (ShaderInjector's AdjustImage before its tone curve): the light after exposure scaled by 2^EV and
+// raised to 1 / gamma (gamma over 1 lifts the midtones), and back
+vec3 toneAdjust( const vec3 c ) { return fr.shade2.w > 0.0 ? pow( max( c * fr.shade2.z, vec3( 0.0 ) ), vec3( 1.0 / fr.shade2.w ) ) : c; }
+vec3 toneAdjustInverse( const vec3 c ) { return fr.shade2.w > 0.0 ? pow( max( c, vec3( 0.0 ) ), vec3( fr.shade2.w ) ) / fr.shade2.z : c; }
+
 // linear light (before exposure) -> the frame's encoding
 vec3 toDisplay( vec3 c )
 {
-	c *= fr.params.y;
+	c = toneAdjust( c * fr.params.y );
 	const float top = toneInverse( vec3( TONE_TOP ) ).x;
 	return mix( toneCurve( c ), TONE_TOP + TONE_LOG * log( max( c, vec3( 1e-6 ) ) / top ), greaterThan( c, vec3( top ) ) );
 }
@@ -452,7 +752,7 @@ vec3 toDisplay( vec3 c )
 // ad's channels all climb toward white
 vec3 toDisplayHue( vec3 c )
 {
-	c *= fr.params.y;
+	c = toneAdjust( c * fr.params.y );
 	const float m = max( max( c.r, c.g ), max( c.b, 1e-6 ) );
 	return pow( c * ( pow( toneCurve( vec3( m ) ).x, 2.2 ) / m ), vec3( 1.0 / 2.2 ) );
 }
@@ -579,7 +879,9 @@ float haze( const float start )
 {
 	if ( fr.fog.w <= 0.0 )
 		return 0.0;
-	const float d = max( length( vPos - pc.eye.xyz ) / UNITS_PER_METRE - start, 0.0 );
+	const float dist = length( vPos - pc.eye.xyz ) / UNITS_PER_METRE;
+	// r_sceneFogFarDensity (ShaderInjector's far field fog density x2): the path past its start counted that many times
+	const float d = max( dist - start, 0.0 ) + ( fr.shade3.w != 1.0 ? max( dist - fr.shade3.z, 0.0 ) * ( fr.shade3.w - 1.0 ) : 0.0 );
 	const float h = max( 0.5 * ( vPos.z + pc.eye.z ) / UNITS_PER_METRE, 0.0 );
 	return min( 1.0 - exp( -d * fr.fog.w * exp( -h / fr.fog2.x ) ), fr.fog2.y );
 }
@@ -660,7 +962,7 @@ vec3 w3SkyFog( const vec3 c, const vec3 u )
 vec3 fromDisplay( const vec3 y )
 {
 	const float top = toneInverse( vec3( TONE_TOP ) ).x;
-	return mix( toneInverse( y ), top * exp( ( y - TONE_TOP ) / TONE_LOG ), greaterThan( y, vec3( TONE_TOP ) ) ) / fr.params.y;
+	return toneAdjustInverse( mix( toneInverse( y ), top * exp( ( y - TONE_TOP ) / TONE_LOG ), greaterThan( y, vec3( TONE_TOP ) ) ) ) / fr.params.y;
 }
 
 // light at P seen through the haze, in linear light: dimmed by its share f, the haze's own colour by its share past
@@ -863,7 +1165,24 @@ vec3 brdf( const vec3 N, const vec3 V, const vec3 l, const float NdotL, const fl
 	const float vis = 0.25 / ( ( NdotV * ( 1.0 - k ) + k ) * ( NdotL * ( 1.0 - k ) + k ) );
 	if ( waterFlatLight )	// (the caller scales by NdotL: the flat surface's own instead)
 		return ( vec3( 1.0 ) - F ) * diffuseColor / PI * ( max( dot( waterFlatN, l ), 0.0 ) / max( NdotL, 1e-4 ) ) + D * vis * F;
+	if ( fr.shade2.x > 0.0 ) {
+		// r_sceneOrenNayar (Gotanda 2012, as ShaderInjector's direct lights): rough matte surfaces flatter, and lit toward
+		// the eye when the light is behind it (sand, plaster); Lambert at roughness 0
+		const float s2 = a * a, VdotL = 2.0 * VdotH * VdotH - 1.0, cosri = VdotL - NdotV * NdotL;
+		const float C1 = 1.0 - 0.5 * s2 / ( s2 + 0.33 );
+		const float C2 = 0.45 * s2 / ( s2 + 0.09 ) * cosri * ( cosri >= 0.0 ? 1.0 / max( max( NdotL, NdotV ), 1e-4 ) : 1.0 );
+		const float on = mix( 1.0, ( C1 + C2 ) * ( 1.0 + 0.5 * rough ), fr.shade2.x );
+		return ( vec3( 1.0 ) - F ) * diffuseColor / PI * on + D * vis * F;
+	}
 	return ( vec3( 1.0 ) - F ) * diffuseColor / PI + D * vis * F;
+}
+
+// r_sceneAOMultiBounce (Jimenez 2016, GTAO's fit; ShaderInjector's ambient): the light an occluded crevice gets back from
+// its own bright walls, so a light surface's occlusion stays light and keeps its colour
+vec3 aoMultiBounce( const float x, const vec3 albedo )
+{
+	const vec3 a = 2.0404 * albedo - 0.3324, b = -4.7951 * albedo + 0.6417, c = 2.7552 * albedo + 0.6903;
+	return max( vec3( x ), ( ( x * a + b ) * x + c ) * x );
 }
 
 // the split-sum environment BRDF, analytic fit (Karis, "Physically based shading on mobile", 2014): F0 scale, bias
@@ -909,21 +1228,22 @@ vec4 reflectedLightAt( const vec3 P )
 	}
 	return wsum > 0.0 ? vec4( sum / wsum, 1.0 ) : vec4( 0.0 );
 }
-// r_sceneAO's occlusion at P: last frame's, through its camera, a tent over the texels showing this surface (as
-// reflectedLightAt); 1 where none does
-float occlusionAt( const vec3 P )
+// r_sceneBounce's light at P, and r_sceneSsrGlossy's reflection (rgb the hits' light, a their share): last frame's, as
+// occlusionAt; zero where none
+vec4 bounceAt( const vec3 P, const bool glossy )
 {
 	const vec4 c = fr.prevViewProj * vec4( P, 1.0 );
 	if ( c.w <= 1.0 )
-		return 1.0;
+		return vec4( 0.0 );
 	const vec2 uv = c.xy / c.w * 0.5 + 0.5;
 	if ( any( lessThan( uv, vec2( 0.0 ) ) ) || any( greaterThan( uv, vec2( 1.0 ) ) ) )
-		return 1.0;
+		return vec4( 0.0 );
 	const float z = dot( P - fr.prevEye.xyz, fr.prevFwd.xyz );
 	const ivec2 size = textureSize( aoTex0, 0 );
 	const vec2 st = uv * vec2( size ) - 0.5;
 	const ivec2 i0 = ivec2( floor( st ) );
-	float sum = 0.0, wsum = 0.0;
+	vec4 sum = vec4( 0.0 );
+	float wsum = 0.0;
 	for ( int k = 0; k < 16; k++ ) {
 		const ivec2 o = ivec2( ( k & 3 ) - 1, ( k >> 2 ) - 1 );
 		const vec2 dxy = abs( vec2( i0 + o ) - st );
@@ -931,13 +1251,54 @@ float occlusionAt( const vec3 P )
 		if ( w <= 0.0 )
 			continue;
 		const ivec2 at = clamp( i0 + o, ivec2( 0 ), size - 1 );
-		const vec2 h = fr.ssr.w > 0.5 ? texelFetch( aoTex1, at, 0 ).rg : texelFetch( aoTex0, at, 0 ).rg;
-		if ( h.g <= 0.0 || abs( h.g - z ) > 0.05 * z + 8.0 )
-			continue;
-		sum += h.r * w;
+		vec4 h;
+		if ( glossy ) {
+			const vec4 r = fr.ssr.w > 0.5 ? texelFetch( reflectTex1, at, 0 ) : texelFetch( reflectTex0, at, 0 );
+			h = vec4( r.rgb, fr.ssr.w > 0.5 ? texelFetch( aoTex1, at, 0 ).a : texelFetch( aoTex0, at, 0 ).a );
+			if ( r.a <= 0.0 || abs( r.a - z ) > 0.1 * z + 16.0 )
+				continue;
+		} else {
+			const vec4 b = fr.ssr.w > 0.5 ? texelFetch( bounceTex1, at, 0 ) : texelFetch( bounceTex0, at, 0 );
+			if ( b.a <= 0.0 || abs( b.a - z ) > 0.05 * z + 8.0 )
+				continue;
+			h = vec4( b.rgb, 0.0 );
+		}
+		sum += h * w;
 		wsum += w;
 	}
-	return wsum > 0.0 ? sum / wsum : 1.0;
+	return wsum > 0.0 ? sum / wsum : vec4( 0.0 );
+}
+
+// r_sceneAO's occlusion at P: last frame's, through its camera, a tent over the texels showing this surface (as
+// reflectedLightAt); 1 where none does. y: the contact shadow's share of the sun passing (r_sceneContactShadow), the same way
+vec2 occlusionAt( const vec3 P )
+{
+	const vec4 c = fr.prevViewProj * vec4( P, 1.0 );
+	if ( c.w <= 1.0 )
+		return vec2( 1.0 );
+	const vec2 uv = c.xy / c.w * 0.5 + 0.5;
+	if ( any( lessThan( uv, vec2( 0.0 ) ) ) || any( greaterThan( uv, vec2( 1.0 ) ) ) )
+		return vec2( 1.0 );
+	const float z = dot( P - fr.prevEye.xyz, fr.prevFwd.xyz );
+	const ivec2 size = textureSize( aoTex0, 0 );
+	const vec2 st = uv * vec2( size ) - 0.5;
+	const ivec2 i0 = ivec2( floor( st ) );
+	vec2 sum = vec2( 0.0 );
+	float wsum = 0.0;
+	for ( int k = 0; k < 16; k++ ) {
+		const ivec2 o = ivec2( ( k & 3 ) - 1, ( k >> 2 ) - 1 );
+		const vec2 dxy = abs( vec2( i0 + o ) - st );
+		const float w = max( 1.5 - dxy.x, 0.0 ) * max( 1.5 - dxy.y, 0.0 );
+		if ( w <= 0.0 )
+			continue;
+		const ivec2 at = clamp( i0 + o, ivec2( 0 ), size - 1 );
+		const vec3 h = fr.ssr.w > 0.5 ? texelFetch( aoTex1, at, 0 ).rgb : texelFetch( aoTex0, at, 0 ).rgb;
+		if ( h.g <= 0.0 || abs( h.g - z ) > 0.05 * z + 8.0 )
+			continue;
+		sum += h.rb * w;
+		wsum += w;
+	}
+	return wsum > 0.0 ? sum / wsum : vec2( 1.0 );
 }
 
 vec3 reflectedLight( const vec3 P )
@@ -2251,11 +2612,19 @@ void main()
 	const float NdotV = max( dot( N, V ), 1e-4 );
 
 	ao *= leafAO;
-	if ( fr.clouds2.z > 0.0 && pc.eye.w > 0.5 && !water )	// r_sceneAO: the screen's occlusion on the ambient light
-		ao *= mix( 1.0, occlusionAt( vPos ), fr.clouds2.z );
+	const float matAO = ao;	// (the material's own, r_sceneMicroShadow's: the screen's below is the ambient's)
+	float contact = 1.0;	// r_sceneContactShadow: the share of the sun past the contact shadow
+	if ( fr.clouds2.z > 0.0 && pc.eye.w > 0.5 && !water ) {	// r_sceneAO: the screen's occlusion on the ambient light
+		const vec2 occ = occlusionAt( vPos );
+		ao *= mix( 1.0, occ.x, fr.clouds2.z );
+		contact = mix( 1.0, occ.y, fr.shade.w );
+	}
 	// (r_sceneProbeSky: CP2077 lights ambient from the surface's reflection probes' relit captures, whose sky texels
 	// give the sky's light; an enclosed room's capture holds none)
-	const vec3 hemi = mix( fr.groundAmbient.rgb, fr.skyAmbient.rgb, N.z * 0.5 + 0.5 )
+	// (an FF7 Rebirth scene's probe GI where its grid holds the point, else the hemisphere)
+	PleField pf = PleField( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
+	const bool pleOn = fr.ple.x > 0.0 && pleField( vPos, pf );
+	const vec3 hemi = pleOn ? pleEval( pf, N ) * fr.ple.x : mix( fr.groundAmbient.rgb, fr.skyAmbient.rgb, N.z * 0.5 + 0.5 )
 		* ( 1.0 - fr.surface2.z * float( vSignal >> 28u ) / 15.0 );
 	// a Witcher 3 surface: the ambient mirrored with its own specular colour through the split-sum BRDF, in place of
 	// the flat F0 / 4: the ambient hemisphere along the reflected ray (the game lights reflections from its probes, near
@@ -2264,10 +2633,45 @@ void main()
 	// "wet blue" shade)
 	const vec2 w3ab = envBRDF( rough, NdotV );
 	const vec3 Rw = reflect( -V, N );
-	const vec3 hemiR = mix( fr.groundAmbient.rgb, fr.skyAmbient.rgb, Rw.z * 0.5 + 0.5 );
-	const vec3 ambient = w3Spec
-		? hemi * diffuseColor * ao + hemiR * ( F0 * w3ab.x + w3ab.y ) * ao
-		: hemi * ( diffuseColor + ( water ? vec3( 0.0 ) : F0 * 0.25 ) ) * ao;	// (water: its reflection below)
+	const vec3 hemiR = pleOn ? ( fr.shade3.x > 0.0 ? mix( pleEval( pf, Rw ), pleRadiance( pf, N, V, Rw, rough, NdotV ), fr.shade3.x )
+		: pleEval( pf, Rw ) ) * fr.ple.x : mix( fr.groundAmbient.rgb, fr.skyAmbient.rgb, Rw.z * 0.5 + 0.5 );
+	vec3 ambSpec = w3Spec ? hemiR * ( F0 * w3ab.x + w3ab.y )
+		: water ? vec3( 0.0 )	// (water: its reflection below)
+		: pleOn ? mix( hemi * F0 * 0.25, hemiR * ( F0 * w3ab.x + w3ab.y ), fr.ple.y ) : hemi * F0 * 0.25;
+	// r_sceneSpecOcclusion (ShaderInjector's specular occlusion; Lagarde's fit of the cone-cone visibility): occlusion
+	// takes a smooth surface's mirrored light more at grazing angles than its diffuse, a rough one's like its diffuse
+	const float specAO = fr.shade.y > 0.0
+		? mix( ao, clamp( pow( NdotV + ao, exp2( -16.0 * rough - 1.0 ) ) - 1.0 + ao, 0.0, 1.0 ), fr.shade.y ) : ao;
+	const vec3 aoD = fr.shade2.y > 0.0 ? mix( vec3( ao ), aoMultiBounce( ao, albedoWet ), fr.shade2.y ) : vec3( ao );
+	const vec3 specOcc = fr.shade2.y > 0.0 ? mix( vec3( specAO ), aoMultiBounce( specAO, albedoWet ), fr.shade2.y ) : vec3( specAO );
+	// r_sceneSsrGlossy: the screen's reflection on dry surfaces smoother than its roughness, over the probes' where a ray
+	// hit (ambSpec keeps the rest: r_sceneSpecDirect takes only the probes' share, as the mod's leaves its SSR whole)
+	vec3 ssrSpec = vec3( 0.0 );
+	if ( fr.shade4.y > 0.0 && fr.ssr.x > 0.5 && pc.eye.w > 0.5 && !water && wet <= 0.05 ) {
+		const float wG = fr.shade4.y * ( 1.0 - smoothstep( 0.5 * fr.shade4.z, fr.shade4.z, rough ) );
+		if ( wG > 0.0 ) {
+			const vec4 g = bounceAt( vPos, true );
+			ambSpec *= 1.0 - wG * g.a;
+			ssrSpec = g.rgb * ( F0 * w3ab.x + w3ab.y ) * wG;
+		}
+	}
+	vec3 ambient = hemi * diffuseColor * aoD + ( ambSpec + ssrSpec ) * specOcc;
+	// r_sceneBounce: the light the occluders send back, after the occlusion (it is the occluded directions' light)
+	if ( fr.shade4.x > 0.0 && fr.clouds2.z > 0.0 && pc.eye.w > 0.5 && !water )
+		ambient += diffuseColor * bounceAt( vPos, false ).rgb * fr.shade4.x;
+	if ( fr.shade3.y > 0.0 && !water ) {
+		// r_sceneCameraFill (ShaderInjector's camera ambient light): the ambient again from the eye, full within 5 m and
+		// by the inverse square past it, on what faces the eye, inside a vignette; with a highlight along the view
+		const vec3 v = vPos - pc.eye.xyz;
+		const float dm = length( v ) / UNITS_PER_METRE;
+		const float z = max( dot( v, fr.fogFwd.xyz ), 1e-3 );
+		const vec2 uv = 0.5 - 0.5 * vec2( dot( v, fr.fogLeft.xyz ) / ( z * fr.fogLeft.w ), dot( v, fr.fogUp.xyz ) / ( z * fr.fogUp.w ) );
+		const float k = clamp( 25.0 / max( dm * dm, 1e-4 ), 0.0, 1.0 ) * fr.shade3.y * NdotV
+			* smoothstep( -0.45, 0.45, 0.1 - distance( uv, vec2( 0.5 ) ) );
+		const float gk = NdotV / ( NdotV * ( 1.0 - rough ) + rough );
+		const float hl = min( gk * gk / ( 4.0 * max( rough, 0.02 ) * NdotV ), 8.0 );
+		ambient += hemi * k * ( diffuseColor * aoD + ( F0 * w3ab.x + w3ab.y ) * specOcc * ( hl * 0.5 ) );
+	}
 	vec3 col = ambient * bbFix.rgb;	// (a billboard card: its 3D tree's canopy, darker inside, took less of the ambient)
 
 	// wet surfaces mirror what was on screen (neon, screens, lamps, lit windows): scene_ssr.comp's light, with this
@@ -2289,10 +2693,19 @@ void main()
 			reflection = ( r.rgb * r.a + skyRadiance( normalize( vec3( R.xy, max( R.z, 0.02 ) ) ), vec3( 0.0 ) ) * ( 1.0 - r.a ) ) * ( F * fr.water2.y * ( 1.0 - foam ) );
 		} else {
 			const vec2 ab = envBRDF( rough, NdotV );
-			reflection = ( r.rgb * r.a + waterSky( reflect( -V, N ) ) * ( 1.0 - r.a ) ) * ( F0 * ab.x + ab.y ) * ( fr.water2.y * ( 1.0 - foam ) );
+			vec3 sky = waterSky( reflect( -V, N ) );
+#ifdef GPU_DRIVEN
+			if ( fr.ple.z >= 0.0 )	// (the area's baked reflection capture, where one is loaded)
+				sky = pleReflect( reflect( -V, N ), rough );
+#endif
+			reflection = ( r.rgb * r.a + sky * ( 1.0 - r.a ) ) * ( F0 * ab.x + ab.y ) * ( fr.water2.y * ( 1.0 - foam ) );
 		}
 	}
 	col += reflection;
+	const vec3 colAmbient = col;	// (r_sceneSpecDirect: the direct light is what the loops below add)
+	// r_sceneMicroShadow (Uncharted 4's, as ShaderInjector's sun; the mod leaves its lamps without): the material's
+	// occlusion as a cone of visibility, so a crevice's sunlight fades where it faces away a little, not only behind it
+	const float microW = fr.shade.x;
 	vec3 sunPart = vec3( 0.0 );
 
 	float sun = 1.0;
@@ -2304,7 +2717,7 @@ void main()
 		const float wrapL = max( ( dot( N, l ) + w ) / ( 1.0 + w ), 0.0 );
 		const float back = pow( max( -dot( V, l ), 0.0 ), 4.0 ) + 0.25 * max( -dot( N, l ), 0.0 );
 		if ( wrapL > 0.0 || back > 0.0 ) {
-			sun = sunShadow( vPos, dot( Ng, l ) < 0.0 ? -Ng : Ng );
+			sun = sunShadow( vPos, dot( Ng, l ) < 0.0 ? -Ng : Ng ) * contact;
 			const vec3 trans = min( diffuseColor * diffuseColor * 4.0, vec3( 1.0 ) );
 			sunPart = ( diffuseColor * wrapL + trans * ( fr.foliage.z * back ) ) * ( fr.sunCol.rgb * ( sun / PI ) );
 			col += sunPart;
@@ -2316,9 +2729,10 @@ void main()
 		// 3D tree's leaves catch it from every side: cardmatch.py's sun ratios spread 20x between the two headings)
 		const float NdotL = bbCard ? ( dot( N, l ) + 0.5 ) / 1.5 : dot( N, l );
 		if ( NdotL > 0.0 && ( bbCard || dot( Ng, l ) > -0.1 ) ) {
-			sun = sunShadow( vPos, bbCard && dot( Ng, l ) < 0.0 ? -Ng : Ng );
+			sun = sunShadow( vPos, bbCard && dot( Ng, l ) < 0.0 ? -Ng : Ng ) * contact;
 			if ( sun > 0.0 )
-				sunPart = brdf( N, V, l, NdotL, NdotV, F0, diffuseColor, rough, 0.0 ) * fr.sunCol.rgb * ( NdotL * sun * bbFix.w * cardShade );
+				sunPart = brdf( N, V, l, NdotL, NdotV, F0, diffuseColor, rough, 0.0 ) * fr.sunCol.rgb * ( NdotL * sun * bbFix.w
+					* ( microW > 0.0 ? mix( 1.0, clamp( NdotL + 2.0 * matAO * matAO - 1.0, 0.0, 1.0 ), microW ) : 1.0 ) * cardShade );
 			col += sunPart;	// (outside the test: sunPart stays 0 when sun is 0)
 		}
 	}
@@ -2462,6 +2876,14 @@ void main()
 		const float dm = d / UNITS_PER_METRE;
 		att = att * att / ( dm * dm + 1.0 );
 		col += brdf( N, V, l, NdotL, NdotV, F0, diffuseColor, rough, fr.wet.z / ( 2.0 * max( dm, 0.1 ) ) ) * fr.dlights[i * 2 + 1].rgb * ( fr.dlightCount.y * att * NdotL );
+	}
+
+	// r_sceneSpecDirect (ShaderInjector's cubemap occlusion by direct light): the ambient's mirrored light (the probes'
+	// and the capture's sky) scaled by how much direct light the surface takes, after exposure: in shade a surface
+	// mirrors the bright sky no more (the sky glow on shaded walls and under awnings); lit, it keeps it all
+	if ( fr.shade.z > 0.0 && !water ) {
+		const float direct = clamp( dot( col - colAmbient, vec3( 0.2126, 0.7152, 0.0722 ) ) * fr.params.y, 0.0, 1.0 );
+		col -= ambSpec * specOcc * ( fr.shade.z * ( 1.0 - direct ) );
 	}
 
 #ifndef NO_DEBUG_VIEWS	// (the GPU-driven lit pass has a variant without them for r_sceneDebug 0: they kept ~15 values live)

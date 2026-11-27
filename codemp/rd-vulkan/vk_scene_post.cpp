@@ -24,6 +24,7 @@ and AO's capture and trace (vk_scene_capture), the auto exposure's meter (r_scen
 (maps/<map>.xlut, vk_scene_grade). Moved from vk_scene.cpp.
 */
 #include "vk_scene_local.h"
+#include <algorithm>
 
 static qboolean Scene_CreateGradeCompute( void );
 
@@ -456,6 +457,7 @@ static struct {
 	sceneBuffer_t			hist[NUM_COMMAND_BUFFERS];
 	uint32_t				*ptr[NUM_COMMAND_BUFFERS];
 	float					exposure[NUM_COMMAND_BUFFERS];
+	float					gain[NUM_COMMAND_BUFFERS];	// r_sceneToneAdjust's gain that frame (its meter divides it out)
 	float					drawn;			// the exposure this frame draws with
 	float					ev, meter, target;
 	qboolean				have, failed;
@@ -554,10 +556,114 @@ static qboolean Scene_MeterCreate( void )
 	return qtrue;
 }
 
-// r_sceneAutoExposure: the exposure the scene draws with, r_sceneExposure x 2^ev once metered (else r_sceneExposure)
+/*
+Exposure volumes: maps/<map>.xexp (tools/levelport/ff7renv.py --exposure-volumes), FF7 Rebirth's post-process volumes'
+exposure bias: a room's own exposure (Costa's hotel lobby -8 against the town's -13.4: 5.4 EV brighter as you walk in),
+read as the map loads. Text lines:
+  xexp 1
+  ref <bias>        the bias r_sceneExposure stands for (the outdoors the look was matched in)
+  box <cx cy cz> <hx hy hz> <yaw> <bias> <priority> <blend>
+                    an oriented box (game units; yaw degrees about z), its bias, priority and blend radius (game units)
+At the eye the bias is blended as UE does: the volumes in priority order, each weighted 1 inside and falling to 0 over
+its blend radius outside, from ref; the difference from ref, x r_sceneExposureVolumes, moves the base exposure (EV),
+eased at r_sceneExposureSpeed
+*/
+struct sceneExpVolume_t {
+	vec3_t	c, h;
+	float	cs, sn, bias, priority, blend;
+};
+static std::vector<sceneExpVolume_t> sceneExpVolumes;
+static struct {
+	float	ref, ev, target;
+	qboolean have;
+	int		lastMs;
+} sceneExpVol;
+
+void Scene_LoadExposureVolumes( const char *scnName )
+{
+	char name[MAX_QPATH];
+	char *buf = NULL;
+	sceneExpVolumes.clear();
+	Com_Memset( &sceneExpVol, 0, sizeof( sceneExpVol ) );
+	COM_StripExtension( scnName, name, sizeof( name ) );
+	Q_strcat( name, sizeof( name ), ".xexp" );
+	if ( ri.FS_ReadFile( name, (void **)&buf ) <= 0 || !buf )
+		return;
+	const char *p = buf;
+	char line[512];
+	qboolean ok = qfalse;
+	while ( *p ) {
+		int n = 0;
+		while ( *p && *p != '\n' && n < (int)sizeof( line ) - 1 )
+			line[n++] = *p++;
+		line[n] = 0;
+		while ( *p && *p != '\n' )
+			p++;
+		if ( *p == '\n' )
+			p++;
+		sceneExpVolume_t v;
+		float yaw;
+		if ( !strncmp( line, "xexp ", 5 ) )
+			ok = atoi( line + 5 ) == 1 ? qtrue : qfalse;
+		else if ( ok && !strncmp( line, "ref ", 4 ) )
+			sceneExpVol.ref = (float)atof( line + 4 );
+		else if ( ok && sscanf( line, "box %f %f %f %f %f %f %f %f %f %f", &v.c[0], &v.c[1], &v.c[2], &v.h[0], &v.h[1], &v.h[2],
+				&yaw, &v.bias, &v.priority, &v.blend ) == 10 ) {
+			v.cs = cosf( DEG2RAD( yaw ) );
+			v.sn = sinf( DEG2RAD( yaw ) );
+			sceneExpVolumes.push_back( v );
+		}
+	}
+	ri.FS_FreeFile( buf );
+	std::stable_sort( sceneExpVolumes.begin(), sceneExpVolumes.end(),
+		[]( const sceneExpVolume_t &a, const sceneExpVolume_t &b ) { return a.priority < b.priority; } );
+	if ( !sceneExpVolumes.empty() )
+		ri.Printf( PRINT_ALL, "scene exposure volumes %s: %i, ref %g\n", name, (int)sceneExpVolumes.size(), sceneExpVol.ref );
+}
+
+// the eye's exposure-volume EV (over ref), eased toward this frame's blend
+static void Scene_ExposureVolumesFrame( const float *eye )
+{
+	const float strength = Env( r_sceneExposureVolumes )->value;
+	if ( sceneExpVolumes.empty() || strength <= 0.0f ) {
+		sceneExpVol.ev = 0.0f;
+		sceneExpVol.have = qfalse;
+		return;
+	}
+	float b = sceneExpVol.ref;
+	for ( const sceneExpVolume_t &v : sceneExpVolumes ) {
+		const float dx = eye[0] - v.c[0], dy = eye[1] - v.c[1];
+		const float lx = dx * v.cs + dy * v.sn, ly = -dx * v.sn + dy * v.cs, lz = eye[2] - v.c[2];
+		const float ox = MAX( fabsf( lx ) - v.h[0], 0.0f ), oy = MAX( fabsf( ly ) - v.h[1], 0.0f ), oz = MAX( fabsf( lz ) - v.h[2], 0.0f );
+		const float d = sqrtf( ox * ox + oy * oy + oz * oz );
+		const float w = d <= 0.0f ? 1.0f : ( v.blend > 0.0f && d < v.blend ) ? 1.0f - d / v.blend : 0.0f;
+		b += ( v.bias - b ) * w;
+	}
+	sceneExpVol.target = ( b - sceneExpVol.ref ) * strength;
+	const int now = ri.Milliseconds();
+	if ( !sceneExpVol.have ) {
+		sceneExpVol.ev = sceneExpVol.target;
+		sceneExpVol.have = qtrue;
+	} else {
+		float up = 4.0f, down = 7.5f;
+		sscanf( r_sceneExposureSpeed->string, "%f %f", &up, &down );
+		const float dt = Com_Clamp( 0.0f, 0.25f, ( now - sceneExpVol.lastMs ) * 0.001f );
+		const float rate = MAX( sceneExpVol.target > sceneExpVol.ev ? up : down, 0.0f );
+		sceneExpVol.ev += ( sceneExpVol.target - sceneExpVol.ev ) * ( 1.0f - expf( -rate * dt ) );
+	}
+	sceneExpVol.lastMs = now;
+}
+
+// the base exposure: r_sceneExposure moved by the eye's exposure volumes
+static float Scene_BaseExposure( void )
+{
+	return Env( r_sceneExposure )->value * exp2f( sceneExpVol.ev );
+}
+
+// r_sceneAutoExposure: the exposure the scene draws with, the base x 2^ev once metered (else the base)
 float Scene_Exposure( void )
 {
-	const float base = Env( r_sceneExposure )->value;
+	const float base = Scene_BaseExposure();
 	return ( Env( r_sceneAutoExposure )->integer && sceneMeter.have ) ? base * exp2f( sceneMeter.ev ) : base;
 }
 
@@ -573,6 +679,7 @@ static void Scene_MeterRead( const int f )
 	Com_Memcpy( bins, sceneMeter.ptr[f], sizeof( bins ) );
 	Com_Memset( sceneMeter.ptr[f], 0, sizeof( bins ) );
 	const float used = sceneMeter.exposure[f];
+	const float adjGain = sceneMeter.gain[f] > 0.0f ? sceneMeter.gain[f] : 1.0f;	// (r_sceneToneAdjust's, divided out)
 	sceneMeter.exposure[f] = 0.0f;
 	double total = 0.0;
 	for ( int i = 0; i < SCENE_METER_BINS; i++ )
@@ -591,10 +698,10 @@ static void Scene_MeterRead( const int f )
 	}
 	if ( weight <= 0.0 )
 		return;
-	const float base = MAX( Env( r_sceneExposure )->value, 1e-6f );
-	sceneMeter.meter = (float)( sum / weight ) - log2f( used ) + log2f( base );	// (as at r_sceneExposure)
+	const float base = MAX( Scene_BaseExposure(), 1e-6f );
+	sceneMeter.meter = (float)( sum / weight ) - log2f( adjGain ) - log2f( used ) + log2f( base );	// (as at r_sceneExposure)
 	float key = -5.175f, share = 0.325f, minEV = -1.2f, maxEV = 1.0f, up = 4.0f, down = 7.5f;
-	sscanf( r_sceneExposureMeter->string, "%f %f", &key, &share );
+	sscanf( Env( r_sceneExposureMeter )->string, "%f %f", &key, &share );
 	sscanf( Env( r_sceneExposureWindow )->string, "%f %f", &minEV, &maxEV );
 	sscanf( r_sceneExposureSpeed->string, "%f %f", &up, &down );
 	sceneMeter.target = Com_Clamp( minEV, MAX( minEV, maxEV ), share * ( key - sceneMeter.meter ) );
@@ -610,8 +717,8 @@ static void Scene_MeterRead( const int f )
 	}
 	sceneMeter.ev = Com_Clamp( minEV, MAX( minEV, maxEV ), sceneMeter.ev );	// (the window is a bound on what is applied too)
 	if ( r_sceneExposureDebug->integer && ( ++sceneMeter.reads % 60 ) == 0 )
-		ri.Printf( PRINT_ALL, "scene exposure: meter %.3f (log2 at r_sceneExposure %g), target %+.2f EV, now %+.2f EV: %g%s\n", sceneMeter.meter,
-			base, sceneMeter.target, sceneMeter.ev, base * exp2f( sceneMeter.ev ), Env( r_sceneAutoExposure )->integer ? "" : " (off: not applied)" );
+		ri.Printf( PRINT_ALL, "scene exposure: meter %.3f (log2 at base %g), target %+.2f EV, now %+.2f EV, volumes %+.2f EV: %g%s\n", sceneMeter.meter,
+			base, sceneMeter.target, sceneMeter.ev, sceneExpVol.ev, base * exp2f( sceneMeter.ev ), Env( r_sceneAutoExposure )->integer ? "" : " (off: not applied)" );
 }
 
 void vk_scene_haze( void )
@@ -710,7 +817,10 @@ static void Scene_Meter( void )
 		0, 1, &mb, 0, NULL, 0, NULL );
 	qvkCmdBindPipeline( cb, VK_PIPELINE_BIND_POINT_COMPUTE, sceneMeter.pipe );
 	qvkCmdBindDescriptorSets( cb, VK_PIPELINE_BIND_POINT_COMPUTE, sceneMeter.pipeLayout, 0, 1, &sceneMeter.set[f], 0, NULL );
-	const float push[4] = { (float)Env( r_sceneTonemap )->integer, (float)SCENE_METER_W, (float)SCENE_METER_H, 0.0f };
+	float adjGain, adjGamma;
+	Scene_ToneAdjust( &adjGain, &adjGamma );
+	sceneMeter.gain[f] = adjGamma > 0.0f ? adjGain : 1.0f;
+	const float push[4] = { (float)Env( r_sceneTonemap )->integer, (float)SCENE_METER_W, (float)SCENE_METER_H, adjGamma };
 	qvkCmdPushConstants( cb, sceneMeter.pipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof( push ), push );
 	qvkCmdDispatch( cb, ( SCENE_METER_W + 15 ) / 16, ( SCENE_METER_H + 15 ) / 16, 1 );
 	mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -844,14 +954,11 @@ void vk_scene_capture( qboolean haveDepthExtract )
 		sscanf( Env( r_sceneFog )->string, "%f %f %f", &fog[0], &fog[1], &fog[2] );
 		const float exposure = MAX( Scene_Exposure(), 1e-3f );
 		for ( int k = 0; k < 3; k++ ) {
-			const float y = powf( Com_Clamp( 0.0f, 0.999f, fog[k] / 255.0f ), 2.2f );
-			float x;
-			if ( Env( r_sceneTonemap )->integer ) {
-				const float a = 2.51f - 2.43f * y, b = 0.03f - 0.59f * y, c = -0.14f * y;
-				x = ( -b + sqrtf( b * b - 4.0f * a * c ) ) / ( 2.0f * a );
-			} else {
-				x = -logf( 1.0f - y );
-			}
+			float x = Scene_ToneCurveInverse( powf( Com_Clamp( 0.0f, 0.999f, fog[k] / 255.0f ), 2.2f ) );
+			float adjGain, adjGamma;
+			Scene_ToneAdjust( &adjGain, &adjGamma );
+			if ( adjGamma > 0.0f )
+				x = powf( MAX( x, 0.0f ), adjGamma ) / adjGain;
 			sp->sky[k] = x / exposure;
 		}
 		sp->sky[3] = Com_Clamp( 0.02f, 1.0f, r_sceneSsrBlend->value );
@@ -870,11 +977,36 @@ void vk_scene_capture( qboolean haveDepthExtract )
 		sp->opts2[1] = Com_Clamp( 0.05f, 8.0f, Env( r_sceneAORadius )->value ) * 37.5f;
 		sp->opts2[2] = ao ? (float)Com_Clamp( 1, 32, r_sceneAOSamples->integer ) : 0.0f;
 		sp->opts2[3] = Com_Clamp( 0.02f, 1.0f, r_sceneAOBlend->value );
+		// the area's baked reflection capture (scene.frag's pleReflect: its image index and scale in the frame's ple)
+		const sceneFrame_t *sf = (const sceneFrame_t *)sc.framePtr[f];	// (this slot's, filled before the trace)
+		sp->refl[0] = scenePleReflImage && sf->ple[2] >= 0.0f ? 1.0f : 0.0f;
+		sp->refl[1] = sf->ple[3];
+		Scene_ToneAdjust( &sp->refl[2], &sp->refl[3] );	// (r_sceneToneAdjust: the history back to light)
+		// r_sceneContactShadow: the ray toward the sun (with r_sceneAO's pass; none while the cascades were not drawn)
+		VectorCopy( sf->sunDir, sp->contact );
+		sp->contact[3] = ao && sf->shade[3] > 0.0f && sf->sunDir[3] > 0.5f
+			? Com_Clamp( 0.05f, 4.0f, Env( r_sceneContactLength )->value ) * 37.5f : 0.0f;
+		sp->contact2[0] = (float)Com_Clamp( 2, 32, r_sceneContactSteps->integer );
+		sp->contact2[1] = Com_Clamp( 0.0f, 4.0f, Env( r_sceneContactThickness )->value ) * 37.5f;
+		sp->contact2[2] = Com_Clamp( 1.0f, 1000.0f, r_sceneContactFar->value ) * 37.5f;
+		sp->contact2[3] = 0.0f;
+		// r_sceneSsrGlossy, r_sceneBounce (both in this pass: the trace, the AO's samples)
+		sp->gloss[0] = sf->shade4[1] > 0.0f ? 1.0f : 0.0f;
+		sp->gloss[1] = sf->shade4[2];
+		sp->gloss[2] = sf->shade4[0] > 0.0f ? 1.0f : 0.0f;
+		sp->gloss[3] = 0.0f;
 	}
 
-	VkDescriptorImageInfo si[7];
+	VkDescriptorImageInfo si[10];
 	VkDescriptorBufferInfo sb;
-	VkWriteDescriptorSet sw[7];
+	VkWriteDescriptorSet sw[10];
+	si[8].sampler = VK_NULL_HANDLE;	// r_sceneBounce's: this frame's (written), last frame's (read)
+	si[8].imageView = sc.bounceView[cur];
+	si[8].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+	si[9].sampler = sc.nearestSampler;
+	si[9].imageView = sc.bounceView[prev];
+	si[9].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+	Scene_TextureInfo( scenePleReflImage ? scenePleReflImage : tr.whiteImage, &si[7] );
 	si[5].sampler = VK_NULL_HANDLE;	// r_sceneAO's: this frame's (written), last frame's (read)
 	si[5].imageView = sc.aoView[cur];
 	si[5].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -896,19 +1028,20 @@ void vk_scene_capture( qboolean haveDepthExtract )
 	sb.buffer = sc.ssrParams[f].buf;
 	sb.offset = 0;
 	sb.range = VK_WHOLE_SIZE;
-	for ( int i = 0; i < 7; i++ ) {
+	for ( int i = 0; i < 10; i++ ) {
 		Com_Memset( &sw[i], 0, sizeof( sw[i] ) );
 		sw[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		sw[i].dstSet = sc.ssrSet[f];
 		sw[i].dstBinding = i;
 		sw[i].descriptorCount = 1;
-		sw[i].descriptorType = ( i < 2 || i == 4 || i == 6 ) ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : ( i == 2 || i == 5 ) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		sw[i].descriptorType = ( i == 2 || i == 5 || i == 8 ) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : i == 3 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+			: VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		if ( i != 3 )
 			sw[i].pImageInfo = &si[i];
 		else
 			sw[i].pBufferInfo = &sb;
 	}
-	qvkUpdateDescriptorSets( vk.device, 7, sw, 0, NULL );
+	qvkUpdateDescriptorSets( vk.device, 10, sw, 0, NULL );
 	vk_gputime_section_end( timed );
 	// async compute (r_sceneAsync): the trace on the compute queue, after this frame's commands so far are submitted
 	const qboolean async = ( sc.asyncReady && r_sceneAsync->integer ) ? qtrue : qfalse;
@@ -936,9 +1069,9 @@ void vk_scene_capture( qboolean haveDepthExtract )
 	}
 
 	// the history written; the image this writes was last read by the previous frame's fragments (rewritten whole)
-	VkImageMemoryBarrier rb[4];
+	VkImageMemoryBarrier rb[6];
 	int nrb = 0;
-	for ( int i = 0; i < 4; i++ ) {	// 2, 3: r_sceneAO's
+	for ( int i = 0; i < 6; i++ ) {	// 2, 3: r_sceneAO's; 4, 5: r_sceneBounce's
 		if ( ( i & 1 ) != cur && sc.reflectInit )
 			continue;
 		Com_Memset( &rb[nrb], 0, sizeof( rb[nrb] ) );
@@ -947,7 +1080,7 @@ void vk_scene_capture( qboolean haveDepthExtract )
 		rb[nrb].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 		rb[nrb].newLayout = VK_IMAGE_LAYOUT_GENERAL;
 		rb[nrb].srcQueueFamilyIndex = rb[nrb].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		rb[nrb].image = i < 2 ? sc.reflectImage[i] : sc.aoImage[i - 2];
+		rb[nrb].image = i < 2 ? sc.reflectImage[i] : i < 4 ? sc.aoImage[i - 2] : sc.bounceImage[i - 4];
 		rb[nrb].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		rb[nrb].subresourceRange.levelCount = 1;
 		rb[nrb].subresourceRange.layerCount = 1;
@@ -1089,9 +1222,11 @@ void vk_scene_grade( void )
 	vk_gputime_split( "post 1x" );	// the HUD and the rest of the pass under the pass's own name
 }
 
-// R_SceneVkBeginFrame: slot f's histogram read, then the exposure this frame draws with (its frame block's)
-float Scene_MeterFrame( int f )
+// R_SceneVkBeginFrame: the eye's exposure volumes, slot f's histogram read, then the exposure this frame draws with
+// (its frame block's)
+float Scene_MeterFrame( int f, const float *eye )
 {
+	Scene_ExposureVolumesFrame( eye );
 	Scene_MeterRead( f );
 	sceneMeter.drawn = Scene_Exposure();
 	return sceneMeter.drawn;

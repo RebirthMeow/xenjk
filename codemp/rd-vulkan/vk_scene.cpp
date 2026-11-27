@@ -126,6 +126,9 @@ static cvar_t *r_sceneHideFade;
 static cvar_t *r_sceneHideDither;
 static cvar_t *r_sceneHideBand;
 static cvar_t *r_sceneCardBlend;
+static cvar_t *r_scenePle;
+static cvar_t *r_scenePleSpec;
+static cvar_t *r_scenePleRefl;
 // r_sceneHideBand in units (scene.vert and scene_cull.comp: the hide and near distances' fade band)
 static int SceneHideBand( void ) { return (int)( MAX( r_sceneHideBand->value, 1.0f ) * 37.5f ); }
 static cvar_t *r_sceneCutoutCoverage;
@@ -229,6 +232,90 @@ static cvar_t *r_sceneFxEmissive;
 cvar_t *r_sceneExposureWindow;
 cvar_t *r_sceneExposureMeter;
 cvar_t *r_sceneExposureSpeed;
+cvar_t *r_sceneExposureVolumes;
+cvar_t *r_sceneToneHue;
+cvar_t *r_sceneMicroShadow;
+cvar_t *r_sceneSpecOcclusion;
+cvar_t *r_sceneSpecDirect;
+cvar_t *r_sceneContactShadow;
+cvar_t *r_sceneContactLength;
+cvar_t *r_sceneContactThickness;
+cvar_t *r_sceneContactSteps;
+cvar_t *r_sceneContactFar;
+cvar_t *r_sceneOrenNayar;
+cvar_t *r_sceneAOMultiBounce;
+cvar_t *r_sceneToneAdjust;
+cvar_t *r_scenePleRadiance;
+cvar_t *r_sceneCameraFill;
+cvar_t *r_sceneFogFarDensity;
+cvar_t *r_sceneBounce;
+cvar_t *r_sceneSsrGlossy;
+
+// scene.frag's tone curve on the CPU, per channel: light after exposure -> display light (before gamma) and back;
+// r_sceneTonemap 0 exponential, 1 the ACES fit, 2 GT7's per-channel curve (scene.frag's gt7Curve; its chroma blend
+// is the shader's alone)
+static float Scene_Gt7( float x )
+{
+	const float mid = 0.538f, lin = 0.444f, toe = 1.28f;
+	if ( x <= 0.0f )
+		return 0.0f;
+	if ( x < lin ) {
+		float t = Com_Clamp( 0.0f, 1.0f, x / mid );
+		const float wl = t * t * ( 3.0f - 2.0f * t );
+		return ( 1.0f - wl ) * mid * powf( x / mid, toe ) + wl * x;
+	}
+	return MIN( 1.185333f + -1.349340f * expf( x * -1.348921f ), 1.0f );
+}
+float Scene_ToneCurve( float v )
+{
+	v = MAX( v, 0.0f );
+	const int mode = Env( r_sceneTonemap )->integer;
+	if ( mode >= 2 )
+		return Scene_Gt7( v );
+	return mode ? Com_Clamp( 0.0f, 1.0f, ( v * ( 2.51f * v + 0.03f ) ) / ( v * ( 2.43f * v + 0.59f ) + 0.14f ) ) : 1.0f - expf( -v );
+}
+float Scene_ToneCurveInverse( float y )
+{
+	y = Com_Clamp( 0.0f, 0.999f, y );
+	const int mode = Env( r_sceneTonemap )->integer;
+	if ( mode >= 2 ) {
+		if ( y >= 0.444f )
+			return logf( MAX( ( MIN( y, 0.99999f ) - 1.185333f ) / -1.349340f, 1e-6f ) ) / -1.348921f;
+		float x = y;
+		for ( int i = 0; i < 6; i++ ) {
+			const float e = 1e-4f, f = Scene_Gt7( x ) - y, df = ( Scene_Gt7( x + e ) - Scene_Gt7( x ) ) / e;
+			x = Com_Clamp( 0.0f, 0.444f, x - f / MAX( df, 1e-3f ) );
+		}
+		return x;
+	}
+	if ( mode ) {
+		const float a = 2.51f - 2.43f * y, b = 0.03f - 0.59f * y, c = -0.14f * y;
+		return ( -b + sqrtf( b * b - 4.0f * a * c ) ) / ( 2.0f * a );
+	}
+	return -logf( 1.0f - y );
+}
+// light before exposure -> the frame's encoding below its top (scene.frag's toDisplay: exposure, r_sceneToneAdjust, the
+// curve, gamma 2.2)
+float Scene_ToneDisplay( float v, float exposure )
+{
+	float gain, gamma;
+	Scene_ToneAdjust( &gain, &gamma );
+	v = MAX( v * exposure, 0.0f );
+	if ( gamma > 0.0f )
+		v = powf( v * gain, 1.0f / gamma );
+	return powf( Scene_ToneCurve( v ), 1.0f / 2.2f );
+}
+
+// r_sceneToneAdjust "EV gamma": the gain and gamma (0: off, "0 1")
+void Scene_ToneAdjust( float *gain, float *gamma )
+{
+	float ev = 0.0f, g = 1.0f;
+	sscanf( Env( r_sceneToneAdjust )->string, "%f %f", &ev, &g );
+	g = Com_Clamp( 0.25f, 4.0f, g );
+	ev = Com_Clamp( -4.0f, 4.0f, ev );
+	*gain = exp2f( ev );
+	*gamma = ( ev == 0.0f && g == 1.0f ) ? 0.0f : g;
+}
 cvar_t *r_sceneExposureDebug;
 static cvar_t *r_sceneFogLightKnee;
 static cvar_t *r_sceneCharSun;
@@ -485,7 +572,7 @@ VkShaderModule Scene_Shader( const unsigned char *code, unsigned int size )
 VkDescriptorSetLayout Scene_SetLayout( const VkDescriptorType *types, const VkShaderStageFlags *stages, int count,
 	const uint32_t *arrays )	// arrays: each binding's descriptor count (default 1)
 {
-	VkDescriptorSetLayoutBinding bind[32];
+	VkDescriptorSetLayoutBinding bind[48];
 	VkDescriptorSetLayoutCreateInfo dl;
 	VkDescriptorSetLayout layout = VK_NULL_HANDLE;
 
@@ -1080,7 +1167,7 @@ static qboolean Scene_CreatePipelines( void )
 	// GPU-driven draws: 14 each list slot's material, 15 the materials (written by Scene_CreateGpuDriven); 16 the light
 	// clusters; 17 the lights' fades (scene_lightfade.comp); 18 the stand-ins; 19 the meshes (scene.vert: the hide fade's centre);
 	// 20, 21, 22 the DBuffer (mesh decals: albedo, normal, the receiver's depth); 23 the occlusion pyramids (the water's bed)
-	static const VkDescriptorType drawTypes[31] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+	static const VkDescriptorType drawTypes[34] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -1091,23 +1178,29 @@ static qboolean Scene_CreatePipelines( void )
 		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,	// 27: maps/<map>.xw3b's vertex stream (scene.vert)
 		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,	// 28, 29: r_sceneAO's two images
-		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER };	// 30: the trees' wind this frame (r_sceneTreeWind, scene.vert)
+		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,	// 30: the trees' wind this frame (r_sceneTreeWind, scene.vert)
+		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,	// 31: maps/<map>.xple's probe GI (vk_scene_ple.cpp)
+		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER };	// 32, 33: r_sceneBounce's two images
 	// (2, 3, 4, 13 and 17 also the vertex stage's: the particles' light, records and light fades, scene_fx.vert)
-	static const VkShaderStageFlags drawStages[31] = { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+	static const VkShaderStageFlags drawStages[34] = { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT,
-		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT };	// 15: the materials (scene.vert reads the kind); 18: the stand-ins; 24, 25: the DBuffer's surface and emission; 26: the water's waves
+		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT };	// 15: the materials (scene.vert reads the kind); 18: the stand-ins; 24, 25: the DBuffer's surface and emission; 26: the water's waves
 	// the history's depth alone: ssr 4, capture 3
-	// 5, 6: r_sceneAO's image this frame and last frame's
-	static const VkDescriptorType ssrTypes[7] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+	// 5, 6: r_sceneAO's image this frame and last frame's; 7: the area's baked reflection capture (maps/<map>_refl.dds,
+	// white when none): what a ray that misses takes
+	// 8, 9: r_sceneBounce's image this frame and last frame's
+	static const VkDescriptorType ssrTypes[10] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER };
-	static const VkShaderStageFlags ssrStages[7] = { VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT,
-		VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT };
+	static const VkShaderStageFlags ssrStages[10] = { VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT,
+		VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT,
+		VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT };
 	static const VkDescriptorType captureTypes[4] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE };
 	static const VkShaderStageFlags captureStages[4] = { VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT,
@@ -1134,8 +1227,8 @@ static qboolean Scene_CreatePipelines( void )
 	sc.groupCullLayout = Scene_SetLayout( cullTypes, cullStages, 2 );	// scene_groupcull.comp: the groups, the view's list
 	sc.sortLayout = Scene_SetLayout( sortTypes, sortStages, 5 );
 	sc.occLayout = Scene_SetLayout( occTypes, occStages, 2 );
-	sc.drawLayout = Scene_SetLayout( drawTypes, drawStages, 31 );
-	sc.ssrLayout = Scene_SetLayout( ssrTypes, ssrStages, 7 );
+	sc.drawLayout = Scene_SetLayout( drawTypes, drawStages, 34 );
+	sc.ssrLayout = Scene_SetLayout( ssrTypes, ssrStages, 10 );
 	sc.fogLayout = Scene_SetLayout( fogTypes, fogStages, 16 );
 	sc.captureLayout = Scene_SetLayout( captureTypes, captureStages, 4 );
 	if ( !sc.cullLayout || !sc.scatterLayout || !sc.groupCullLayout || !sc.sortLayout || !sc.drawLayout || !sc.fogLayout || !sc.captureLayout || !sc.ssrLayout || !sc.occLayout )
@@ -1515,7 +1608,9 @@ static qboolean Scene_CreateFogVolume( void )
 		&& Scene_HalfImage( &sc.reflectImage[0], &sc.reflectMem[0], &sc.reflectView[0], w, h, "scene reflections 0" )
 		&& Scene_HalfImage( &sc.reflectImage[1], &sc.reflectMem[1], &sc.reflectView[1], w, h, "scene reflections 1" )
 		&& Scene_HalfImage( &sc.aoImage[0], &sc.aoMem[0], &sc.aoView[0], w, h, "scene occlusion 0" )
-		&& Scene_HalfImage( &sc.aoImage[1], &sc.aoMem[1], &sc.aoView[1], w, h, "scene occlusion 1" ) ) ? qtrue : qfalse;
+		&& Scene_HalfImage( &sc.aoImage[1], &sc.aoMem[1], &sc.aoView[1], w, h, "scene occlusion 1" )
+		&& Scene_HalfImage( &sc.bounceImage[0], &sc.bounceMem[0], &sc.bounceView[0], w, h, "scene bounce 0" )
+		&& Scene_HalfImage( &sc.bounceImage[1], &sc.bounceMem[1], &sc.bounceView[1], w, h, "scene bounce 1" ) ) ? qtrue : qfalse;
 }
 
 // a set's light shadow bindings (first .. first + 2): per light its first face, the faces, the atlas
@@ -1701,9 +1796,9 @@ static qboolean Scene_CreateViews( void )
 	ps[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	ps[1].descriptorCount = sets + NUM_COMMAND_BUFFERS * 2 + 8;
 	ps[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	ps[2].descriptorCount = sets * 12 + NUM_COMMAND_BUFFERS * 12 + 16;	// (+2 a set and a slot: r_sceneAO's)	// draw 8 (the DBuffer's 3 and the waves with them); per slot 10 (the decal pass's depth, the haze's last scatter)
+	ps[2].descriptorCount = sets * 14 + NUM_COMMAND_BUFFERS * 14 + 16;	// (+2 a set, +1 a slot: r_sceneBounce's)	// (+1 a slot: the reflection's capture)	// (+2 a set and a slot: r_sceneAO's)	// draw 8 (the DBuffer's 3 and the waves with them); per slot 10 (the decal pass's depth, the haze's last scatter)
 	ps[3].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-	ps[3].descriptorCount = NUM_COMMAND_BUFFERS * 6 + 8;
+	ps[3].descriptorCount = NUM_COMMAND_BUFFERS * 7 + 8;
 	Com_Memset( &dp, 0, sizeof( dp ) );
 	dp.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 	dp.maxSets = sets * 5 + NUM_COMMAND_BUFFERS * 11 + 16;
@@ -2012,6 +2107,9 @@ static qboolean Scene_CreateViews( void )
 				ii.imageView = sc.aoView[i];	// 28, 29: r_sceneAO's, likewise
 				wr.dstBinding = 28 + i;
 				qvkUpdateDescriptorSets( vk.device, 1, &wr, 0, NULL );
+				ii.imageView = sc.bounceView[i];	// 32, 33: r_sceneBounce's, likewise
+				wr.dstBinding = 32 + i;
+				qvkUpdateDescriptorSets( vk.device, 1, &wr, 0, NULL );
 			}
 			Scene_WriteLightShadows( sc.drawSet[f][v], 10 );
 			for ( int i = 0; i < 5; i++ ) {	// 20..22, 24, 25: the DBuffer (scene.frag reads it texel by texel)
@@ -2063,6 +2161,9 @@ static qboolean Scene_CreateViews( void )
 				qvkUpdateDescriptorSets( vk.device, 1, &w, 0, NULL );
 				bi.buffer = sc.wind[f].buf;	// 30: the trees' wind this frame (scene.vert)
 				w.dstBinding = 30;
+				qvkUpdateDescriptorSets( vk.device, 1, &w, 0, NULL );
+				bi.buffer = sc.ple.buf;	// 31: maps/<map>.xple's probe GI (scene.frag)
+				w.dstBinding = 31;
 				qvkUpdateDescriptorSets( vk.device, 1, &w, 0, NULL );
 			}
 		}
@@ -3345,6 +3446,8 @@ static qboolean Scene_LoadDetail( const char *scnName )
 		ri.Printf( PRINT_ALL, "scene detail slots: %u materials, %u slots, %u slot and share images%s\n", numSlotted, numSlots,
 			(uint32_t)sceneSlotImages.size(), vk.gpuDriven ? "" : " (drawn without them: the GPU-driven draws read them)" );
 	Scene_LoadW3Blend( scnName, params );	// Witcher 3 layer blends (maps/<map>.xw3b): after the detail slots, sharing their images
+	Scene_LoadPle( scnName );	// FF7 Rebirth's probe GI (maps/<map>.xple)
+	Scene_LoadExposureVolumes( scnName );	// its post-process volumes' exposure bias (maps/<map>.xexp)
 	Scene_StreamDetailTiles( params );	// the detail layers' tiling (stage C: a detail image wants its material's level times it)
 	if ( sc.numWater )
 		Scene_LoadWater( scnName, params );
@@ -3417,7 +3520,7 @@ void R_SceneFree( void )
 		Scene_DestroyBuffer( &sc.cullHdr[f] );
 	}
 	sceneBuffer_t *bufs[] = { &sc.vertices, &sc.indices, &sc.instances, &sc.meshes, &sc.lods, &sc.partCmd, &sc.cmdTemplate,
-		&sc.lights, &sc.lightBounds, &sc.lightKinds, &sc.cells, &sc.cellLights, &sc.lightBoxes, &sc.fogVolumes, &sc.detailParams, &sc.w3Stream, &sc.lsLights, &sc.lsFaces, &sc.lsIds, &sc.occPyramid, &sc.occList, &sc.occArgs, &sc.occTouched };
+		&sc.lights, &sc.lightBounds, &sc.lightKinds, &sc.cells, &sc.cellLights, &sc.lightBoxes, &sc.fogVolumes, &sc.detailParams, &sc.w3Stream, &sc.ple, &sc.lsLights, &sc.lsFaces, &sc.lsIds, &sc.occPyramid, &sc.occList, &sc.occArgs, &sc.occTouched };
 	for ( size_t i = 0; i < ARRAY_LEN( bufs ); i++ )
 		Scene_DestroyBuffer( bufs[i] );
 	if ( sc.lsView ) qvkDestroyImageView( vk.device, sc.lsView, NULL );
@@ -3470,6 +3573,9 @@ void R_SceneFree( void )
 		if ( sc.aoView[i] ) qvkDestroyImageView( vk.device, sc.aoView[i], NULL );
 		if ( sc.aoImage[i] ) qvkDestroyImage( vk.device, sc.aoImage[i], NULL );
 		if ( sc.aoMem[i] ) qvkFreeMemory( vk.device, sc.aoMem[i], NULL );
+		if ( sc.bounceView[i] ) qvkDestroyImageView( vk.device, sc.bounceView[i], NULL );
+		if ( sc.bounceImage[i] ) qvkDestroyImage( vk.device, sc.bounceImage[i], NULL );
+		if ( sc.bounceMem[i] ) qvkFreeMemory( vk.device, sc.bounceMem[i], NULL );
 	}
 	if ( sc.ssrPipe ) qvkDestroyPipeline( vk.device, sc.ssrPipe, NULL );
 	if ( sc.ssrPipeLayout ) qvkDestroyPipelineLayout( vk.device, sc.ssrPipeLayout, NULL );
@@ -3623,7 +3729,7 @@ image_t *Scene_Image( const char *path, qboolean *found )
 }
 
 // an image's descriptor as the sets hold it (its sampler as vk_create_image chose)
-static void Scene_TextureInfo( const image_t *image, VkDescriptorImageInfo *ii )
+void Scene_TextureInfo( const image_t *image, VkDescriptorImageInfo *ii )
 {
 	Vk_Sampler_Def def;
 	Com_Memset( &def, 0, sizeof( def ) );
@@ -6706,7 +6812,8 @@ static void Scene_LoadEnv( const char *bspName, char *sceneMap, int size )
 {
 	static cvar_t **const look[] = { &r_sceneSun, &r_sceneAmbient, &r_sceneExposure, &r_sceneEmissive, &r_sceneGlow, &r_sceneGlowThreshold, &r_sceneTonemap, &r_sceneFog, &r_sceneFogDensity, &r_sceneFogHeight, &r_sceneFogMax, &r_sceneFogLight, &r_sceneFogPhase, &r_sceneFogAlbedo, &r_sceneFogFar, &r_sceneFogStart, &r_sceneFogMoon, &r_sceneGradeExposure, &r_sceneLightScale, &r_sceneGrade, &r_sceneFogLightMax, &r_sceneDayLamps, &r_sceneSky, &r_sceneSkyZenith, &r_sceneSkyHorizon, &r_sceneSkySun, &r_sceneSkyGround, &r_sceneSkyCurve, &r_sceneCharSun, &r_sceneNightOnlyByDay, &r_sceneDayOnlyAtNight, &r_sceneWet, &r_sceneFoliage, &r_sceneFoliageWrap, &r_sceneFoliageTrans, &r_sceneFoliageAO, &r_sceneTreeTint, &r_sceneAO, &r_sceneAORadius, &r_sceneShadowSoft, &r_sceneShadowFar, &r_sceneClouds, &r_sceneCloudScale, &r_sceneCloudEdge, &r_sceneCloudLight, &r_sceneCloudWind, &r_sceneTreeWind, &r_sceneTreeWindDir, &r_sceneEmissiveExposure, &r_sceneEmissiveRef, &r_sceneFxEmissive, &r_sceneMoon, &r_sceneMoonSize, &r_sceneMoonGlow, &r_sceneMoonPath, &r_sceneMoonLight, &r_sceneClock, &r_sceneSkySunSide, &r_sceneSkyGlow, &r_sceneAutoExposure, &r_sceneExposureWindow, &r_sceneWindowExposure,
 		&r_sceneW3Fog[0], &r_sceneW3Fog[1], &r_sceneW3Fog[2], &r_sceneW3Fog[3], &r_sceneW3Fog[4], &r_sceneW3Fog[5], &r_sceneW3Fog[6], &r_sceneW3Fog[7], &r_sceneW3Clouds, &r_sceneW3CirrusAlong,
-		&r_sceneWaterReflect, &r_sceneWaterFresnel, &r_sceneWaterOwn };
+		&r_sceneWaterReflect, &r_sceneWaterFresnel, &r_sceneWaterOwn,
+		&r_scenePle, &r_scenePleSpec, &r_scenePleRefl, &r_sceneExposureMeter, &r_sceneExposureVolumes, &r_sceneToneHue, &r_sceneMicroShadow, &r_sceneSpecOcclusion, &r_sceneSpecDirect, &r_sceneContactShadow, &r_sceneContactLength, &r_sceneContactThickness, &r_sceneOrenNayar, &r_sceneAOMultiBounce, &r_sceneToneAdjust, &r_scenePleRadiance, &r_sceneCameraFill, &r_sceneFogFarDensity, &r_sceneBounce, &r_sceneSsrGlossy };
 	char name[MAX_QPATH];
 	char *buf = NULL;
 
@@ -8243,7 +8350,7 @@ void R_SceneVkBeginFrame( void )
 	fr->groundAmbient[3] = Com_Clamp( 0.0f, 0.95f, r_sceneFogLightKnee->value );	// (scene_fog.comp)
 	fr->skyAmbient[3] = Com_Clamp( 0.0f, 0.05f, r_sceneProxyPush->value );	// (scene.vert)
 	fr->params[0] = Env( r_sceneLightScale )->value;
-	fr->params[1] = Scene_MeterFrame( f );	// (r_sceneAutoExposure: vk_scene_post.cpp)
+	fr->params[1] = Scene_MeterFrame( f, fr->eye );	// (r_sceneAutoExposure: vk_scene_post.cpp)
 	// emissives against the exposure (CP2077's EmissiveColorSettings.exposureScale): as authored at r_sceneEmissiveRef's
 	// exposure, following the share r_sceneEmissiveExposure of the exposure's change from it (1: all, as before)
 	{
@@ -8254,7 +8361,32 @@ void R_SceneVkBeginFrame( void )
 	fr->params[3] = (float)r_sceneDebug->integer;
 	fr->params2[0] = MAX( Env( r_sceneGlow )->value, 0.0f );
 	fr->params2[1] = MAX( Env( r_sceneGlowThreshold )->value, 0.0f );
-	fr->params2[2] = (float)Env( r_sceneTonemap )->integer;
+	fr->params2[2] = Env( r_sceneTonemap )->integer >= 2 ? 3.0f	// (GT7)
+		: Env( r_sceneTonemap )->integer ? 1.0f + 0.5f * Com_Clamp( 0.0f, 1.0f, Env( r_sceneToneHue )->value ) : 0.0f;
+	fr->shade[0] = Com_Clamp( 0.0f, 1.0f, Env( r_sceneMicroShadow )->value );
+	fr->shade[1] = Com_Clamp( 0.0f, 1.0f, Env( r_sceneSpecOcclusion )->value );
+	fr->shade[2] = Com_Clamp( 0.0f, 1.0f, Env( r_sceneSpecDirect )->value );
+	fr->shade[3] = Env( r_sceneAO )->value > 0.0f ? Com_Clamp( 0.0f, 1.0f, Env( r_sceneContactShadow )->value ) : 0.0f;
+	fr->shade2[0] = Com_Clamp( 0.0f, 1.0f, Env( r_sceneOrenNayar )->value );
+	fr->shade2[1] = Com_Clamp( 0.0f, 1.0f, Env( r_sceneAOMultiBounce )->value );
+	Scene_ToneAdjust( &fr->shade2[2], &fr->shade2[3] );
+	{
+		float share = 0.0f, gr = 0.35f;
+		sscanf( Env( r_sceneSsrGlossy )->string, "%f %f", &share, &gr );
+		const qboolean ao = Env( r_sceneAO )->value > 0.0f ? qtrue : qfalse;
+		fr->shade4[0] = ao ? Com_Clamp( 0.0f, 4.0f, Env( r_sceneBounce )->value ) : 0.0f;
+		fr->shade4[1] = Com_Clamp( 0.0f, 1.0f, share );
+		fr->shade4[2] = share > 0.0f ? Com_Clamp( 0.05f, 1.0f, gr ) : 0.0f;
+		fr->shade4[3] = 0.0f;
+	}
+	fr->shade3[0] = Com_Clamp( 0.0f, 1.0f, Env( r_scenePleRadiance )->value );
+	fr->shade3[1] = Com_Clamp( 0.0f, 4.0f, Env( r_sceneCameraFill )->value );
+	{
+		float start = 0.0f, mult = 1.0f;
+		sscanf( Env( r_sceneFogFarDensity )->string, "%f %f", &start, &mult );
+		fr->shade3[2] = MAX( start, 0.0f );
+		fr->shade3[3] = Com_Clamp( 0.0f, 16.0f, mult );
+	}
 	fr->params2[3] = ( sc.numShadowFaces && r_sceneLightShadows->integer ) ? 1.0f : 0.0f;
 	sscanf( Env( r_sceneFog )->string, "%f %f %f", &fr->fog[0], &fr->fog[1], &fr->fog[2] );
 	VectorScale( fr->fog, 1.0f / 255.0f, fr->fog );
@@ -8487,6 +8619,11 @@ void R_SceneVkBeginFrame( void )
 		fr->skySide[3] = Com_Clamp( 0.0f, 1.0f, fr->skySide[3] );
 		fr->skyGlow[3] = MAX( fr->skyGlow[3], 0.0f );
 	}
+	// the probe GI: the source's units (its sun's lux) to the scene's (r_sceneSun's)
+	fr->ple[0] = scenePleSunLux > 0.0f ? MAX( Env( r_scenePle )->value, 0.0f ) * Env( r_sceneSun )->value / scenePleSunLux : 0.0f;
+	fr->ple[1] = Com_Clamp( 0.0f, 1.0f, Env( r_scenePleSpec )->value );
+	fr->ple[2] = scenePleRefl >= 0 && fr->ple[0] > 0.0f && Env( r_scenePleRefl )->value > 0.0f ? (float)scenePleRefl : -1.0f;
+	fr->ple[3] = fr->ple[0] * MAX( Env( r_scenePleRefl )->value, 0.0f );
 	fr->surface2[0] = Com_Clamp( 0.0f, 1.0f, r_sceneSpecAA->value );
 	fr->surface2[1] = r_sceneWindowCell->integer ? 1.0f : 0.0f;
 	fr->surface2[2] = Com_Clamp( 0.0f, 1.0f, r_sceneProbeSky->value );
@@ -8982,12 +9119,7 @@ qboolean R_SceneCharSun( vec3_t col )
 	VectorClear( sky );
 	sscanf( Env( r_sceneAmbient )->string, "%f %f %f", &sky[0], &sky[1], &sky[2] );
 	const float exposure = Scene_Exposure();
-	const qboolean aces = Env( r_sceneTonemap )->integer ? qtrue : qfalse;
-	auto display = [exposure, aces]( float v ) {	// (R_SceneLightPoint's)
-		v = MAX( v * exposure, 0.0f );
-		v = aces ? Com_Clamp( 0.0f, 1.0f, ( v * ( 2.51f * v + 0.03f ) ) / ( v * ( 2.43f * v + 0.59f ) + 0.14f ) ) : 1.0f - expf( -v );
-		return powf( v, 1.0f / 2.2f );
-	};
+	auto display = [exposure]( float v ) { return Scene_ToneDisplay( v, exposure ); };	// (R_SceneLightPoint's)
 	const float strength = MAX( Env( r_sceneSun )->value, 0.0f ) / (float)M_PI;
 	const float s = (float)M_PI * r_sceneCharLight->value * Env( r_sceneCharSun )->value;
 	for ( int k = 0; k < 3; k++ ) {
@@ -9089,12 +9221,7 @@ qboolean R_SceneLightPoint( const vec3_t P, vec3_t ambient, vec3_t directed, vec
 		VectorSet( lightDir, 0.0f, 0.0f, 1.0f );
 	// the display's encoding (scene.frag's toDisplay below its top): exposure, tone curve, gamma
 	const float exposure = Scene_Exposure();
-	const qboolean aces = Env( r_sceneTonemap )->integer ? qtrue : qfalse;
-	auto display = [exposure, aces]( float v ) {
-		v = MAX( v * exposure, 0.0f );
-		v = aces ? Com_Clamp( 0.0f, 1.0f, ( v * ( 2.51f * v + 0.03f ) ) / ( v * ( 2.43f * v + 0.59f ) + 0.14f ) ) : 1.0f - expf( -v );
-		return powf( v, 1.0f / 2.2f );
-	};
+	auto display = [exposure]( float v ) { return Scene_ToneDisplay( v, exposure ); };
 	const float s = 255.0f * r_sceneCharLight->value;
 	for ( int k = 0; k < 3; k++ ) {
 		const float a = display( amb[k] );
@@ -9970,6 +10097,9 @@ void R_SceneRegister( void )
 	r_sceneHideDither	= ri.Cvar_Get( "r_sceneHideDither",		"2",						CVAR_ARCHIVE_ND, "Render scene, r_sceneHideFade: the fade's pattern; 0 interleaved gradient noise, whole pixels; 1 a blue noise tile, whole pixels; 2 (default) the depth prepass keeps that share of each pixel's MSAA samples, so the resolve blends the two (GPU-driven draws, r_sceneLitEqual and MSAA, else 1; whole-pixel patterns showed as a static checker on every mesh and proxy in a fade band)" );
 	r_sceneHideBand		= ri.Cvar_Get( "r_sceneHideBand",		"40",						0, "Render scene, r_sceneHideFade: the band in metres before an instance's hide distance (and a far proxy's near distance) over which it fades, or half the distance when that is nearer. A long band leaves everything in it half faded wherever the camera stops (a building whose proxy shell lacks its parapet shows it as a ghost); a short one fades like a quick pop while moving (at least 1). Not archived: a map's launcher sets its own (Beauclair 8)" );
 	r_sceneCardBlend	= ri.Cvar_Get( "r_sceneCardBlend",		"1",						CVAR_ARCHIVE_ND, "Render scene: a Witcher 3 SpeedTree billboard card turning between two of its stored views blends them (1) instead of picking one per pixel by a dither (0: a static checker of the two views on far trees, 2 x 2 under r_sceneVrs)" );
+	r_scenePle			= ri.Cvar_Get( "r_scenePle",			"1",						CVAR_ARCHIVE_ND, "Render scene: a map's baked probe GI (maps/<map>.xple, FF7 Rebirth's PrecomputedLightEnvironment) lights the ambient in place of the flat sky and ground hemisphere, at this scale of the source's own sun : sky ratio (0 off). A look value (.xenv)" );
+	r_scenePleRefl		= ri.Cvar_Get( "r_scenePleRefl",		"1",						CVAR_ARCHIVE_ND, "Render scene, r_scenePle: the area's baked reflection capture (maps/<map>_refl.dds, in the probes' light units) is what the water mirrors where the screen holds nothing, at this scale (0: the fog-to-sky gradient); GPU-driven draws. A look value (.xenv)" );
+	r_scenePleSpec		= ri.Cvar_Get( "r_scenePleSpec",		"1",						CVAR_ARCHIVE_ND, "Render scene, r_scenePle: the probes along the reflected ray light the specular ambient (1) in place of the hemisphere's (0). A look value (.xenv)" );
 	r_sceneLitEqual		= ri.Cvar_Get( "r_sceneLitEqual",		"1",						CVAR_ARCHIVE_ND, "Render scene: the GPU-driven lit pass tests depth EQUAL against the prepass (the same pixels as LESS_OR_EQUAL, bit for bit; a fragment the fade's dither discarded in the prepass is not shaded: Watson 0.14 ms a frame, up to 0.43); 0 LESS_OR_EQUAL" );
 	r_sceneDecals		= ri.Cvar_Get( "r_sceneDecals",		"1",						CVAR_ARCHIVE_ND, "Render scene: CP2077's mesh decals (the scene's blend materials flagged 0x40) project onto the surface behind them within their depth threshold, their albedo and normal blended into it before it is lit (a DBuffer after the eye's prepass); 0 drawn as blends over it. Read at map load" );
 	r_sceneProxyDebug	= ri.Cvar_Get( "r_sceneProxyDebug",	"0",						CVAR_TEMP | CVAR_CHEAT, "Render scene, a look check: 1 draws no far proxy (scene version 5), 2 draws every one at any distance (its near distance ignored, the hide fade off); 0 as authored" );
@@ -10034,7 +10164,7 @@ void R_SceneRegister( void )
 	r_sceneRainFollow	= ri.Cvar_Get( "r_sceneRainFollow",	"1",					CVAR_ARCHIVE_ND, "Render scene: on a map wider than the rain view (437 m at most), the view follows the eye, drawn again in the frame as it moves or as geometry streams in; 0: where it was drawn at load (past it every up-facing surface is wet)" );
 	r_sceneShadowCascades = ri.Cvar_Get( "r_sceneShadowCascades", "3",					CVAR_ARCHIVE_ND, "Render scene: casts into the first this many sun cascades (the far ones cover the most)" );
 	r_sceneSun			= ri.Cvar_Get( "r_sceneSun",			"0.25",					CVAR_ARCHIVE_ND, "Render scene: the map sun's (or moon's) light, linear, in q3gl2_sun's hue" );
-	r_sceneTonemap		= ri.Cvar_Get( "r_sceneTonemap",		"1",					CVAR_ARCHIVE_ND, "Render scene: tone curve, 0 exponential, 1 filmic (ACES fit: darker shadows, a softer shoulder)" );
+	r_sceneTonemap		= ri.Cvar_Get( "r_sceneTonemap",		"1",					CVAR_ARCHIVE_ND, "Render scene: tone curve, 0 exponential, 1 filmic (ACES fit: darker shadows, a softer shoulder), 2 Gran Turismo 7's (its SDR curve and ICtCp chroma, as FF7 Rebirth's ShaderInjector: a hue-keeping shoulder)" );
 	r_sceneFog			= ri.Cvar_Get( "r_sceneFog",			"51 38 32",				CVAR_ARCHIVE_ND, "Render scene: the haze's colour (sRGB 0-255) before the colour grade (r_sceneGrade), matched to the map's sky near the horizon" );
 	r_sceneFogDensity	= ri.Cvar_Get( "r_sceneFogDensity",		"0.005",				CVAR_ARCHIVE_ND, "Render scene: haze density per metre at the floor (0 off; 0.005 hides half of what is 140 m away)" );
 	r_sceneW3Clouds	= ri.Cvar_Get( "r_sceneW3Clouds",	"",	CVAR_ARCHIVE_ND, "Render scene, r_sceneSky: The Witcher 3's clear-weather clouds (bob_mid_clouds_small_1.w2p: cumulus sprites, a cirrus dome, two panorama rings; r_sceneW3CloudImages): their light x the scene's sun and sky ambient, the cirrus' and the panorama's alpha, the share of the sprites' slots in use (empty: off)" );
@@ -10147,8 +10277,26 @@ void R_SceneRegister( void )
 	r_sceneFxDebug		= ri.Cvar_Get( "r_sceneFxDebug",		"0",					CVAR_TEMP, "Render scene, r_sceneFx: 1 prints the effects and particle slots drawn every 60 frames" );
 	r_sceneAutoExposure	= ri.Cvar_Get( "r_sceneAutoExposure",	"1",					CVAR_ARCHIVE_ND, "Render scene: eye adaptation: the frame metered (a log2 luminance histogram) and r_sceneExposure moved inside the hour's window (r_sceneExposureWindow) toward r_sceneExposureMeter's key, as CP2077 does; 0 the fixed r_sceneExposure" );
 	r_sceneExposureWindow = ri.Cvar_Get( "r_sceneExposureWindow", "-1.2 1",				CVAR_ARCHIVE_ND, "Render scene, r_sceneAutoExposure: the EV range around r_sceneExposure (CP2077's exposureMin and exposureMax for the hour; an environment sets it: 06:05 -1.2 4.44, 13:00 -1.2 5.38)" );
-	r_sceneExposureMeter = ri.Cvar_Get( "r_sceneExposureMeter", "-5.175 0.325",			CVAR_ARCHIVE_ND, "Render scene, r_sceneAutoExposure: the key (log2 luminance at r_sceneExposure) and the share of the way toward it the exposure moves, fitted to CP2077's matched views" );
+	r_sceneExposureMeter = ri.Cvar_Get( "r_sceneExposureMeter", "-5.175 0.325",			CVAR_ARCHIVE_ND, "Render scene, r_sceneAutoExposure: the key (log2 luminance at r_sceneExposure) and the share of the way toward it the exposure moves, fitted to CP2077's matched views. A look value (.xenv)" );
 	r_sceneExposureSpeed = ri.Cvar_Get( "r_sceneExposureSpeed", "4 7.5",				CVAR_ARCHIVE_ND, "Render scene, r_sceneAutoExposure: how fast the exposure adapts up and down, per second (CP2077's exposureAdaptationSpeedUp, Down)" );
+	r_sceneBounce		= ri.Cvar_Get( "r_sceneBounce",			"0",					CVAR_ARCHIVE_ND, "Render scene: screen-space bounce light: r_sceneAO's hidden samples bring back the light the frame shows there, times the surface's colour, after the occlusion (ShaderInjector's SSGI bounce light); its strength (0 off; needs r_sceneAO). A look value (.xenv)" );
+	r_sceneSsrGlossy	= ri.Cvar_Get( "r_sceneSsrGlossy",		"0",					CVAR_ARCHIVE_ND, "Render scene: \"share roughness\": screen-space reflections on dry glossy surfaces too, traced at that roughness (GGX importance sampled, one ray a texel, settled over frames), over the probes' reflection where a ray hits, fading out toward that roughness (ShaderInjector's stochastic SSR); 0 off. A look value (.xenv)" );
+	r_sceneToneAdjust	= ri.Cvar_Get( "r_sceneToneAdjust",		"0 1",					CVAR_ARCHIVE_ND, "Render scene: \"EV gamma\": the light after exposure scaled by 2^EV and raised to 1 / gamma before the tone curve (ShaderInjector's AdjustImage: -0.45 1.15; gamma over 1 lifts the midtones; the meter and the reflections take it back out). A look value (.xenv)" );
+	r_scenePleRadiance	= ri.Cvar_Get( "r_scenePleRadiance",	"0",					CVAR_ARCHIVE_ND, "Render scene: an FF7 Rebirth probe's reflected light as its deconvolved spherical harmonics blurred by roughness, with its dominant light's occlusion and highlight (ShaderInjector's SampleGI), in place of its irradiance along the mirrored ray; the share (0 off). A look value (.xenv)" );
+	r_sceneCameraFill	= ri.Cvar_Get( "r_sceneCameraFill",		"0",					CVAR_ARCHIVE_ND, "Render scene: the ambient light again from the eye, full within 5 m, by the inverse square past it, on what faces the eye (ShaderInjector's camera ambient light); its brightness (0 off). A look value (.xenv)" );
+	r_sceneFogFarDensity = ri.Cvar_Get( "r_sceneFogFarDensity", "0 1",					CVAR_ARCHIVE_ND, "Render scene: \"metres multiple\": the haze's density that many times past that eye distance (ShaderInjector's far field fog x2; 1 off). A look value (.xenv)" );
+	r_sceneOrenNayar	= ri.Cvar_Get( "r_sceneOrenNayar",		"0",					CVAR_ARCHIVE_ND, "Render scene: Oren-Nayar diffuse for the sun and the lamps (Gotanda 2012, as FF7 Rebirth's ShaderInjector): rough matte surfaces flatter and lit toward the eye with the light behind it; the share (0 Lambert). A look value (.xenv)" );
+	r_sceneAOMultiBounce = ri.Cvar_Get( "r_sceneAOMultiBounce", "0",					CVAR_ARCHIVE_ND, "Render scene: the ambient occlusion lightened and tinted by the surface's own colour (GTAO multi-bounce, Jimenez 2016; ShaderInjector's); the share (0 off). A look value (.xenv)" );
+	r_sceneMicroShadow	= ri.Cvar_Get( "r_sceneMicroShadow",	"0",					CVAR_ARCHIVE_ND, "Render scene: the material's ambient occlusion as a cone of visibility on the sun (Uncharted 4's micro shadows, as FF7 Rebirth's ShaderInjector: saturate(NdotL + 2 ao^2 - 1)); the share (0 off). A look value (.xenv)" );
+	r_sceneSpecOcclusion = ri.Cvar_Get( "r_sceneSpecOcclusion", "0",					CVAR_ARCHIVE_ND, "Render scene: the ambient's mirrored light occluded by view angle and roughness (Lagarde's specular occlusion) in place of the plain occlusion; the share (0 off). A look value (.xenv)" );
+	r_sceneSpecDirect	= ri.Cvar_Get( "r_sceneSpecDirect",		"0",					CVAR_ARCHIVE_ND, "Render scene: the ambient's mirrored light scaled by the direct light the surface takes (after exposure): no bright sky mirrored in shade (ShaderInjector's cubemap occlusion by direct light); the share (0 off). A look value (.xenv)" );
+	r_sceneContactShadow = ri.Cvar_Get( "r_sceneContactShadow", "0",					CVAR_ARCHIVE_ND, "Render scene: contact shadows, a short ray toward the sun marched through the half-size depth with r_sceneAO's pass (the small shadows the cascades miss: a step's lip, a pot's foot, a character's feet; ShaderInjector's); the share (0 off; needs r_sceneAO). A look value (.xenv)" );
+	r_sceneContactLength = ri.Cvar_Get( "r_sceneContactLength", "0.75",				CVAR_ARCHIVE_ND, "Render scene: r_sceneContactShadow's ray length (metres). A look value (.xenv)" );
+	r_sceneContactThickness = ri.Cvar_Get( "r_sceneContactThickness", "0.00325",	CVAR_ARCHIVE_ND, "Render scene: the depth a surface is taken to have for r_sceneContactShadow past the half-float depth's rounding (metres; ShaderInjector's 0.325 cm: a ray step's span is tested, so a thin one still catches thin things). A look value (.xenv)" );
+	r_sceneContactSteps	= ri.Cvar_Get( "r_sceneContactSteps",	"16",					CVAR_ARCHIVE_ND, "Render scene: r_sceneContactShadow's steps (jittered each frame and settled with r_sceneAOBlend)" );
+	r_sceneContactFar	= ri.Cvar_Get( "r_sceneContactFar",		"60",					CVAR_ARCHIVE_ND, "Render scene: the eye distance r_sceneContactShadow fades out by (metres; the half-size depths are too coarse past it)" );
+	r_sceneToneHue		= ri.Cvar_Get( "r_sceneToneHue",		"0",					CVAR_ARCHIVE_ND, "Render scene, filmic tone curve: the share of its toe taken on the luminance with the colour's ratios kept (0 per channel: a dim warm colour's small channels crushed, beige walls drawn orange; 1 hue kept in the darks; the shoulder stays per channel). A look value (.xenv)" );
+	r_sceneExposureVolumes = ri.Cvar_Get( "r_sceneExposureVolumes", "1",				CVAR_ARCHIVE_ND, "Render scene: a map's exposure volumes (maps/<map>.xexp: FF7 Rebirth's post-process volumes' exposure bias, a room's own exposure) move the base exposure by where the eye is, at this share of the source's EV (1 the game's own; 0 off). A look value (.xenv)" );
 	r_sceneExposureDebug = ri.Cvar_Get( "r_sceneExposureDebug", "0",					CVAR_TEMP, "Render scene: 1 prints the exposure's meter, target and state every 60 frames (and meters with r_sceneAutoExposure 0)" );
 	r_sceneLightTubes	= ri.Cvar_Get( "r_sceneLightTubes",		"2",					CVAR_ARCHIVE_ND, "Render scene: CP2077's area lights (a version 6 scene's shapes) lit as line sources at their size: 2 the haze-only lights alone (the ring's halo; surfaces keep points), 1 every light, 0 none; read at map load" );
 	r_sceneLightTubeScale = ri.Cvar_Get( "r_sceneLightTubeScale", "1",					CVAR_ARCHIVE_ND, "Render scene: multiplies the power of the lights with a shape (a version 6 scene's tubes: CP2077's area lights), tubes or points; read at map load (an A/B of their level)" );

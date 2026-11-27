@@ -182,6 +182,10 @@ void R_ImageList_f( void ) {
 			case VK_FORMAT_BC5_UNORM_BLOCK:
 				format = "BC5  ";
 				break;
+			case VK_FORMAT_BC6H_UFLOAT_BLOCK:
+			case VK_FORMAT_BC6H_SFLOAT_BLOCK:
+				format = "BC6H ";
+				break;
 			case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
 			case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
 				format = "BC1  ";

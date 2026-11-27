@@ -22,8 +22,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "tr_local.h"
 
 /*
-xenjk: DDS textures. A texture name (any extension) is first looked up as "<name>.dds"; a BC1, BC3, BC4, BC5 or BC7
-file (legacy FourCC or DX10 header, sRGB variants read as UNORM like every other texture here) is uploaded as stored:
+xenjk: DDS textures. A texture name (any extension) is first looked up as "<name>.dds"; a BC1, BC3, BC4, BC5, BC7 or
+(DX10 only) BC6H file (legacy FourCC or DX10 header, sRGB variants read as UNORM like every other texture here) is uploaded as stored:
 no decode, resample, light scale or runtime mips (the pack builder makes the mips with R_MipMap's r_simpleMipMaps box
 filter), and not held to MAX_TEXTURE_SIZE: up to the device's limit, or r_ddsMaxSize, by dropping top mips. Picmip
 drops mips the same way. Anything else (no file, other formats, broken files) falls back to the normal loaders.
@@ -51,6 +51,8 @@ static VkFormat R_DDSFormat( const byte *b, int len, int *dataOffset ) {
 			case 80: return VK_FORMAT_BC4_UNORM_BLOCK;
 			case 83: return VK_FORMAT_BC5_UNORM_BLOCK;
 			case 98: case 99: return VK_FORMAT_BC7_UNORM_BLOCK;
+			case 95: return VK_FORMAT_BC6H_UFLOAT_BLOCK;	// (HDR: a render scene's baked reflection capture)
+			case 96: return VK_FORMAT_BC6H_SFLOAT_BLOCK;
 			default: return VK_FORMAT_UNDEFINED;
 		}
 	}
@@ -151,7 +153,7 @@ static image_t *R_LoadDDSImageFrom( const char *imageName, const char *fileName,
 	if ( len >= 128 && !memcmp( b, "DDS ", 4 ) )
 		format = R_DDSFormat( b, len, &dataOffset );
 	if ( format == VK_FORMAT_UNDEFINED ) {
-		ri.Printf( PRINT_DEVELOPER, "DDS: %s: not a BC1/3/4/5/7 DDS, using the other loaders\n", ddsName );
+		ri.Printf( PRINT_DEVELOPER, "DDS: %s: not a BC1/3/4/5/6H/7 DDS, using the other loaders\n", ddsName );
 		DDS_FAIL();
 	}
 	qvkGetPhysicalDeviceFormatProperties( vk.physical_device, format, &props );

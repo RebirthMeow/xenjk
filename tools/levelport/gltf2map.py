@@ -864,6 +864,36 @@ def haze_sky(base, name, horizon, zenith, size=256):
     return name
 
 
+def pano_sky(base, name, pano, yaw=0.0, size=2048):
+    """A sky box, textures/skies/<name>_{rt,lf,bk,ft,up,dn}.jpg, sampled from an equirectangular panorama (top row
+    straight up; seen from inside, so longitude falls left to right). yaw: the Quake yaw, degrees, its centre column
+    faces. Faces as tr_sky.c's MakeSkyVec lays them: rt +X, lf -X, bk +Y, ft -Y, up and dn, image right = the face's
+    s axis, image top = its t axis."""
+    from PIL import Image
+    Image.MAX_IMAGE_PIXELS = None
+    P = np.asarray(Image.open(pano).convert('RGB'))
+    H, W = P.shape[:2]
+    d = base / 'textures' / 'skies'
+    d.mkdir(parents=True, exist_ok=True)
+    c = (np.arange(size) + 0.5) / size * 2 - 1
+    u, v = np.meshgrid(c, -c)
+    one = np.ones_like(u)
+    faces = {'rt': (one, -u, v), 'lf': (-one, u, v), 'bk': (u, one, v), 'ft': (-u, -one, v),
+             'up': (-v, -u, one), 'dn': (v, -u, -one)}
+    for k, (x, y, z) in faces.items():
+        lon = np.degrees(np.arctan2(y, x)) - yaw
+        lat = np.arctan2(z, np.hypot(x, y))
+        fx = ((0.5 - lon / 360.0) % 1.0) * W - 0.5
+        fy = (0.5 - lat / np.pi) * H - 0.5
+        x0, y0 = np.floor(fx).astype(np.int64), np.clip(np.floor(fy).astype(np.int64), 0, H - 1)
+        tx, ty = (fx - x0)[..., None], np.clip(fy - y0, 0, 1)[..., None]
+        x0 %= W
+        x1, y1 = (x0 + 1) % W, np.minimum(y0 + 1, H - 1)
+        img = ((P[y0, x0] * (1 - tx) + P[y0, x1] * tx) * (1 - ty) + (P[y1, x0] * (1 - tx) + P[y1, x1] * tx) * ty)
+        Image.fromarray(np.uint8(np.clip(np.round(img), 0, 255))).save(d / ('%s_%s.jpg' % (name, k)), quality=94)
+    return name
+
+
 def pot_copy(src, dst):
     """Copy an image; resample non-power-of-two sizes up to the next power of two (the JKA renderers refuse them,
     Quake 3 resampled them). Returns True if resampled."""
@@ -1286,6 +1316,9 @@ def main(argv=None):
     ap.add_argument('--sun', default='1 0.95 0.85 300 35 45', help='sky sun: r g b intensity yaw elevation')
     ap.add_argument('--sky-haze', help='with --sky: generate the sky box instead, a lit haze from the horizon colour to '
                     'the zenith colour ("hr hg hb zr zg zb", sRGB 0-255); --sky names it')
+    ap.add_argument('--sky-pano', help='with --sky: generate the sky box from this equirectangular panorama; --sky names it')
+    ap.add_argument('--sky-pano-yaw', type=float, default=0.0,
+                    help="--sky-pano: the Quake yaw (degrees) the panorama's centre column faces")
     ap.add_argument('--skylight', type=float, default=400.0)
     ap.add_argument('--lightmapscale', type=float, help='misc_model _lightmapscale (larger = coarser, cheaper)')
     ap.add_argument('--worldspawn', action='append', default=[], help='extra worldspawn key=value (e.g. _ambient=30)')
@@ -1403,6 +1436,8 @@ def main(argv=None):
         if a.sky_haze:
             hz = [float(x) for x in a.sky_haze.split()]
             haze_sky(comp.base, a.sky, hz[:3], hz[3:6])
+        elif a.sky_pano:
+            pano_sky(comp.base, a.sky, a.sky_pano, a.sky_pano_yaw)
     if a.jobs > 1:
         from concurrent.futures import ProcessPoolExecutor
         comp.pool = ProcessPoolExecutor(max_workers=a.jobs)
