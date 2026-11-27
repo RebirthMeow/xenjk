@@ -392,6 +392,12 @@ void R_SetupEntityLighting( const trRefdef_t *refdef, trRefEntity_t *ent ) {
 	//
 	d = VectorLength(ent->directedLight);
 	VectorScale(ent->lightDir, d, lightDir);
+	// the unit direction, for when the light weighs nothing (no directed light and no dynamic lights: a render
+	// scene's all-ambient spots): a zero lightDir normalizes to NaN in every shader that lights by it
+	vec3_t baseLightDir;
+	VectorCopy( ent->lightDir, baseLightDir );
+	if ( VectorNormalize( baseLightDir ) == 0.0f )
+		VectorSet( baseLightDir, 0.0f, 0.0f, 1.0f );
 
 #ifdef USE_PMLIGHT
 	// the GPU light path lights entities per pixel whatever r_dlightMode says; merging the lights into
@@ -453,7 +459,8 @@ void R_SetupEntityLighting( const trRefdef_t *refdef, trRefEntity_t *ent ) {
 	((byte *)&ent->ambientLightInt)[3] = 0xff;
 
 	// transform the direction to local space
-	VectorNormalize( lightDir );
+	if ( VectorNormalize( lightDir ) == 0.0f )
+		VectorCopy( baseLightDir, lightDir );
 	VectorCopy(lightDir, ent->lightDir);
 
 	ent->modelLightDir[0] = DotProduct( lightDir, ent->e.axis[0] );
