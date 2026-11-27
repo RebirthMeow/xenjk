@@ -960,6 +960,7 @@ def main():
     at = {(round(t[4][0]), round(t[4][1])): tgrid[t[0]] for t in tiles}
     w3tmesh.link({k: v for k, v in at.items() if v.key in near_keys},
                  {k: v for k, v in at.items() if v.key not in near_keys}, tsize, a.far_step // a.terrain_step)
+    near_at = {k for k, v in at.items() if v.key in near_keys}
     stats['terrain_split_cells'] = int(sum(int(T.sub.sum()) for T in tgrid.values()))
     stats['terrain_far_cells_stitched'] = int(sum(int(T.special().sum()) for T in tgrid.values() if T.key not in near_keys))
     xw3t_tiles, layer_meta = [], None
@@ -970,7 +971,10 @@ def main():
         # 37.5 u/m and D24 they lost to it past 200-300 m in the fly-through's aerials)
         tm = mats.flat('terrain_tile_' + key, (0.20, 0.19, 0.13), 0.9, flags=0x1000)
         if lattice is not None:
-            if far:     # (the far ring's control map every 8th entry: 400 tiles at 513^2 would add ~200 MB)
+            # (the far ring's control map every 8th entry: 400 tiles at 513^2 would add ~200 MB; whole on the far
+            # tiles beside the near box, ~0.5 MB each: the thinned layers changed at the box's edge, a line on the hills)
+            bx, by = round(bounds[0]), round(bounds[1])
+            if far and not any((bx + dx, by + dy) in near_at for dx in (-tsize, 0, tsize) for dy in (-tsize, 0, tsize)):
                 lattice = np.ascontiguousarray(lattice[::8, ::8])
             xw3t_tiles.append((tm, key, lattice, props))
         T = tgrid[key]
