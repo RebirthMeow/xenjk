@@ -140,7 +140,7 @@ layout(std140, set = 0, binding = 5) uniform Frame {
 	vec4 shade3;		// x r_scenePleRadiance (a share), y r_sceneCameraFill (its brightness), z, w r_sceneFogFarDensity: where it
 						// starts (metres) and the density's multiple past it (1: off)
 	vec4 shade4;		// x r_sceneBounce (its strength; 0 off, only with r_sceneAO), y r_sceneSsrGlossy's share, z its
-						// roughness (0 off)
+						// roughness (0 off); w r_sceneExactSkips (1: terrain, near-reach shadow and W3 fog reads that weigh 0 skipped)
 } fr;
 layout(set = 0, binding = 26) uniform sampler2DArray waveTex;	// the water's waves (scene_water.comp): x, y the slopes
 // scene_occ.comp's far-depth pyramids (linear view depth): the water's bed (fr.waterBed)
@@ -931,9 +931,11 @@ vec3 w3Haze( vec3 c, const vec3 P )
 	const float d = length( v );
 	const vec3 u = v / max( d, 1e-4 );
 	const float D = min( fr.w3fog.w, d );
+	const float appear = clamp( ( D - fr.w3fogRamp.x ) / max( fr.w3fogRamp.y, 1e-3 ), 0.0, 1.0 );
+	if ( appear <= 0.0 && fr.shade4.w > 0.5 )	// (nearer than the fog appears: both shares 0, c unchanged)
+		return c;
 	const float mu = dot( normalize( fr.sunDir.xyz ), u );
 	const float f = w3FogShare( pc.eye.xyz / UNITS_PER_METRE, u, D, fr.w3fog.x, mu, fr.w3fogRamp.zw );
-	const float appear = clamp( ( D - fr.w3fogRamp.x ) / max( fr.w3fogRamp.y, 1e-3 ), 0.0, 1.0 );
 	const float fogA = pow( f, fr.w3fog.y ) * appear, aerA = pow( f, fr.w3fog.z ) * appear;
 	const vec3 aer = w3FogPick( fr.w3aerFront.rgb, fr.w3aerMid.rgb, fr.w3aerBack.rgb, mu, D );
 	if ( fr.w3fog.z > 0.0 )	// (aerialFinalExp 0: none)
@@ -1114,7 +1116,7 @@ float sunShadow( const vec3 P, const vec3 Ng )
 		// r_sceneShadowNearReach (sunDir.w - 1, units): the near cascade holds only casters within that reach toward the
 		// light; the farther ones shade from the kept middle cascade, read a reach nearer the light (what lies between
 		// is the near cascade's)
-		if ( i == 0 && fr.sunDir.w > 1.5 ) {
+		if ( i == 0 && fr.sunDir.w > 1.5 && ( lit > 0.0 || fr.shade4.w < 0.5 ) ) {	// (fully shadowed already: min( 0, m ) is 0)
 			vec3 sm;
 			const float m = sunCascade( 1, P + fr.sunDir.xyz * ( fr.sunDir.w - 1.0 ), Ng, sm );
 			if ( m >= 0.0 )
@@ -1210,10 +1212,13 @@ vec4 reflectedLightAt( const vec3 P )
 	const ivec2 size = textureSize( reflectTex0, 0 );
 	const vec2 st = uv * vec2( size ) - 0.5;
 	const ivec2 i0 = ivec2( floor( st ) );
+	// the tent weighs 3 x 3 of the 4 x 4 texels about i0 above 0 (one end per axis lies 1.5 or more away): those
+	// alone, in the same order (the same sum; a fixed 9 steps, no loop control: 0.5-0.6 ms of the lit pass at 4K)
+	const ivec2 j0 = ivec2( not( lessThan( abs( vec2( i0 - 1 ) - st ), vec2( 1.5 ) ) ) );
 	vec3 sum = vec3( 0.0 );
 	float wsum = 0.0;
-	for ( int k = 0; k < 16; k++ ) {
-		const ivec2 o = ivec2( ( k & 3 ) - 1, ( k >> 2 ) - 1 );
+	for ( int k = 0; k < 9; k++ ) {
+		const ivec2 o = j0 + ivec2( k % 3 - 1, k / 3 - 1 );
 		const vec2 dxy = abs( vec2( i0 + o ) - st );
 		const float w = max( 1.5 - dxy.x, 0.0 ) * max( 1.5 - dxy.y, 0.0 );
 		if ( w <= 0.0 )
@@ -1242,10 +1247,13 @@ vec4 bounceAt( const vec3 P, const bool glossy )
 	const ivec2 size = textureSize( aoTex0, 0 );
 	const vec2 st = uv * vec2( size ) - 0.5;
 	const ivec2 i0 = ivec2( floor( st ) );
+	// the tent weighs 3 x 3 of the 4 x 4 texels about i0 above 0 (one end per axis lies 1.5 or more away): those
+	// alone, in the same order (the same sum; a fixed 9 steps, no loop control: 0.5-0.6 ms of the lit pass at 4K)
+	const ivec2 j0 = ivec2( not( lessThan( abs( vec2( i0 - 1 ) - st ), vec2( 1.5 ) ) ) );
 	vec4 sum = vec4( 0.0 );
 	float wsum = 0.0;
-	for ( int k = 0; k < 16; k++ ) {
-		const ivec2 o = ivec2( ( k & 3 ) - 1, ( k >> 2 ) - 1 );
+	for ( int k = 0; k < 9; k++ ) {
+		const ivec2 o = j0 + ivec2( k % 3 - 1, k / 3 - 1 );
 		const vec2 dxy = abs( vec2( i0 + o ) - st );
 		const float w = max( 1.5 - dxy.x, 0.0 ) * max( 1.5 - dxy.y, 0.0 );
 		if ( w <= 0.0 )
@@ -1283,10 +1291,13 @@ vec2 occlusionAt( const vec3 P )
 	const ivec2 size = textureSize( aoTex0, 0 );
 	const vec2 st = uv * vec2( size ) - 0.5;
 	const ivec2 i0 = ivec2( floor( st ) );
+	// the tent weighs 3 x 3 of the 4 x 4 texels about i0 above 0 (one end per axis lies 1.5 or more away): those
+	// alone, in the same order (the same sum; a fixed 9 steps, no loop control: 0.5-0.6 ms of the lit pass at 4K)
+	const ivec2 j0 = ivec2( not( lessThan( abs( vec2( i0 - 1 ) - st ), vec2( 1.5 ) ) ) );
 	vec2 sum = vec2( 0.0 );
 	float wsum = 0.0;
-	for ( int k = 0; k < 16; k++ ) {
-		const ivec2 o = ivec2( ( k & 3 ) - 1, ( k >> 2 ) - 1 );
+	for ( int k = 0; k < 9; k++ ) {
+		const ivec2 o = j0 + ivec2( k % 3 - 1, k / 3 - 1 );
 		const vec2 dxy = abs( vec2( i0 + o ) - st );
 		const float w = max( 1.5 - dxy.x, 0.0 ) * max( 1.5 - dxy.y, 0.0 );
 		if ( w <= 0.0 )
@@ -1734,11 +1745,11 @@ vec3 windowRoom()
 // array is indexed at run time (an array of the taps' merged layers went to local memory: 64 B a fragment)
 void w3TerrainLayer( const float ci, const float ni, const float w, const vec3 tw, const vec2 p0, const vec2 p0x, const vec2 p0y,
 	const vec2 p1, const vec2 p1x, const vec2 p1y, const vec2 p2, const vec2 p2x, const vec2 p2y, const float fl, inout vec3 D, inout vec3 N,
-	inout float R )
+	inout float R, const int parts )	// (parts: 1 the colour, 2 the normal and roughness)
 {
 	if ( w <= 0.0 )
 		return;
-	if ( ci >= 0.0 ) {
+	if ( ci >= 0.0 && ( parts & 1 ) != 0 ) {
 		const uint t = uint( ci );
 		vec3 c = vec3( 0.0 );
 		if ( tw.z > 0.0 ) c += tw.z * textureGrad( sceneTex[SCENE_TEX_INDEX( t )], p0, p0x, p0y ).rgb;
@@ -1746,6 +1757,8 @@ void w3TerrainLayer( const float ci, const float ni, const float w, const vec3 t
 		if ( tw.x > 0.0 ) c += tw.x * textureGrad( sceneTex[SCENE_TEX_INDEX( t )], p2, p2x, p2y ).rgb;
 		D += w * c;
 	}
+	if ( ( parts & 2 ) == 0 )
+		return;
 	vec4 q = vec4( 0.5, 0.5, 1.0, 0.9 );
 	if ( ni >= 0.0 && fl < 1.0 ) {	// (past r_sceneTerrainFar, fl 1: no normal map, faded out over its band)
 		const uint t = uint( ni );
@@ -1760,13 +1773,13 @@ void w3TerrainLayer( const float ci, const float ni, const float w, const vec3 t
 }
 // a background layer at its UV scale: from above (world xy), along x (-x, -z) and along y (-y, -z)
 void w3TerrainBg( const float ci, const float ni, const float w, const float sc, const vec3 tw, const vec2 world, const float zW,
-	const vec2 gx, const vec2 gy, const vec2 gzx, const float fl, inout vec3 D, inout vec3 N, inout float R )
+	const vec2 gx, const vec2 gy, const vec2 gzx, const float fl, inout vec3 D, inout vec3 N, inout float R, const int parts )
 {
 	if ( w <= 0.0 )
 		return;
 	w3TerrainLayer( ci, ni, w, tw, world * sc, gx * sc, gy * sc,
 		vec2( -world.x, -zW ) * sc, vec2( -gx.x, -gzx.x ) * sc, vec2( -gy.x, -gzx.y ) * sc,
-		vec2( -world.y, -zW ) * sc, vec2( -gx.y, -gzx.x ) * sc, vec2( -gy.y, -gzx.y ) * sc, fl, D, N, R );
+		vec2( -world.y, -zW ) * sc, vec2( -gx.y, -gzx.x ) * sc, vec2( -gy.y, -gzx.y ) * sc, fl, D, N, R, parts );
 }
 #endif
 
@@ -2427,18 +2440,29 @@ void main()
 		const vec2 oxx = vec2( -gx.y, -gzx.x ) * 0.333, oxy = vec2( -gy.y, -gzx.y ) * 0.333;
 #define W3_OVC( i )	materialDetail[b + 34u + uint( i ) / 4u][( i ) % 4]
 #define W3_OVN( i )	materialDetail[b + 42u + uint( i ) / 4u][( i ) % 4]
-#define W3_OV( i, w )	w3TerrainLayer( W3_OVC( i ), W3_OVN( i ), w, tw, uo, gx * 0.333, gy * 0.333, os, osx, osy, ox, oxx, oxy, fl, ovD, ovN, ovR )
-#define W3_BG( i, w, sc )	w3TerrainBg( W3_OVC( i ), W3_OVN( i ), w, sc, tw, world, zW, gx, gy, gzx, fl, bgD, bgN, bgR )
-		W3_OV( ovI.x, wo.x ); W3_OV( ovI.y, wo.y ); W3_OV( ovI.z, wo.z ); W3_OV( ovI.w, wo.w );
-		W3_BG( bgI.x, wb.x, bgSc.x ); W3_BG( bgI.y, wb.y, bgSc.y ); W3_BG( bgI.z, wb.z, bgSc.z ); W3_BG( bgI.w, wb.w, bgSc.w );
+#define W3_OV( i, w )	w3TerrainLayer( W3_OVC( i ), W3_OVN( i ), w, tw, uo, gx * 0.333, gy * 0.333, os, osx, osy, ox, oxx, oxy, fl, ovD, ovN, ovR, 3 )
+#define W3_BG( i, w, sc, parts )	w3TerrainBg( W3_OVC( i ), W3_OVN( i ), w, sc, tw, world, zW, gx, gy, gzx, fl, bgD, bgN, bgR, parts )
+		// the background's normals first: they alone set the blend; then only the reads it weighs above 0 (flat ground,
+		// blend 0, needs no background colour; a steep slope, blend 1, no overlay): the same values, fewer reads
+		const bool skips = fr.shade4.w > 0.5;	// r_sceneExactSkips (0: every read, as before)
+		const int bgFirst = skips ? 2 : 3;
+		W3_BG( bgI.x, wb.x, bgSc.x, bgFirst ); W3_BG( bgI.y, wb.y, bgSc.y, bgFirst ); W3_BG( bgI.z, wb.z, bgSc.z, bgFirst ); W3_BG( bgI.w, wb.w, bgSc.w, bgFirst );
 		const vec3 n = nf;
 		const vec3 Tw = tangentOf( vec3( 1.0, 0.0, 0.0 ), n ), Bw = cross( n, Tw );	// (+x, or +y for a normal along x)
-		const vec3 ovT = normalize( vec3( ovN.xy, max( ovN.z, 1e-4 ) ) ), bgT = normalize( vec3( bgN.xy, max( bgN.z, 1e-4 ) ) );
-		const vec3 cov = Tw * ovT.x + Bw * ovT.y + n * ovT.z, cbg = Tw * bgT.x + Bw * bgT.y + n * bgT.z;
+		const vec3 bgT = normalize( vec3( bgN.xy, max( bgN.z, 1e-4 ) ) );
+		const vec3 cbg = Tw * bgT.x + Bw * bgT.y + n * bgT.z;
 		const vec3 biased = normalize( mix( cbg, mix( cbg, vec3( 0.0, 0.0, 1.0 ), n.z ), baseDamp ) );
 		const float slope = clamp( length( biased.xy ) / max( biased.z, 1e-4 ), 0.0, 1.0 );
 		const float hi = clamp( thr + sharp, 0.0, 1.0 );
 		const float blend = clamp( ( slope - thr ) / max( hi - thr, 1e-4 ), 0.0, 1.0 );
+		if ( skips && blend > 0.0 ) {
+			W3_BG( bgI.x, wb.x, bgSc.x, 1 ); W3_BG( bgI.y, wb.y, bgSc.y, 1 ); W3_BG( bgI.z, wb.z, bgSc.z, 1 ); W3_BG( bgI.w, wb.w, bgSc.w, 1 );
+		}
+		if ( !skips || blend < 1.0 ) {
+			W3_OV( ovI.x, wo.x ); W3_OV( ovI.y, wo.y ); W3_OV( ovI.z, wo.z ); W3_OV( ovI.w, wo.w );
+		}
+		const vec3 ovT = normalize( vec3( ovN.xy, max( ovN.z, 1e-4 ) ) );
+		const vec3 cov = Tw * ovT.x + Bw * ovT.y + n * ovT.z;
 		vec3 diff = mix( ovD, bgD, blend );
 		if ( h0.z >= 0.0 ) {	// the tint, an overlay in stored gamma
 			const vec3 t = texture( sceneTex[SCENE_TEX_INDEX( uint( h0.z ) )], clamp( vUV1, 0.0, 1.0 ) ).rgb;

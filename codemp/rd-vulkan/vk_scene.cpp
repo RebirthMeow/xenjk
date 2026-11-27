@@ -250,6 +250,7 @@ cvar_t *r_sceneCameraFill;
 cvar_t *r_sceneFogFarDensity;
 cvar_t *r_sceneBounce;
 cvar_t *r_sceneSsrGlossy;
+static cvar_t *r_sceneExactSkips;
 
 // scene.frag's tone curve on the CPU, per channel: light after exposure -> display light (before gamma) and back;
 // r_sceneTonemap 0 exponential, 1 the ACES fit, 2 GT7's per-channel curve (scene.frag's gt7Curve; its chroma blend
@@ -8377,7 +8378,7 @@ void R_SceneVkBeginFrame( void )
 		fr->shade4[0] = ao ? Com_Clamp( 0.0f, 4.0f, Env( r_sceneBounce )->value ) : 0.0f;
 		fr->shade4[1] = Com_Clamp( 0.0f, 1.0f, share );
 		fr->shade4[2] = share > 0.0f ? Com_Clamp( 0.05f, 1.0f, gr ) : 0.0f;
-		fr->shade4[3] = 0.0f;
+		fr->shade4[3] = r_sceneExactSkips->integer ? 1.0f : 0.0f;	// r_sceneExactSkips
 	}
 	fr->shade3[0] = Com_Clamp( 0.0f, 1.0f, Env( r_scenePleRadiance )->value );
 	fr->shade3[1] = Com_Clamp( 0.0f, 4.0f, Env( r_sceneCameraFill )->value );
@@ -10281,6 +10282,7 @@ void R_SceneRegister( void )
 	r_sceneExposureSpeed = ri.Cvar_Get( "r_sceneExposureSpeed", "4 7.5",				CVAR_ARCHIVE_ND, "Render scene, r_sceneAutoExposure: how fast the exposure adapts up and down, per second (CP2077's exposureAdaptationSpeedUp, Down)" );
 	r_sceneBounce		= ri.Cvar_Get( "r_sceneBounce",			"0",					CVAR_ARCHIVE_ND, "Render scene: screen-space bounce light: r_sceneAO's hidden samples bring back the light the frame shows there, times the surface's colour, after the occlusion (ShaderInjector's SSGI bounce light); its strength (0 off; needs r_sceneAO). A look value (.xenv)" );
 	r_sceneSsrGlossy	= ri.Cvar_Get( "r_sceneSsrGlossy",		"0",					CVAR_ARCHIVE_ND, "Render scene: \"share roughness\": screen-space reflections on dry glossy surfaces too, traced at that roughness (GGX importance sampled, one ray a texel, settled over frames), over the probes' reflection where a ray hits, fading out toward that roughness (ShaderInjector's stochastic SSR); 0 off. A look value (.xenv)" );
+	r_sceneExactSkips	= ri.Cvar_Get( "r_sceneExactSkips",	"1",					0, "Render scene: reads that weigh 0 skipped (terrain layers its slope blend leaves out, the near-reach shadow lookup on a fully shadowed point, the W3 fog nearer than it appears): the same image, less work; 0 every read (A/B)" );
 	r_sceneToneAdjust	= ri.Cvar_Get( "r_sceneToneAdjust",		"0 1",					CVAR_ARCHIVE_ND, "Render scene: \"EV gamma\": the light after exposure scaled by 2^EV and raised to 1 / gamma before the tone curve (ShaderInjector's AdjustImage: -0.45 1.15; gamma over 1 lifts the midtones; the meter and the reflections take it back out). A look value (.xenv)" );
 	r_scenePleRadiance	= ri.Cvar_Get( "r_scenePleRadiance",	"0",					CVAR_ARCHIVE_ND, "Render scene: an FF7 Rebirth probe's reflected light as its deconvolved spherical harmonics blurred by roughness, with its dominant light's occlusion and highlight (ShaderInjector's SampleGI), in place of its irradiance along the mirrored ray; the share (0 off). A look value (.xenv)" );
 	r_sceneCameraFill	= ri.Cvar_Get( "r_sceneCameraFill",		"0",					CVAR_ARCHIVE_ND, "Render scene: the ambient light again from the eye, full within 5 m, by the inverse square past it, on what faces the eye (ShaderInjector's camera ambient light); its brightness (0 off). A look value (.xenv)" );
