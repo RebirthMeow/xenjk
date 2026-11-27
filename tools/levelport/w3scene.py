@@ -931,6 +931,37 @@ def main():
     # box clip; the horizon the fly-through's aerials showed as a flat colour
     tiles += [t + (True,) for t in terrain_tiles(work, 'terrain_far') if t[0] not in near_keys]
     stats['terrain_far_tiles'] = sum(1 for t in tiles if t[-1])
+    # the meshes' grids (w3tmesh.py): near tiles' cells over a hole split finely and cut there; the far ring uncut (the
+    # meshes that fill its holes are not placed out there: the sky showed through the distant hills); edges shared
+    # vertex for vertex across tiles, the far ring's against the near tiles' full ones
+    import w3tmesh
+    assert a.far_step % a.terrain_step == 0
+    tgrid, tsize = {}, None
+    raw = {(round(t[4][0]), round(t[4][1])): t[1] for t in tiles}
+    for key, G, props, lattice, bounds, far in tiles:
+        s = a.far_step if far else a.terrain_step
+        x, y, size = round(bounds[0]), round(bounds[1]), round(bounds[2] - bounds[0])
+        G = G[::s, ::s]
+        # normals by central differences across the tile's borders too (the neighbour's line one step past the
+        # shared edge; one-sided at the world's edge): one-sided borders shaded every tile edge as a line
+        P = np.pad(G, ((1, 1), (1, 1), (0, 0)), mode='reflect', reflect_type='odd')
+        for (dx, dy), dst, src in (((0, -size), (0, slice(1, -1)), (-1 - s, slice(None, None, s))),
+                                   ((0, size), (-1, slice(1, -1)), (s, slice(None, None, s))),
+                                   ((-size, 0), (slice(1, -1), 0), (slice(None, None, s), -1 - s)),
+                                   ((size, 0), (slice(1, -1), -1), (slice(None, None, s), s))):
+            O = raw.get((x + dx, y + dy))
+            if O is not None:
+                P[dst] = O[src]
+        GN = np.cross(np.gradient(P, axis=1), np.gradient(P, axis=0))[1:-1, 1:-1]
+        GN /= np.maximum(np.linalg.norm(GN, axis=-1, keepdims=True), 1e-12)
+        sub = w3tmesh.hole_cells(lattice, G.shape[0]) if (lattice is not None and not far) else None
+        tgrid[key] = w3tmesh.Tile(key, G, GN, sub)
+        tsize = round(bounds[2] - bounds[0])
+    at = {(round(t[4][0]), round(t[4][1])): tgrid[t[0]] for t in tiles}
+    w3tmesh.link({k: v for k, v in at.items() if v.key in near_keys},
+                 {k: v for k, v in at.items() if v.key not in near_keys}, tsize, a.far_step // a.terrain_step)
+    stats['terrain_split_cells'] = int(sum(int(T.sub.sum()) for T in tgrid.values()))
+    stats['terrain_far_cells_stitched'] = int(sum(int(T.special().sum()) for T in tgrid.values() if T.key not in near_keys))
     xw3t_tiles, layer_meta = [], None
     for key, G, props, lattice, bounds, far in tiles:
         if layer_meta is None and props.get('witcher_terrain_layer_metadata'):
@@ -942,30 +973,23 @@ def main():
             if far:     # (the far ring's control map every 8th entry: 400 tiles at 513^2 would add ~200 MB)
                 lattice = np.ascontiguousarray(lattice[::8, ::8])
             xw3t_tiles.append((tm, key, lattice, props))
-        G = G[::a.far_step, ::a.far_step] if far else G[::a.terrain_step, ::a.terrain_step]
-        n_, m_ = G.shape[:2]
+        T = tgrid[key]
+        n_, m_ = T.G.shape[:2]
         tx0, ty0, tx1, ty1 = bounds
         step = 64
-        # normals from the whole tile's grid (central differences; the triangles' winding: cross(along j, along i)),
-        # not each chunk's own faces: chunk borders took one-sided normals, a lighting seam every 62.5 m near and 250 m
-        # on the far ring
-        GN = np.cross(np.gradient(G, axis=1), np.gradient(G, axis=0))
-        GN /= np.maximum(np.linalg.norm(GN, axis=-1, keepdims=True), 1e-12)
+        # (normals from the whole tile's grid, w3tmesh's GN: central differences, the triangles' winding cross(along
+        # j, along i); each chunk's own faces gave one-sided normals at chunk borders, a lighting seam every 62.5 m
+        # near and 250 m on the far ring)
         for i0 in range(0, n_ - 1, step):
             for j0 in range(0, m_ - 1, step):
-                S = G[i0:i0 + step + 1, j0:j0 + step + 1]
-                SN = GN[i0:i0 + step + 1, j0:j0 + step + 1].reshape(-1, 3)
                 # (every chunk of a near tile: the far ring leaves the near tiles out, so the chunks past the box drew
                 # nothing, a 62.5 m x 1 km strip without ground north of the castle)
-                sn, sm = S.shape[:2]
-                V = S.reshape(-1, 3)
-                c = V.mean(0)
+                V, SN, tri, fine = w3tmesh.chunk(T, i0, min(i0 + step, n_ - 1), j0, min(j0 + step, m_ - 1))
+                c = V[:(min(i0 + step, n_ - 1) - i0 + 1) * (min(j0 + step, m_ - 1) - j0 + 1)].mean(0)
                 pos = V - c
-                ii, jj = np.meshgrid(np.arange(sn - 1), np.arange(sm - 1), indexing='ij')
-                q = (ii * sm + jj).ravel()
-                tri = np.concatenate([np.stack([q, q + 1, q + sm + 1], 1), np.stack([q, q + sm + 1, q + sm], 1)])
-                if lattice is not None:
-                    keep = solid_share(lattice, bounds, V[tri].mean(1)[:, :2]) >= 0.5
+                if lattice is not None and not far and fine.any():
+                    keep = ~fine
+                    keep[fine] = solid_share(lattice, bounds, V[tri[fine]].mean(1)[:, :2]) >= 0.5
                     stats['terrain_hole_tris'] += int((~keep).sum())
                     tri = tri[keep]
                 if not len(tri):
