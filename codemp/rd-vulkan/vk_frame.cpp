@@ -623,6 +623,7 @@ _retry:
             if ( tSec > 0.0 )
                 vk_cputime_section( VK_SEC_CASCADES, R_SunProfNow() - tSec );
         }
+    RB_RenderWaterMirror();	// r_sceneWaterChars: the characters mirrored in the water, after the shadows they read
     vk_scene_haze();	// the render scene's light in the haze, after the cascades it reads
 
     if (vk_find_screenmap_drawsurfs()) {

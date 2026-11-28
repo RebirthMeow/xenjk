@@ -254,6 +254,7 @@ static cvar_t *r_sceneExactSkips;
 static cvar_t *r_sceneSkyCuts;
 static cvar_t *r_sceneSkyTime;
 static cvar_t *r_sceneSkyCards;
+cvar_t *r_sceneWaterChars;
 static cvar_t *r_sceneWaterMirror;
 static cvar_t *r_sceneFogSteps;
 
@@ -1184,7 +1185,7 @@ static qboolean Scene_CreatePipelines( void )
 	// GPU-driven draws: 14 each list slot's material, 15 the materials (written by Scene_CreateGpuDriven); 16 the light
 	// clusters; 17 the lights' fades (scene_lightfade.comp); 18 the stand-ins; 19 the meshes (scene.vert: the hide fade's centre);
 	// 20, 21, 22 the DBuffer (mesh decals: albedo, normal, the receiver's depth); 23 the occlusion pyramids (the water's bed)
-	static const VkDescriptorType drawTypes[35] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+	static const VkDescriptorType drawTypes[36] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -1198,16 +1199,17 @@ static qboolean Scene_CreatePipelines( void )
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,	// 30: the trees' wind this frame (r_sceneTreeWind, scene.vert)
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,	// 31: maps/<map>.xple's probe GI (vk_scene_ple.cpp)
 		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,	// 32, 33: r_sceneBounce's two images
-		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER };	// 34: the sky's cumulus cards this frame (r_sceneSkyCards)
+		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,	// 34: the sky's cumulus cards this frame (r_sceneSkyCards)
+		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER };	// 35: the characters mirrored in the water (r_sceneWaterChars)
 	// (2, 3, 4, 13 and 17 also the vertex stage's: the particles' light, records and light fades, scene_fx.vert)
-	static const VkShaderStageFlags drawStages[35] = { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+	static const VkShaderStageFlags drawStages[36] = { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT,
-		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT };	// 15: the materials (scene.vert reads the kind); 18: the stand-ins; 24, 25: the DBuffer's surface and emission; 26: the water's waves
+		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT };	// 15: the materials (scene.vert reads the kind); 18: the stand-ins; 24, 25: the DBuffer's surface and emission; 26: the water's waves
 	// the history's depth alone: ssr 4, capture 3
 	// 5, 6: r_sceneAO's image this frame and last frame's; 7: the area's baked reflection capture (maps/<map>_refl.dds,
 	// white when none): what a ray that misses takes
@@ -1246,7 +1248,7 @@ static qboolean Scene_CreatePipelines( void )
 	sc.groupCullLayout = Scene_SetLayout( cullTypes, cullStages, 2 );	// scene_groupcull.comp: the groups, the view's list
 	sc.sortLayout = Scene_SetLayout( sortTypes, sortStages, 5 );
 	sc.occLayout = Scene_SetLayout( occTypes, occStages, 2 );
-	sc.drawLayout = Scene_SetLayout( drawTypes, drawStages, 35 );
+	sc.drawLayout = Scene_SetLayout( drawTypes, drawStages, 36 );
 	sc.ssrLayout = Scene_SetLayout( ssrTypes, ssrStages, 11 );
 	sc.fogLayout = Scene_SetLayout( fogTypes, fogStages, 16 );
 	sc.captureLayout = Scene_SetLayout( captureTypes, captureStages, 4 );
@@ -1815,7 +1817,7 @@ static qboolean Scene_CreateViews( void )
 	ps[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	ps[1].descriptorCount = sets + NUM_COMMAND_BUFFERS * 2 + 8;
 	ps[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	ps[2].descriptorCount = sets * 14 + NUM_COMMAND_BUFFERS * 15 + 16;	// (+1 a slot: the water-mirror proxy)	// (+2 a set, +1 a slot: r_sceneBounce's)	// (+1 a slot: the reflection's capture)	// (+2 a set and a slot: r_sceneAO's)	// draw 8 (the DBuffer's 3 and the waves with them); per slot 10 (the decal pass's depth, the haze's last scatter)
+	ps[2].descriptorCount = sets * 15 + NUM_COMMAND_BUFFERS * 15 + 16;	// (+1 a set: the characters mirrored in the water)	// (+1 a slot: the water-mirror proxy)	// (+2 a set, +1 a slot: r_sceneBounce's)	// (+1 a slot: the reflection's capture)	// (+2 a set and a slot: r_sceneAO's)	// draw 8 (the DBuffer's 3 and the waves with them); per slot 10 (the decal pass's depth, the haze's last scatter)
 	ps[3].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 	ps[3].descriptorCount = NUM_COMMAND_BUFFERS * 7 + 8;
 	Com_Memset( &dp, 0, sizeof( dp ) );
@@ -2147,6 +2149,15 @@ static qboolean Scene_CreateViews( void )
 			ii.imageView = sc.wavesView;
 			ii.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 			wr.dstBinding = 26;
+			qvkUpdateDescriptorSets( vk.device, 1, &wr, 0, NULL );
+			if ( vk.waterMirror.view ) {	// 35: the characters mirrored in the water (tr_watermirror.cpp; the same image each frame)
+				ii.sampler = vk.waterMirror.sampler;
+				ii.imageView = vk.waterMirror.view;
+				ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			} else {
+				Scene_TextureInfo( tr.blackImage, &ii );
+			}
+			wr.dstBinding = 35;
 			qvkUpdateDescriptorSets( vk.device, 1, &wr, 0, NULL );
 			{
 				VkDescriptorBufferInfo bi = { sc.clusters[f].buf, 0, VK_WHOLE_SIZE };
@@ -7781,6 +7792,7 @@ void R_SceneLoad( const char *mapBsp )
 	// each instance places it), 16 units over and under; none: an empty band
 	sc.waterLo = 1e30f;
 	sc.waterHi = -1e30f;
+	sc.numWaterPlanes = 0;
 	if ( sc.numWater ) {
 		const uint32_t *idx = (const uint32_t *)( buf + h->ofs[XS_INDICES] );
 		const float *verts = (const float *)( buf + h->ofs[XS_VERTICES] );
@@ -7812,10 +7824,42 @@ void R_SceneLoad( const char *mapBsp )
 			if ( !wet[inst[i].mesh] )
 				continue;
 			const float *b = &box[(size_t)inst[i].mesh * 6], *m = inst[i].m;
+			float lo[3] = { 1e30f, 1e30f, 1e30f }, hi[3] = { -1e30f, -1e30f, -1e30f };
 			for ( int c = 0; c < 8; c++ ) {
-				const float z = m[8] * b[( c & 1 ) ? 3 : 0] + m[9] * b[( c & 2 ) ? 4 : 1] + m[10] * b[( c & 4 ) ? 5 : 2] + m[11];
+				const float bx = b[( c & 1 ) ? 3 : 0], by = b[( c & 2 ) ? 4 : 1], bz = b[( c & 4 ) ? 5 : 2];
+				const float z = m[8] * bx + m[9] * by + m[10] * bz + m[11];
 				sc.waterLo = MIN( sc.waterLo, z - 16.0f );
 				sc.waterHi = MAX( sc.waterHi, z + 16.0f );
+				const float x = m[0] * bx + m[1] * by + m[2] * bz + m[3], y = m[4] * bx + m[5] * by + m[6] * bz + m[7];
+				lo[0] = MIN( lo[0], x ); hi[0] = MAX( hi[0], x );
+				lo[1] = MIN( lo[1], y ); hi[1] = MAX( hi[1], y );
+				lo[2] = MIN( lo[2], z ); hi[2] = MAX( hi[2], z );
+			}
+			// r_sceneWaterChars: a flat piece's height, its area added to the same height's (within 8 u); with every
+			// slot taken, a height's first piece replaces the least area if it is larger (Beauclair: the lake at z 0
+			// came after a mountain's pools)
+			if ( hi[2] - lo[2] < 48.0f ) {
+				const float z = 0.5f * ( lo[2] + hi[2] ), area = ( hi[0] - lo[0] ) * ( hi[1] - lo[1] );
+				int k;
+				for ( k = 0; k < sc.numWaterPlanes && fabsf( sc.waterPlanes[k][0] - z ) > 8.0f; k++ )
+					;
+				if ( k < sc.numWaterPlanes )
+					sc.waterPlanes[k][1] += area;
+				else {
+					if ( k == (int)ARRAY_LEN( sc.waterPlanes ) ) {
+						int least = 0;
+						for ( int q = 1; q < sc.numWaterPlanes; q++ )
+							if ( sc.waterPlanes[q][1] < sc.waterPlanes[least][1] )
+								least = q;
+						k = sc.waterPlanes[least][1] < area ? least : -1;
+					} else {
+						sc.numWaterPlanes++;
+					}
+					if ( k >= 0 ) {
+						sc.waterPlanes[k][0] = z;
+						sc.waterPlanes[k][1] = area;
+					}
+				}
 			}
 		}
 	}
@@ -8140,6 +8184,8 @@ void R_SceneLoad( const char *mapBsp )
 		ri.Printf( PRINT_ALL, "scene decals: %u mesh decal materials into the DBuffer (%ux%u)\n", sc.numDecals, sc.decalW, sc.decalH );
 	if ( sc.numWater )
 		ri.Printf( PRINT_ALL, "scene water: %u materials, surfaces from z %.0f to %.0f\n", sc.numWater, sc.waterLo + 16.0f, sc.waterHi - 16.0f );
+		for ( int k = 0; k < sc.numWaterPlanes; k++ )
+			ri.Printf( PRINT_DEVELOPER, "scene water plane: z %.1f, %.0f square units\n", sc.waterPlanes[k][0], sc.waterPlanes[k][1] );
 	if ( sc.numAdGlows )
 		ri.Printf( PRINT_ALL, "scene ad glows: %u materials (flag 0x400), %u without a normal image (no glow)\n", sc.numAdGlows, sc.numAdGlowsUnmasked );
 	if ( sc.numLeaves )
@@ -8633,6 +8679,21 @@ static qboolean Scene_SkyCardsFrame( byte *buf, const sceneFrame_t *fr )
 	return qtrue;
 }
 
+// r_sceneWaterChars (tr_watermirror.cpp): the plane the characters are mirrored in, the largest flat water below the eye
+qboolean R_SceneWaterPlane( const vec3_t eye, float *z )
+{
+	float best = 0.0f;
+	if ( !sc.loaded || !r_scene->integer || !sc.numWater )
+		return qfalse;
+	for ( int k = 0; k < sc.numWaterPlanes; k++ ) {
+		if ( sc.waterPlanes[k][0] < eye[2] && sc.waterPlanes[k][1] > best ) {
+			best = sc.waterPlanes[k][1];
+			*z = sc.waterPlanes[k][0];
+		}
+	}
+	return best > 0.0f ? qtrue : qfalse;
+}
+
 void R_SceneVkBeginFrame( void )
 {
 	const int f = vk.cmd_index;
@@ -8664,6 +8725,16 @@ void R_SceneVkBeginFrame( void )
 	sceneFrame_t *fr = (sceneFrame_t *)sc.framePtr[f];
 	Com_Memset( fr, 0, sizeof( *fr ) );
 	VectorCopy( sc.views[eyeView].origin, fr->eye );
+	// r_sceneWaterChars: drawn this frame (RB_RenderWaterMirror, after this in vk_begin_frame)
+	if ( backEndData->waterMirrorCmd && vk.waterMirror.framebuffer && vk.waterMirror.width == MAX( glConfig.vidWidth / 2, 1 )
+		&& vk.waterMirror.height == MAX( glConfig.vidHeight / 2, 1 ) ) {
+		fr->charMirror[0] = MAX( r_sceneWaterChars->value, 0.5f );
+		fr->charMirror[1] = backEndData->waterMirrorZ;
+		fr->charMirror[2] = 1.0f / glConfig.vidWidth;
+		fr->charMirror[3] = 1.0f / glConfig.vidHeight;
+	} else if ( backEndData->waterMirrorCmd ) {
+		backEndData->waterMirrorCmd = NULL;	// (a window resized since the target was made: none until vid_restart)
+	}
 	// the instances' hide (v4) and near (v5) distances dithered in the eye's views (scene.vert, scene.frag): their scale
 	sc.fadeOn = ( r_sceneHideFade->integer && r_sceneProxyDebug->integer != 2 && r_sceneHideScale->value > 0.0f && sc.pipeDepthFade && ( !sc.gd || sc.gdPipeDepthFade ) ) ? qtrue : qfalse;
 	// r_sceneHideDither 2 needs the masked prepass and a lit pass that tests EQUAL against it (it shades only the kept
@@ -10630,6 +10701,7 @@ void R_SceneRegister( void )
 	r_sceneSkyTime		= ri.Cvar_Get( "r_sceneSkyTime",		"-1",					0, "Render scene: the clouds' and water's clock pinned at this many seconds (frame-identical comparisons); negative: the game's" );
 	r_sceneSkyCards		= ri.Cvar_Get( "r_sceneSkyCards",		"1",					0, "Render scene, r_sceneW3Clouds: the cumulus cards found once a frame and binned by direction, instead of every sky pixel searching nine cells of their grid: the same image, less work; 0 the search (A/B)" );
 	r_sceneWaterMirror	= ri.Cvar_Get( "r_sceneWaterMirror",	"1",					0, "Render scene: models with a water-mirror proxy (<model>.mirror, tools/mirror_proxy.py: the Star Destroyer) in the water's reflection where it misses the screen; 0 off" );
+	r_sceneWaterChars	= ri.Cvar_Get( "r_sceneWaterChars",	"0",					0, "Render scene: the characters near the water mirrored in it (tr_watermirror.cpp: the nearest few drawn again from the eye mirrored in the largest flat water below it, half size; the screen's reflection leaves them out); 2 shows the mirror alone on the water, 3 its coverage; 0 off" );
 	r_sceneFogSteps		= ri.Cvar_Get( "r_sceneFogSteps",		"1",					0, "Render scene, r_sceneW3Fog: the fog's steps along a ray that stay under its offset height (each the density's full share) taken in one power instead of one by one: the same image, less work; 0 every step (A/B)" );
 	r_sceneToneAdjust	= ri.Cvar_Get( "r_sceneToneAdjust",		"0 1",					CVAR_ARCHIVE_ND, "Render scene: \"EV gamma\": the light after exposure scaled by 2^EV and raised to 1 / gamma before the tone curve (ShaderInjector's AdjustImage: -0.45 1.15; gamma over 1 lifts the midtones; the meter and the reflections take it back out). A look value (.xenv)" );
 	r_scenePleRadiance	= ri.Cvar_Get( "r_scenePleRadiance",	"0",					CVAR_ARCHIVE_ND, "Render scene: an FF7 Rebirth probe's reflected light as its deconvolved spherical harmonics blurred by roughness, with its dominant light's occlusion and highlight (ShaderInjector's SampleGI), in place of its irradiance along the mirrored ray; the share (0 off). A look value (.xenv)" );

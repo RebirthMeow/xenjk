@@ -1029,6 +1029,7 @@ typedef struct viewParms_s {
 	int				charShadow;				// 1..MAX_CHAR_SHADOWS: a character shadow tile (one caster, depth only), else 0
 	int				selfShadowSlot;			// 1 + the self-shadow tile (R_SetupCharSelfShadows) this view draws, else 0
 	int				sceneView;				// 1 + this frame's render scene view (R_SceneAddView), else 0
+	int				waterMirror;			// 1: the characters mirrored in the water (r_sceneWaterChars, tr_watermirror.cpp)
 } viewParms_t;
 
 // a depth-only shadow view: opaque casters, first stage only, no fog, drawn before the main render pass
@@ -2460,6 +2461,13 @@ void R_CharShadowDump_f( void );
 // tr_main.cpp's view helpers the character shadow views (tr_charshadow.cpp) share
 void R_RotateForViewer( orientationr_t *ori, viewParms_t *viewParms );
 void R_SetupProjectionOrthoZ01( viewParms_t *dest, const vec3_t viewBounds[2] );
+void R_SetupProjection( viewParms_t *dest, float zProj, qboolean computeFrustum );
+void R_SetupProjectionZ( viewParms_t *dest );
+// r_sceneWaterChars (tr_watermirror.cpp)
+void R_RenderWaterMirror( const viewParms_t *eye );
+void RB_RenderWaterMirror( void );
+qboolean R_SceneWaterPlane( const vec3_t eye, float *z );	// vk_scene.cpp
+extern cvar_t *r_sceneWaterChars;
 void R_AddEntitySurface( const trRefdef_t *refdef, trRefEntity_t *ent, int entityNum );
 void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs );
 void R_LightGridSample( const vec3_t point, vec3_t ambientLight, vec3_t directedLight, vec3_t lightDir );
@@ -3191,6 +3199,9 @@ typedef struct backEndData_s {
 	// tile after a full world atlas)
 	struct drawSurfsCommand_s	*charShadowCmds[MAX_CHAR_SHADOWS + MAX_CHAR_SELF_SHADOWS + 1];
 	int					numCharShadowCmds;
+	// r_sceneWaterChars: this frame's characters mirrored in the water (RB_RenderWaterMirror) and the water's height
+	struct drawSurfsCommand_s	*waterMirrorCmd;
+	float				waterMirrorZ;
 } backEndData_t;
 
 extern int max_polys;

@@ -49,6 +49,7 @@ set(MPVulkanRendererFiles
 	"${MPDir}/rd-vulkan/tr_cache.cpp"
 	"${MPDir}/rd-vulkan/tr_cmds.cpp"
 	"${MPDir}/rd-vulkan/tr_charshadow.cpp"
+	"${MPDir}/rd-vulkan/tr_watermirror.cpp"
 	"${MPDir}/rd-vulkan/tr_curve.cpp"
 	"${MPDir}/rd-vulkan/tr_decals.cpp"
 	"${MPDir}/rd-vulkan/tr_ghoul2.cpp"

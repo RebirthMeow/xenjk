@@ -1514,7 +1514,8 @@ VkPipeline vk_build_pipeline_ex( const Vk_Pipeline_Def *def, renderPass_t render
     multisample_state.rasterizationSamples = (renderPassIndex == RENDER_PASS_SCREENMAP) ? (VkSampleCountFlagBits)vk.screenMapSamples : (VkSampleCountFlagBits)vkSamples;
     
     if ( renderPassIndex == RENDER_PASS_CUBEMAP || renderPassIndex == RENDER_PASS_POST_1X || renderPassIndex == RENDER_PASS_SUN_SHADOW
-        || renderPassIndex == RENDER_PASS_CHAR_OCCLUDER || renderPassIndex == RENDER_PASS_CHAR_HAIRMAP )
+        || renderPassIndex == RENDER_PASS_CHAR_OCCLUDER || renderPassIndex == RENDER_PASS_CHAR_HAIRMAP
+        || renderPassIndex == RENDER_PASS_WATER_MIRROR )
         multisample_state.rasterizationSamples = (VkSampleCountFlagBits)VK_SAMPLE_COUNT_1_BIT;
     
     // r_g2SampleShading: alpha-tested character surfaces evaluate every sample (texture and alpha test at the sample)
@@ -1634,6 +1635,17 @@ VkPipeline vk_build_pipeline_ex( const Vk_Pipeline_Def *def, renderPass_t render
         attachment_blend_state.dstAlphaBlendFactor = attachment_blend_state.dstColorBlendFactor;
         attachment_blend_state.colorBlendOp = VK_BLEND_OP_ADD;
         attachment_blend_state.alphaBlendOp = VK_BLEND_OP_ADD;
+
+        if ( renderPassIndex == RENDER_PASS_WATER_MIRROR ) {
+            // r_sceneWaterChars' target keeps coverage in alpha (scene.frag composites it premultiplied): an additive
+            // surface (a saber's glow) adds light and covers nothing; a blended one covers by its alpha
+            if ( attachment_blend_state.dstColorBlendFactor == VK_BLEND_FACTOR_ONE ) {
+                attachment_blend_state.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+                attachment_blend_state.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            } else if ( attachment_blend_state.dstColorBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA ) {
+                attachment_blend_state.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            }
+        }
 
         if ( def->allow_discard && vkSamples != VK_SAMPLE_COUNT_1_BIT && depth_stencil_state.depthWriteEnable == VK_FALSE ) {
             // try to reduce pixel fillrate for transparent surfaces, this yields 1..10% fps increase when multisampling in enabled
@@ -1781,6 +1793,8 @@ VkPipeline vk_build_pipeline_ex( const Vk_Pipeline_Def *def, renderPass_t render
         create_info.renderPass = vk.render_pass.char_occluder.handle;
     else if ( renderPassIndex == RENDER_PASS_CHAR_HAIRMAP )
         create_info.renderPass = vk.hairMap.render_pass;
+    else if ( renderPassIndex == RENDER_PASS_WATER_MIRROR )
+        create_info.renderPass = vk.waterMirror.render_pass;
     else
         create_info.renderPass = vk.render_pass.main.handle;
 

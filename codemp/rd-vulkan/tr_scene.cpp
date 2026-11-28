@@ -57,6 +57,7 @@ void R_InitNextFrame( void ) {
 	backEndData->commands.used = 0;
 	backEndData->numSunCascadeCmds = 0;
 	backEndData->numCharShadowCmds = 0;
+	backEndData->waterMirrorCmd = NULL;
 
 	r_firstSceneDrawSurf = 0;
 #ifdef USE_PMLIGHT
@@ -683,6 +684,10 @@ void RE_RenderScene( const refdef_t *fd ) {
 		R_RenderView(&parms);
 		if ( t0 > 0.0 )
 			R_SunProfAdd( SUNPROF_MAIN_VIEW, R_SunProfNow() - t0 );
+	}
+	{	// r_sceneWaterChars: the characters near the water, mirrored in it (tr_watermirror.cpp)
+		const viewParms_t eye = tr.viewParms;
+		R_RenderWaterMirror( &eye );
 	}
 	if (tr.needScreenMap)
 	{

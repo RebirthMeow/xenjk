@@ -332,6 +332,8 @@ typedef struct {
 								// gain (2^EV) and gamma (0 off)
 	float		shade3[4];		// x r_scenePleRadiance, y r_sceneCameraFill, z, w r_sceneFogFarDensity's start (m) and multiple
 	float		shade4[4];		// x r_sceneBounce, y r_sceneSsrGlossy, z its roughness (0: off)
+	float		charMirror[4];	// r_sceneWaterChars (binding 35): x its value when drawn this frame (0: none), y the water's z,
+								// z, w 1 / the screen's width and height
 } sceneFrame_t;
 
 // a traffic signal's cycle (maps/<map>.signals, cp2gltf SceneSignals): its group's program from its intersection's
@@ -463,6 +465,8 @@ typedef struct {
 	// that band when nothing else is wet), the clock its ripples run on
 	uint32_t				numWater;
 	float					waterLo, waterHi;
+	float					waterPlanes[64][2];	// the flat water's heights and their areas (r_sceneWaterChars' plane)
+	int						numWaterPlanes;
 	VkImage					decalImage[5];	// albedo, normal, receiver depth; the projected decals' roughness, metalness, puddle; their emission
 	VkDeviceMemory			decalMem[5];
 	VkImageView				decalView[5];

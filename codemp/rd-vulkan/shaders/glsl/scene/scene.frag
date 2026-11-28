@@ -144,7 +144,10 @@ layout(std140, set = 0, binding = 5) uniform Frame {
 						// starts (metres) and the density's multiple past it (1: off)
 	vec4 shade4;		// x r_sceneBounce (its strength; 0 off, only with r_sceneAO), y r_sceneSsrGlossy's share, z its
 						// roughness (0 off); w r_sceneExactSkips (1: terrain, near-reach shadow and W3 fog reads that weigh 0 skipped)
+	vec4 charMirror;	// r_sceneWaterChars: x its value when drawn this frame (0: none), y the water's z, z, w 1 / the screen's size
 } fr;
+// r_sceneWaterChars: the characters mirrored in the water this frame (tr_watermirror.cpp), alpha their coverage
+layout(set = 0, binding = 35) uniform sampler2D charMirrorTex;
 layout(set = 0, binding = 26) uniform sampler2DArray waveTex;	// the water's waves (scene_water.comp): x, y the slopes
 // scene_occ.comp's far-depth pyramids (linear view depth): the water's bed (fr.waterBed)
 layout(std430, set = 0, binding = 23) readonly buffer Pyramids { float pyramids[]; };
@@ -1249,6 +1252,21 @@ vec4 reflectedLightAt( const vec3 P )
 	}
 	return wsum > 0.0 ? vec4( sum / wsum, 1.0 ) : vec4( 0.0 );
 }
+// r_sceneWaterChars: the characters near the water mirrored in it (drawn this frame from the eye mirrored in the plane
+// z = fr.charMirror.y, half size: tr_watermirror.cpp), at this pixel nudged by the ripples' shift as the screen's
+// reflection is (shift: in units, across the water); rgb their light, a their coverage. Water at another height: none
+vec4 charMirrorAt( const vec3 P, const vec2 shift )
+{
+	if ( fr.charMirror.x <= 0.0 || abs( P.z - fr.charMirror.y ) > 24.0 )
+		return vec4( 0.0 );
+	vec2 uv = gl_FragCoord.xy * fr.charMirror.zw;
+	const vec4 a = fr.prevViewProj * vec4( P, 1.0 ), b = fr.prevViewProj * vec4( P + vec3( shift, 0.0 ), 1.0 );
+	if ( a.w > 1.0 && b.w > 1.0 )
+		uv += ( b.xy / b.w - a.xy / a.w ) * 0.5;
+	const vec4 m = textureLod( charMirrorTex, uv, 0.0 );
+	return vec4( fromDisplay( m.rgb ), clamp( m.a, 0.0, 1.0 ) );
+}
+
 // r_sceneBounce's light at P, and r_sceneSsrGlossy's reflection (rgb the hits' light, a their share): last frame's, as
 // occlusionAt; zero where none
 vec4 bounceAt( const vec3 P, const bool glossy )
@@ -2767,13 +2785,27 @@ void main()
 		reflection = reflectedLight( vPos ) * ( F0 * ab.x + ab.y ) * ( wet * glossy * fr.ssr.y * ao );
 	}
 	if ( water ) {	// the screen's reflection where it holds this surface, nudged by the ripples, else the sky's
-		const vec4 r = fr.ssr.x > 0.5 && pc.eye.w > 0.5 ? reflectedLightAt( vPos + vec3( ( N.xy - Ng.xy ) * fr.water2.z, 0.0 ) ) : vec4( 0.0 );
+		vec3 charLight = vec3( 0.0 );	// (r_sceneWaterChars' light, premultiplied by its coverage)
+		vec4 r = fr.ssr.x > 0.5 && pc.eye.w > 0.5 ? reflectedLightAt( vPos + vec3( ( N.xy - Ng.xy ) * fr.water2.z, 0.0 ) ) : vec4( 0.0 );
+		if ( fr.charMirror.x > 0.0 && pc.eye.w > 0.5 ) {	// (r_sceneWaterChars: the characters over it)
+			// (a quarter of the ripples' shift: a figure is small, and the full shift tears it to shreds)
+			const vec4 m = charMirrorAt( vPos, ( N.xy - Ng.xy ) * ( fr.water2.z * 0.25 ) );
+			if ( fr.charMirror.x > 1.5 ) {	// 2: the target alone as it is stored, its empty part dark blue; 3: its alpha
+				const vec4 raw = textureLod( charMirrorTex, gl_FragCoord.xy * fr.charMirror.zw, 0.0 );
+				outColor = vec4( fr.charMirror.x > 2.5 ? vec3( raw.a ) : mix( vec3( 0.0, 0.0, 0.3 ), raw.rgb, clamp( raw.a, 0.0, 1.0 ) ), 1.0 );
+				return;
+			}
+			// over what the screen's reflection holds, premultiplied (a saber's glow: light with no coverage)
+			const float a = r.a * ( 1.0 - m.a ) + m.a;
+			r = vec4( a > 0.0 ? r.rgb * ( r.a * ( 1.0 - m.a ) / a ) : vec3( 0.0 ), a );
+			charLight = m.rgb;
+		}
 		if ( fr.waterWaves2.z > 0.0 ) {
 			// r_sceneWaterFresnel: The Witcher 3's water (static 00868): ((1 - N.V)^4 / 4 + 0.05) to the env's power,
 			// x 0.4 on calm water to 1 on crests (foam here); where the trace misses, the sky itself (its paraboloid)
 			const vec3 R = reflect( -V, N );
 			const float F = pow( pow( 1.0 - NdotV, 4.0 ) * 0.25 + 0.05, fr.waterWaves2.w ) * ( 0.4 + 0.6 * clamp( 4.0 * sqrt( foam ), 0.0, 1.0 ) );
-			reflection = ( r.rgb * r.a + skyRadiance( normalize( vec3( R.xy, max( R.z, 0.02 ) ) ), vec3( 0.0 ) ) * ( 1.0 - r.a ) ) * ( F * fr.water2.y * ( 1.0 - foam ) );
+			reflection = ( r.rgb * r.a + charLight + skyRadiance( normalize( vec3( R.xy, max( R.z, 0.02 ) ) ), vec3( 0.0 ) ) * ( 1.0 - r.a ) ) * ( F * fr.water2.y * ( 1.0 - foam ) );
 		} else {
 			const vec2 ab = envBRDF( rough, NdotV );
 			vec3 sky = waterSky( reflect( -V, N ) );
@@ -2781,7 +2813,7 @@ void main()
 			if ( fr.ple.z >= 0.0 )	// (the area's baked reflection capture, where one is loaded)
 				sky = pleReflect( reflect( -V, N ), rough );
 #endif
-			reflection = ( r.rgb * r.a + sky * ( 1.0 - r.a ) ) * ( F0 * ab.x + ab.y ) * ( fr.water2.y * ( 1.0 - foam ) );
+			reflection = ( r.rgb * r.a + charLight + sky * ( 1.0 - r.a ) ) * ( F0 * ab.x + ab.y ) * ( fr.water2.y * ( 1.0 - foam ) );
 		}
 	}
 	col += reflection;

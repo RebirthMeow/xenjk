@@ -790,6 +790,7 @@ void vk_initialize( void )
 	vk_create_render_passes();
 	vk_create_framebuffers();
 	vk_create_sun_shadow();
+	vk_create_water_mirror();
 
 #ifdef VK_CUBEMAP
 	vk_create_cubemap_prefilter();
@@ -816,6 +817,7 @@ void vk_shutdown( void )
 	vk_video_shutdown();
 	vk_destroy_framebuffers();
 	vk_destroy_pipelines( qtrue ); // reset counter
+	vk_destroy_water_mirror();
 	vk_destroy_sun_shadow();
 	vk_destroy_render_passes();
 	vk_destroy_attachments();

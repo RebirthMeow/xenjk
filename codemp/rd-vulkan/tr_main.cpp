@@ -714,7 +714,7 @@ void R_SetupProjection( viewParms_t *dest, float zProj, qboolean computeFrustum 
 R_SetupProjectionZ
 ===============
 */
-static void R_SetupProjectionZ( viewParms_t *dest ) {
+void R_SetupProjectionZ( viewParms_t *dest ) {
 
 	const float zNear = dest->zNear;
 	const float zFar = dest->zFar;

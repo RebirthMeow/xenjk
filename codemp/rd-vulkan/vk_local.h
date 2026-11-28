@@ -551,6 +551,7 @@ typedef enum {
 	RENDER_PASS_DEPTH_PREPASS,	// r_depthPrepass: opaque world depth inside the main render pass, no colour writes
 	RENDER_PASS_CHAR_OCCLUDER,	// r_charOccHair: alpha-tested character stages' linear depth into the depth extract (MIN)
 	RENDER_PASS_CHAR_HAIRMAP,	// r_charSelfShadowHairMap: the nearest character's hair, optical depth and its moments
+	RENDER_PASS_WATER_MIRROR,	// r_sceneWaterChars: the characters mirrored in the water (tr_watermirror.cpp), 1 sample
 	RENDER_PASS_COUNT
 } renderPass_t;
 
@@ -816,6 +817,17 @@ typedef struct {
 		VkFormat		format;
 		int				size;
 	} hairMap;
+
+	// r_sceneWaterChars (tr_watermirror.cpp): the characters mirrored in the water, half the screen, colour and depth
+	struct {
+		VkImage			image, depthImage;
+		VkDeviceMemory	memory, depthMemory;
+		VkImageView		view, depthView;
+		VkFramebuffer	framebuffer;
+		VkRenderPass	render_pass;
+		VkSampler		sampler;
+		int				width, height;
+	} waterMirror;
 
 	// VK_KHR_present_wait (r_presentWait)
 	qboolean		presentWaitAvailable;
@@ -1635,6 +1647,9 @@ void		R_SceneSunDir( vec4_t sunDir );
 void		R_SceneCycle( void );	// the render scene's day/night cycle, each world scene before its sun is read
 uint32_t	vk_scene_shadow_key( void );
 void		vk_begin_hair_map_render_pass( void );
+void		vk_create_water_mirror( void );	// tr_watermirror.cpp
+void		vk_destroy_water_mirror( void );
+void		vk_begin_water_mirror_render_pass( void );
 qboolean	vk_depth_extract_half( void );
 void		vk_restore_draw_state( qboolean rebindPipeline );
 

@@ -195,6 +195,10 @@ void	R_AddDrawSurfCmd( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			backEndData->charShadowCmds[backEndData->numCharShadowCmds++] = cmd;
 		return;
 	}
+	if ( tr.viewParms.waterMirror ) {	// (drawn before the frame's passes: RB_RenderWaterMirror)
+		backEndData->waterMirrorCmd = cmd;
+		return;
+	}
 
 	tr.numDrawSurfCmds++;
 	if (tr.drawSurfCmd == NULL) {

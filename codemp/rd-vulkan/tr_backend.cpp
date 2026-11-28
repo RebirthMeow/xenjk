@@ -1636,6 +1636,43 @@ void RB_RenderSunShadowCascades( void )
 }
 
 /*
+================
+RB_RenderWaterMirror
+
+vk_begin_frame, before any pass of the frame (after the shadow tiles the characters' shading reads)
+================
+*/
+void RB_RenderWaterMirror( void )
+{
+	const drawSurfsCommand_t *cmd = backEndData->waterMirrorCmd;
+
+	backEndData->waterMirrorCmd = NULL;
+	if ( !cmd || !vk.waterMirror.framebuffer )
+		return;
+
+	const qboolean timed = vk_gputime_section_begin( "water chars" );
+	backEnd.refdef = cmd->refdef;
+	backEnd.viewParms = cmd->viewParms;
+	backEnd.hasGlowSurfaces = qfalse;
+	backEnd.isGlowPass = qfalse;
+	backEnd.hasRefractionSurfaces = qfalse;
+	backEnd.projection2D = qfalse;
+	RB_UpdateUniformConstants( &backEnd.refdef, &backEnd.viewParms, cmd->drawSurfs, cmd->numDrawSurfs );
+
+	vk_begin_water_mirror_render_pass();
+	vk.cmd->depth_range = DEPTH_RANGE_COUNT;	// force the target's viewport/scissor
+	vk.cmd->last_pipeline = VK_NULL_HANDLE;
+	Com_Memcpy( vk_world.modelview_transform, backEnd.viewParms.world.modelViewMatrix, 64 );
+	RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
+	vk_end_render_pass();
+
+	vk.cmd->depth_range = DEPTH_RANGE_COUNT;
+	vk.cmd->last_pipeline = VK_NULL_HANDLE;
+	vk.renderPassIndex = RENDER_PASS_MAIN;
+	vk_gputime_section_end( timed );
+}
+
+/*
 =============
 RB_DrawSurfs
 
@@ -1648,8 +1685,8 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 	cmd = (const drawSurfsCommand_t *)data;
 
-	// sun cascades and character shadow tiles were drawn before the main render pass began
-	if ( R_IS_SHADOW_VIEW( cmd->viewParms ) )
+	// sun cascades, character shadow tiles and the characters mirrored in the water were drawn before the main render pass began
+	if ( R_IS_SHADOW_VIEW( cmd->viewParms ) || cmd->viewParms.waterMirror )
 		return (const void*)(cmd + 1);
 
 	backEnd.refdef = cmd->refdef;
