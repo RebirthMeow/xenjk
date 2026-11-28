@@ -304,7 +304,7 @@ qboolean RB_WaterHairBed( void )
 		|| vk.render_pass.char_occluder.handle == VK_NULL_HANDLE || backEnd.viewParms.portalView != PV_NONE )
 		return qfalse;
 	// the alpha-tested opaque stages of Ghoul2 models (as RB_RenderDrawSurfList's occluder pass takes) on models with
-	// flat water beside them, between their feet and a little over their heads; none (the crowded square), no pass
+	// water beside them, between their feet and a little over their heads; none (the crowded square), no pass
 	static std::vector<drawSurf_t> bed;	// (not "near": a Windows macro)
 	static byte state[MAX_REFENTITIES];	// 0 untested, 1 near water, 2 not
 	Com_Memset( state, 0, sizeof( state ) );

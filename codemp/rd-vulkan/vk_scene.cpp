@@ -111,7 +111,7 @@ static qboolean Scene_ReadHeader( const byte *buf, uint64_t len, xscnHeader_t *h
 static std::vector<xscnLight_t> sceneCharLights;
 static std::vector<float> sceneCharBoxes;					// 16 a light: its box's rows (scene space -> [-1, 1]); none: zeros
 static std::vector<xscnShape_t> sceneCharShapes;			// a light's shape (version 6); none: empty
-static std::vector<float> sceneWaterBoxes;	// RB_WaterHairBed: each flat water's z and xy box (x0 y0 x1 y1), touching pieces merged
+static std::vector<float> sceneWaterBoxes;	// RB_WaterHairBed: each water piece's box (x0 y0 z0 x1 y1 z1), touching pieces merged
 static std::vector<uint32_t> sceneCharCells, sceneCharRefs;	// per cell its first and count in the refs
 
 sceneState_t sceneState;	// (the scene files name it sc: vk_scene_local.h)
@@ -7873,25 +7873,29 @@ void R_SceneLoad( const char *mapBsp )
 				lo[1] = MIN( lo[1], y ); hi[1] = MAX( hi[1], y );
 				lo[2] = MIN( lo[2], z ); hi[2] = MAX( hi[2], z );
 			}
+			{	// (flat or not: falls and rapids are waded too)
+				size_t w;
+				for ( w = 0; w < sceneWaterBoxes.size(); w += 6 ) {
+					float *q = &sceneWaterBoxes[w];
+					if ( lo[0] <= q[3] + 64.0f && hi[0] >= q[0] - 64.0f && lo[1] <= q[4] + 64.0f && hi[1] >= q[1] - 64.0f
+						&& lo[2] <= q[5] + 8.0f && hi[2] >= q[2] - 8.0f ) {
+						for ( int a = 0; a < 3; a++ ) {
+							q[a] = MIN( q[a], lo[a] );
+							q[3 + a] = MAX( q[3 + a], hi[a] );
+						}
+						break;
+					}
+				}
+				if ( w == sceneWaterBoxes.size() ) {
+					const float add[6] = { lo[0], lo[1], lo[2], hi[0], hi[1], hi[2] };
+					sceneWaterBoxes.insert( sceneWaterBoxes.end(), add, add + 6 );
+				}
+			}
 			// r_sceneWaterChars: a flat piece's height, its area added to the same height's (within 8 u); with every
 			// slot taken, a height's first piece replaces the least area if it is larger (Beauclair: the lake at z 0
 			// came after a mountain's pools)
 			if ( hi[2] - lo[2] < 48.0f ) {
 				const float z = 0.5f * ( lo[2] + hi[2] ), area = ( hi[0] - lo[0] ) * ( hi[1] - lo[1] );
-				size_t w;
-				for ( w = 0; w < sceneWaterBoxes.size(); w += 5 ) {
-					float *q = &sceneWaterBoxes[w];
-					if ( fabsf( q[0] - z ) <= 8.0f && lo[0] <= q[3] + 64.0f && hi[0] >= q[1] - 64.0f
-						&& lo[1] <= q[4] + 64.0f && hi[1] >= q[2] - 64.0f ) {
-						q[1] = MIN( q[1], lo[0] ); q[2] = MIN( q[2], lo[1] );
-						q[3] = MAX( q[3], hi[0] ); q[4] = MAX( q[4], hi[1] );
-						break;
-					}
-				}
-				if ( w == sceneWaterBoxes.size() ) {
-					const float add[5] = { z, lo[0], lo[1], hi[0], hi[1] };
-					sceneWaterBoxes.insert( sceneWaterBoxes.end(), add, add + 5 );
-				}
 				int k;
 				for ( k = 0; k < sc.numWaterPlanes && fabsf( sc.waterPlanes[k][0] - z ) > 8.0f; k++ )
 					;
@@ -8236,7 +8240,7 @@ void R_SceneLoad( const char *mapBsp )
 		ri.Printf( PRINT_ALL, "scene decals: %u mesh decal materials into the DBuffer (%ux%u)\n", sc.numDecals, sc.decalW, sc.decalH );
 	if ( sc.numWater )
 		ri.Printf( PRINT_ALL, "scene water: %u materials, surfaces from z %.0f to %.0f\n", sc.numWater, sc.waterLo + 16.0f, sc.waterHi - 16.0f );
-		ri.Printf( PRINT_DEVELOPER, "scene water: %d flat boxes\n", (int)( sceneWaterBoxes.size() / 5 ) );
+		ri.Printf( PRINT_DEVELOPER, "scene water: %d boxes\n", (int)( sceneWaterBoxes.size() / 6 ) );
 		for ( int k = 0; k < sc.numWaterPlanes; k++ )
 			ri.Printf( PRINT_DEVELOPER, "scene water plane: z %.1f, %.0f square units\n", sc.waterPlanes[k][0], sc.waterPlanes[k][1] );
 	if ( sc.numAdGlows )
@@ -8732,15 +8736,15 @@ static qboolean Scene_SkyCardsFrame( byte *buf, const sceneFrame_t *fr )
 	return qtrue;
 }
 
-// RB_WaterHairBed: flat water within 64 u of P in xy, its height between P's z - 32 and z + 160 (feet to over the head)
+// RB_WaterHairBed: water within 64 u of P in xy and between P's z - 32 and z + 160 (feet to over the head)
 qboolean R_SceneWaterNear( const vec3_t P )
 {
 	if ( !sc.loaded || !r_scene->integer || !sc.numWater )
 		return qfalse;
-	for ( size_t w = 0; w < sceneWaterBoxes.size(); w += 5 ) {
+	for ( size_t w = 0; w < sceneWaterBoxes.size(); w += 6 ) {
 		const float *q = &sceneWaterBoxes[w];
-		if ( q[0] >= P[2] - 32.0f && q[0] <= P[2] + 160.0f && P[0] >= q[1] - 64.0f && P[0] <= q[3] + 64.0f
-			&& P[1] >= q[2] - 64.0f && P[1] <= q[4] + 64.0f )
+		if ( q[2] <= P[2] + 160.0f && q[5] >= P[2] - 32.0f && P[0] >= q[0] - 64.0f && P[0] <= q[3] + 64.0f
+			&& P[1] >= q[1] - 64.0f && P[1] <= q[4] + 64.0f )
 			return qtrue;
 	}
 	return qfalse;
