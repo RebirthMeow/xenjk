@@ -82,14 +82,17 @@ static uint32_t Scene_LoadW3Terrain( const char *scnName, std::vector<float> &pa
 		const uint32_t stride = h->version == 2 ? 8u : 4u;	// floats a layer
 		const byte *paths = (const byte *)( layerValues + stride * h->layers );
 		const byte *tile = paths + 2u * h->layers * 64u;
-		auto slotIndex = [&]( const byte *p ) -> float {
+		// (clamp: the tile's tint, clamped to its edges; repeated, its texels at one edge blended the far edge's in, a
+		// hard line along every tile border where the two differ: the green strip on Beauclair's harbour cobbles, report
+		// 20261127-231144, the lake's colour at the tile's west edge drawn at its east)
+		auto slotIndex = [&]( const byte *p, qboolean clamp = qfalse ) -> float {
 			char path[65];
 			Com_Memcpy( path, p, 64 );
 			path[64] = '\0';
 			if ( !path[0] )
 				return -1.0f;
 			qboolean found;
-			image_t *image = Scene_Image( path, &found );
+			image_t *image = Scene_Image( path, &found, clamp );
 			if ( !found ) {
 				missing++;
 				return -1.0f;
@@ -139,7 +142,7 @@ static uint32_t Scene_LoadW3Terrain( const char *scnName, std::vector<float> &pa
 			float *L = &params[(size_t)latticeBase * 4u];
 			for ( size_t i = 0; i < n; i++ )
 				L[i] = (float)words[i];
-			float head[8] = { (float)latticeBase, (float)m, slotIndex( tint ), (float)h->layers, origin[0], origin[1],
+			float head[8] = { (float)latticeBase, (float)m, slotIndex( tint, qtrue ), (float)h->layers, origin[0], origin[1],
 				stride == 8u ? 1.0f : 0.0f, 0.0f };
 			float *d = &params[mat * 4u];
 			d[0] = -3.0f;	// a terrain tile: its block (scene.frag)

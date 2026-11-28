@@ -3791,7 +3791,7 @@ static void Scene_BindW3CloudImages( VkCommandBuffer cb )
 	}
 }
 
-image_t *Scene_Image( const char *path, qboolean *found )
+image_t *Scene_Image( const char *path, qboolean *found, qboolean clamp )
 {
 	char name[MAX_QPATH];
 	image_t *image;
@@ -3800,7 +3800,7 @@ image_t *Scene_Image( const char *path, qboolean *found )
 	Q_strncpyz( name, path, MIN( (int)sizeof( name ), 64 ) );
 	if ( !name[0] )
 		return tr.whiteImage;
-	image = R_FindImageFile( name, IMGFLAG_MIPMAP | IMGFLAG_NOLIGHTSCALE, 0 );
+	image = R_FindImageFile( name, (imgFlags_t)( IMGFLAG_MIPMAP | IMGFLAG_NOLIGHTSCALE | ( clamp ? IMGFLAG_CLAMPTOEDGE : 0 ) ), 0 );
 	if ( !image ) {
 		ri.Printf( PRINT_DEVELOPER, "scene: missing image %s\n", name );
 		return tr.whiteImage;

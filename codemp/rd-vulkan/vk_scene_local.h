@@ -836,8 +836,9 @@ VkShaderModule	Scene_Shader( const unsigned char *code, unsigned int size );
 VkDescriptorSetLayout Scene_SetLayout( const VkDescriptorType *types, const VkShaderStageFlags *stages, int count,
 					const uint32_t *arrays = NULL );
 void			Scene_WriteSet( VkDescriptorSet set, const sceneBuffer_t **bufs, const VkDescriptorType *types, int count );
-// vk_scene.cpp: a scene image by its path (tr.whiteImage when it is missing or empty; found says which)
-image_t			*Scene_Image( const char *path, qboolean *found );
+// vk_scene.cpp: a scene image by its path (tr.whiteImage when it is missing or empty; found says which); clamp: sampled
+// clamped to its edges (a W3 terrain tile's tint: repeated, its far edge bled into its near one)
+image_t			*Scene_Image( const char *path, qboolean *found, qboolean clamp = qfalse );
 void			Scene_TextureInfo( const image_t *image, VkDescriptorImageInfo *ii );	// its descriptor (its sampler as created)
 void			Scene_EyeViewProj( float out[16], const float proj[16], qboolean relative );
 VkPipeline		Scene_DecalPipeline( VkShaderModule vs, VkShaderModule fs );	// (the mesh decals' and the projected decals')
