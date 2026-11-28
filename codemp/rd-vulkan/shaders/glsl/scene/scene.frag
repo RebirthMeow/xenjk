@@ -1217,8 +1217,9 @@ vec2 envBRDF( const float rough, const float NdotV )
 
 // the light a wet surface at P mirrors: scene_ssr.comp traced it last frame and settled it over frames. A tent 1.5
 // texels wide (4x4 taps; a spatial filter over the temporal one: in motion the texels have not settled yet) over the
-// texels showing this surface only (their view depth within 10%); none: a quarter of the haze. reflectedLightAt: the
-// light and 1, or 0 and 0 where none
+// texels showing this surface only (their view depth within 10%). reflectedLightAt: the hits' light and their share
+// (aoTex's a: the rays that met something on screen, or the open sky the frame shows that way), 0 and 0 where none;
+// the caller fills the rest from its own sky
 vec4 reflectedLightAt( const vec3 P )
 {
 	const vec4 c = fr.prevViewProj * vec4( P, 1.0 );
@@ -1235,7 +1236,7 @@ vec4 reflectedLightAt( const vec3 P )
 	// alone, in the same order (the same sum; a fixed 9 steps, no loop control: 0.5-0.6 ms of the lit pass at 4K)
 	const ivec2 j0 = ivec2( not( lessThan( abs( vec2( i0 - 1 ) - st ), vec2( 1.5 ) ) ) );
 	vec3 sum = vec3( 0.0 );
-	float wsum = 0.0;
+	float wsum = 0.0, csum = 0.0;
 	for ( int k = 0; k < 9; k++ ) {
 		const ivec2 o = j0 + ivec2( k % 3 - 1, k / 3 - 1 );
 		const vec2 dxy = abs( vec2( i0 + o ) - st );
@@ -1244,13 +1245,15 @@ vec4 reflectedLightAt( const vec3 P )
 			continue;
 		const ivec2 at = clamp( i0 + o, ivec2( 0 ), size - 1 );
 		const vec4 h = fr.ssr.w > 0.5 ? texelFetch( reflectTex1, at, 0 ) : texelFetch( reflectTex0, at, 0 );
+		const float cov = fr.ssr.w > 0.5 ? texelFetch( aoTex1, at, 0 ).a : texelFetch( aoTex0, at, 0 ).a;
 		if ( h.a <= 0.0 || abs( h.a - z ) > 0.1 * z + 16.0 )	// loose: at grazing angles a texel's depth runs far
 
 			continue;
 		sum += h.rgb * w;
+		csum += clamp( cov, 0.0, 1.0 ) * w;
 		wsum += w;
 	}
-	return wsum > 0.0 ? vec4( sum / wsum, 1.0 ) : vec4( 0.0 );
+	return csum > 1e-4 ? vec4( sum / csum, csum / wsum ) : vec4( 0.0 );
 }
 // r_sceneWaterChars: the characters near the water mirrored in it (drawn this frame from the eye mirrored in the plane
 // z = fr.charMirror.y, half size: tr_watermirror.cpp), at this pixel nudged by the ripples' shift as the screen's
@@ -1346,10 +1349,12 @@ vec2 occlusionAt( const vec3 P )
 	return wsum > 0.0 ? sum / wsum : vec2( 1.0 );
 }
 
-vec3 reflectedLight( const vec3 P )
+// wet ground: the misses take the haze, a quarter for a ray along the ground (the city round it) to a half for one
+// rising steeply (open sky), by the ray, not by the screen edge it left through
+vec3 reflectedLight( const vec3 P, const vec3 R )
 {
 	const vec4 r = reflectedLightAt( P );
-	return r.a > 0.0 ? r.rgb : fromDisplay( fr.fog.rgb ) * 0.25;
+	return r.rgb * r.a + fromDisplay( fr.fog.rgb ) * ( mix( 0.25, 0.5, smoothstep( 0.2, 0.7, R.z ) ) * ( 1.0 - r.a ) );
 }
 
 // gradient noise on a world plane (metres), about 0..1 (value noise thresholded into puddles drew square blots)
@@ -2782,7 +2787,7 @@ void main()
 	const float glossy = porous && fr.wet2.w > 0.0 ? clamp( 2.0 - 2.0 * rough / fr.wet2.w, 0.0, 1.0 ) : 1.0;
 	if ( fr.ssr.x > 0.5 && pc.eye.w > 0.5 && wet > 0.05 && glossy > 0.0 && mode != 2 ) {
 		const vec2 ab = envBRDF( rough, NdotV );
-		reflection = reflectedLight( vPos ) * ( F0 * ab.x + ab.y ) * ( wet * glossy * fr.ssr.y * ao );
+		reflection = reflectedLight( vPos, reflect( -V, N ) ) * ( F0 * ab.x + ab.y ) * ( wet * glossy * fr.ssr.y * ao );
 	}
 	if ( water ) {	// the screen's reflection where it holds this surface, nudged by the ripples, else the sky's
 		vec3 charLight = vec3( 0.0 );	// (r_sceneWaterChars' light, premultiplied by its coverage)
