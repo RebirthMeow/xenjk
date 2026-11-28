@@ -334,6 +334,7 @@ typedef struct {
 	float		shade4[4];		// x r_sceneBounce, y r_sceneSsrGlossy, z its roughness (0: off)
 	float		charMirror[4];	// r_sceneWaterChars (binding 35): x its value when drawn this frame (0: none), y the water's z,
 								// z, w 1 / the screen's width and height
+	float		charBed[4];		// x 1 when the depth extract (binding 36) holds this frame's hair depth (RB_CharOcclusion)
 } sceneFrame_t;
 
 // a traffic signal's cycle (maps/<map>.signals, cp2gltf SceneSignals): its group's program from its intersection's

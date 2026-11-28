@@ -1831,6 +1831,8 @@ typedef struct backEndState_s {
 	qboolean charOcclusion;						// r_charAO / r_charContactShadows: this view computes them after its depth prepass
 	qboolean charOccMark;						// r_charOccMask: the depth prepass marks model pixels (VK_STENCIL_AO_MASK) for it
 	qboolean charOccExtracted;					// RB_CharOcclusion filled the depth extract this view (r_ssaoReuseExtract)
+	drawSurf_t *hairBedSurfs;					// the view's surfaces while the scene's occlusion splits the main pass after
+	int		hairBedNum;							// the prepass (RB_WaterHairBed: the hair under the water)
 	// r_charContactShadows' screen masks (RB_SetupCharOccLights): up to 3 lights, world position (w 10 + its size in
 	// radians) or direction to the light (w = size, 0 = r_charContactSoftness); source -1 = the light grid of the Ghoul2 instance charOccGhoul2, else a dlight index
 	int		charOccNumLights;
@@ -2441,6 +2443,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs );
 // vk_charocc.cpp: character occlusion (r_charAO, r_charContactShadows)
 void RB_SetupCharOccLights( void );
 void RB_CharOcclusion( drawSurf_t *drawSurfs, int numDrawSurfs );
+qboolean RB_WaterHairBed( void );
 void RB_CharOccCameraConstants( vkUniformCamera_t &uniform, const trRefdef_t *refdef, const viewParms_t *viewParms );
 void R_RenderSunShadowCascades( void );
 qboolean R_SetupCharShadows( qboolean sunCascades );

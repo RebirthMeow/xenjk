@@ -1185,7 +1185,7 @@ static qboolean Scene_CreatePipelines( void )
 	// GPU-driven draws: 14 each list slot's material, 15 the materials (written by Scene_CreateGpuDriven); 16 the light
 	// clusters; 17 the lights' fades (scene_lightfade.comp); 18 the stand-ins; 19 the meshes (scene.vert: the hide fade's centre);
 	// 20, 21, 22 the DBuffer (mesh decals: albedo, normal, the receiver's depth); 23 the occlusion pyramids (the water's bed)
-	static const VkDescriptorType drawTypes[36] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+	static const VkDescriptorType drawTypes[37] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -1200,16 +1200,17 @@ static qboolean Scene_CreatePipelines( void )
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,	// 31: maps/<map>.xple's probe GI (vk_scene_ple.cpp)
 		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,	// 32, 33: r_sceneBounce's two images
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,	// 34: the sky's cumulus cards this frame (r_sceneSkyCards)
-		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER };	// 35: the characters mirrored in the water (r_sceneWaterChars)
+		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,	// 35: the characters mirrored in the water (r_sceneWaterChars)
+		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER };	// 36: the depth extract (RB_CharOcclusion: the hair's depth, the water's bed)
 	// (2, 3, 4, 13 and 17 also the vertex stage's: the particles' light, records and light fades, scene_fx.vert)
-	static const VkShaderStageFlags drawStages[36] = { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+	static const VkShaderStageFlags drawStages[37] = { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT,
-		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT };	// 15: the materials (scene.vert reads the kind); 18: the stand-ins; 24, 25: the DBuffer's surface and emission; 26: the water's waves
+		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT };	// 15: the materials (scene.vert reads the kind); 18: the stand-ins; 24, 25: the DBuffer's surface and emission; 26: the water's waves
 	// the history's depth alone: ssr 4, capture 3
 	// 5, 6: r_sceneAO's image this frame and last frame's; 7: the area's baked reflection capture (maps/<map>_refl.dds,
 	// white when none): what a ray that misses takes
@@ -1248,7 +1249,7 @@ static qboolean Scene_CreatePipelines( void )
 	sc.groupCullLayout = Scene_SetLayout( cullTypes, cullStages, 2 );	// scene_groupcull.comp: the groups, the view's list
 	sc.sortLayout = Scene_SetLayout( sortTypes, sortStages, 5 );
 	sc.occLayout = Scene_SetLayout( occTypes, occStages, 2 );
-	sc.drawLayout = Scene_SetLayout( drawTypes, drawStages, 36 );
+	sc.drawLayout = Scene_SetLayout( drawTypes, drawStages, 37 );
 	sc.ssrLayout = Scene_SetLayout( ssrTypes, ssrStages, 11 );
 	sc.fogLayout = Scene_SetLayout( fogTypes, fogStages, 16 );
 	sc.captureLayout = Scene_SetLayout( captureTypes, captureStages, 4 );
@@ -1799,6 +1800,40 @@ static void Scene_CullPoolScatterSet( int f )
 
 static void Scene_CullPoolCheck( int f );
 
+// draw binding 36: the depth extract (read only when charBed says so: RB_CharOcclusion filled it this frame); a swapchain
+// restart makes it anew (vk_scene_char_bed_descriptors)
+static void Scene_WriteCharBed( VkDescriptorSet set )
+{
+	VkDescriptorImageInfo ii;
+	VkWriteDescriptorSet wr;
+	if ( vk.depth.extract.enabled && vk.depth.extract.image_view ) {
+		ii.sampler = sc.nearestSampler;
+		ii.imageView = vk.depth.extract.image_view;
+		ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	} else {
+		Scene_TextureInfo( tr.blackImage, &ii );
+	}
+	Com_Memset( &wr, 0, sizeof( wr ) );
+	wr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+	wr.dstSet = set;
+	wr.dstBinding = 36;
+	wr.descriptorCount = 1;
+	wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	wr.pImageInfo = &ii;
+	qvkUpdateDescriptorSets( vk.device, 1, &wr, 0, NULL );
+}
+
+// vk_restart_swapchain made the attachments anew (the device idle): the draw sets' depth extract
+void vk_scene_char_bed_descriptors( void )
+{
+	if ( !sc.loaded )
+		return;
+	for ( int f = 0; f < NUM_COMMAND_BUFFERS; f++ )
+		for ( int v = 0; v < SCENE_MAX_VIEWS; v++ )
+			if ( sc.drawSet[f][v] )
+				Scene_WriteCharBed( sc.drawSet[f][v] );
+}
+
 static qboolean Scene_CreateViews( void )
 {
 	VkDescriptorPoolSize ps[4];
@@ -1817,7 +1852,7 @@ static qboolean Scene_CreateViews( void )
 	ps[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	ps[1].descriptorCount = sets + NUM_COMMAND_BUFFERS * 2 + 8;
 	ps[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	ps[2].descriptorCount = sets * 15 + NUM_COMMAND_BUFFERS * 15 + 16;	// (+1 a set: the characters mirrored in the water)	// (+1 a slot: the water-mirror proxy)	// (+2 a set, +1 a slot: r_sceneBounce's)	// (+1 a slot: the reflection's capture)	// (+2 a set and a slot: r_sceneAO's)	// draw 8 (the DBuffer's 3 and the waves with them); per slot 10 (the decal pass's depth, the haze's last scatter)
+	ps[2].descriptorCount = sets * 16 + NUM_COMMAND_BUFFERS * 15 + 16;	// (+1 a set: the depth extract)	// (+1 a set: the characters mirrored in the water)	// (+1 a slot: the water-mirror proxy)	// (+2 a set, +1 a slot: r_sceneBounce's)	// (+1 a slot: the reflection's capture)	// (+2 a set and a slot: r_sceneAO's)	// draw 8 (the DBuffer's 3 and the waves with them); per slot 10 (the decal pass's depth, the haze's last scatter)
 	ps[3].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 	ps[3].descriptorCount = NUM_COMMAND_BUFFERS * 7 + 8;
 	Com_Memset( &dp, 0, sizeof( dp ) );
@@ -2159,6 +2194,7 @@ static qboolean Scene_CreateViews( void )
 			}
 			wr.dstBinding = 35;
 			qvkUpdateDescriptorSets( vk.device, 1, &wr, 0, NULL );
+			Scene_WriteCharBed( sc.drawSet[f][v] );	// 36: the depth extract
 			{
 				VkDescriptorBufferInfo bi = { sc.clusters[f].buf, 0, VK_WHOLE_SIZE };
 				VkWriteDescriptorSet w;
@@ -10141,6 +10177,16 @@ qboolean vk_scene_decals( void )
 // the instances it hid against that pyramid with this frame's camera, packs the ones still visible into the spare slot's
 // lists and resumes the pass drawing their depth, so the lit pass and the view's later passes draw them too in this
 // frame (vk_scene_draw). Returns qtrue when it ended and resumed the pass.
+// RB_CharOcclusion filled the depth extract for the eye's view: its hair depth (alpha-tested character stages, which
+// the depth prepass and so the water's bed leave out) is a bed for the water this frame, so a wading character's hair
+// shows through the water as the body does (the water took the bed behind it and covered it)
+void vk_scene_char_bed( void )
+{
+	if ( !sc.loaded || !sc.numWater || !sc.framePtr[vk.cmd_index] || backEnd.viewParms.sceneView - 1 != sc.occEye )
+		return;
+	( (sceneFrame_t *)sc.framePtr[vk.cmd_index] )->charBed[0] = 1.0f;
+}
+
 qboolean vk_scene_occlusion( void )
 {
 	vkSecTimer_t tSec( VK_SEC_SCENEOCC );	// r_cpuTimes
@@ -10301,6 +10347,9 @@ qboolean vk_scene_occlusion( void )
 	// mesh decals (r_sceneDecals): the DBuffer from this prepass and phase 2's commands (their depth comes after it)
 	if ( decals )
 		Scene_DrawDecals( cb, f, v, slot );
+	// the hair's depth for the water's bed (without character occlusion, which gives it after this)
+	if ( sc.numWater )
+		RB_WaterHairBed();
 
 	// the depth attachment back for the pass
 	db.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;

@@ -62,6 +62,7 @@ void vk_restart_swapchain( const char *funcname )
     vk_create_cubemap_prefilter();
 #endif
     vk_update_attachment_descriptors();
+    vk_scene_char_bed_descriptors();	// (render scene: the depth extract its water reads)
     vk_update_post_process_pipelines();
 
 #ifdef VK_PBR_BRDFLUT

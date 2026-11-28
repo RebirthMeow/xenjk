@@ -1752,8 +1752,12 @@ const void	*RB_DrawSurfs( const void *data ) {
 		vk.cmd->last_pipeline = VK_NULL_HANDLE;
 		// render scene occlusion (r_sceneOcclusion): the pass split for its second phase, which draws the depth of what it
 		// finds visible; the scene's mesh decals (r_sceneDecals) go into their DBuffer in that split, or in one of their own
+		// (and, without character occlusion, the hair's depth for the water's bed in that split: RB_WaterHairBed)
+		backEnd.hairBedSurfs = backEnd.charOcclusion ? NULL : cmd->drawSurfs;
+		backEnd.hairBedNum = cmd->numDrawSurfs;
 		if ( vk_scene_occlusion() || vk_scene_decals() )
 			vk.cmd->last_pipeline = VK_NULL_HANDLE;
+		backEnd.hairBedSurfs = NULL;
 
 		if ( backEnd.charOcclusion )
 		{

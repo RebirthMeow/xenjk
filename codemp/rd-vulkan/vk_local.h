@@ -1722,6 +1722,8 @@ qboolean	vk_scene_tree_casters( void );
 void		vk_scene_draw_trees( void );
 void		vk_scene_capture( qboolean haveDepthExtract );
 qboolean	vk_scene_occlusion( void );
+void		vk_scene_char_bed( void );
+void		vk_scene_char_bed_descriptors( void );
 qboolean	vk_scene_decals( void );
 void		vk_scene_grade( void );
 qboolean	R_SceneLightPoint( const vec3_t P, vec3_t ambient, vec3_t directed, vec3_t lightDir );

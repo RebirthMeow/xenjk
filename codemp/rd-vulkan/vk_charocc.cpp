@@ -290,6 +290,66 @@ static qboolean RB_CharOccRect( const drawSurf_t *drawSurfs, int numDrawSurfs, i
 }
 #endif
 
+// the scene's water takes its bed from the depth prepass, which leaves alpha-tested stages out: hair under the water was
+// covered as if the bed lay behind it. Without character occlusion (which draws them into the extract itself), the
+// scene's occlusion calls this in its split of the main pass (outside any render pass): the alpha-tested character
+// stages' linear depth into the extract's g (r cleared to 0, "empty"; nothing else reads it this view), for the water
+// alone. qtrue when drawn (vk_scene_char_bed then tells the water)
+qboolean RB_WaterHairBed( void )
+{
+	drawSurf_t *surfs = backEnd.hairBedSurfs;
+	const int num = backEnd.hairBedNum;
+	if ( !surfs || num <= 0 || r_charOccHair->integer <= 0 || !vk.depth.extract.enabled || !vk.depth.extract.framebuffer
+		|| vk.render_pass.char_occluder.handle == VK_NULL_HANDLE || backEnd.viewParms.portalView != PV_NONE )
+		return qfalse;
+	// (any alpha-tested opaque stage of a Ghoul2 model, as RB_RenderDrawSurfList's occluder pass takes)
+	qboolean any = qfalse;
+	for ( int i = 0; i < num && !any; i++ ) {
+		int entityNum, cubemapIndex;
+		shader_t *shader;
+		R_DecomposeSort( surfs[i].sort, &entityNum, &shader, &cubemapIndex );
+		if ( entityNum != REFENTITYNUM_WORLD && backEnd.refdef.entities[entityNum].e.ghoul2
+			&& !( backEnd.refdef.entities[entityNum].e.renderfx & ( RF_DEPTHHACK | RF_FIRST_PERSON ) )
+			&& shader->sort == SS_OPAQUE && shader->stages[0] && ( shader->stages[0]->stateBits & GLS_ATEST_BITS ) )
+			any = qtrue;
+	}
+	if ( !any )
+		return qfalse;
+
+	vk_gputime_next_label( "water hair bed" );
+	vk_begin_char_occluder_render_pass();
+	{
+		VkClearAttachment clear;
+		VkClearRect rect;
+		Com_Memset( &clear, 0, sizeof( clear ) );
+		clear.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		clear.colorAttachment = 0;
+		clear.clearValue.color.float32[1] = 1e9f;	// (depth_extract's "none")
+		Com_Memset( &rect, 0, sizeof( rect ) );
+		rect.rect.extent.width = glConfig.vidWidth;
+		rect.rect.extent.height = glConfig.vidHeight;
+		rect.layerCount = 1;
+		qvkCmdClearAttachments( vk.cmd->command_buffer, 1, &clear, 1, &rect );
+	}
+	backEnd.isCharOccluderPass = qtrue;
+	vk_restore_draw_state( qfalse );
+	RB_RenderDrawSurfList( surfs, num );
+	backEnd.isCharOccluderPass = qfalse;
+	vk_end_render_pass();
+	vk.renderPassIndex = RENDER_PASS_MAIN;
+	vk.cmd->last_pipeline = VK_NULL_HANDLE;
+
+	VkMemoryBarrier mb;	// (the water's fragments read it in this frame's main pass)
+	Com_Memset( &mb, 0, sizeof( mb ) );
+	mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+	mb.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+	qvkCmdPipelineBarrier( vk.cmd->command_buffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+		0, 1, &mb, 0, NULL, 0, NULL );
+	vk_scene_char_bed();
+	return qtrue;
+}
+
 void RB_CharOcclusion( drawSurf_t *drawSurfs, int numDrawSurfs )
 {
 	// r_gpuTimes: the end of the split main pass (its MSAA resolve and stores) apart from the prepass
@@ -313,6 +373,9 @@ void RB_CharOcclusion( drawSurf_t *drawSurfs, int numDrawSurfs )
 	vk.ssaoCharOccMask = qfalse;
 #endif
 	backEnd.charOccExtracted = qtrue;
+	// the hair's depth is the water's bed too (the prepass that built it left the alpha-tested hair out)
+	if ( r_charOccHair->integer > 0 )
+		vk_scene_char_bed();
 
 	// r_charOccMask: the prepass's marks go, so the lit pass marks characters (r_ssao_character) as it always did;
 	// only the world SSAO's own extract reads them, so they stay when it is off or reuses this extract

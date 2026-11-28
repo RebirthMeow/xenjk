@@ -145,7 +145,11 @@ layout(std140, set = 0, binding = 5) uniform Frame {
 	vec4 shade4;		// x r_sceneBounce (its strength; 0 off, only with r_sceneAO), y r_sceneSsrGlossy's share, z its
 						// roughness (0 off); w r_sceneExactSkips (1: terrain, near-reach shadow and W3 fog reads that weigh 0 skipped)
 	vec4 charMirror;	// r_sceneWaterChars: x its value when drawn this frame (0: none), y the water's z, z, w 1 / the screen's size
+	vec4 charBed;		// x 1 when charBedTex holds this frame's hair depth (RB_CharOcclusion, r_charOccHair)
 } fr;
+// the depth extract (vk_depth_extract_ex): g the alpha-tested characters' linear depth (hair, lashes; 1e9 none), which the
+// depth prepass and so waterBed() leave out: a bed for the water, so hair under it shows through as the body does
+layout(set = 0, binding = 36) uniform sampler2D charBedTex;
 // r_sceneWaterChars: the characters mirrored in the water this frame (tr_watermirror.cpp), alpha their coverage
 layout(set = 0, binding = 35) uniform sampler2D charMirrorTex;
 layout(set = 0, binding = 26) uniform sampler2DArray waveTex;	// the water's waves (scene_water.comp): x, y the slopes
@@ -2611,6 +2615,8 @@ void main()
 		waterFlatLight = fr.water2.w > 0.5;
 		waterFlatN = Ng;
 		const float zw = max( dot( vPos - pc.eye.xyz, fr.fogFwd.xyz ), 1.0 );
+		// (the hair in the water: nearer than the bed the prepass gave; the eye's view only)
+		const float hairZ = fr.charBed.x > 0.5 && pc.eye.w > 0.5 ? texelFetch( charBedTex, ivec2( gl_FragCoord.xy ), 0 ).g : 1e30;
 		if ( fr.waterBed.w > 1 && fr.surface2.w > 0.5 && pc.eye.w > 0.5 ) {
 			// r_sceneWaterBed: this pixel's own bed, its samples' nearest and farthest (32-bit floats) and the share at the
 			// nearest (a bed fading out over a few samples, an edge): the share that shows through and the path, mixed
@@ -2619,11 +2625,11 @@ void main()
 			const uint at = uint( fr.waterBed.w ) + 2u * ( uint( gl_FragCoord.y ) * uint( fr.surface2.w ) + uint( gl_FragCoord.x ) );
 			const uint b0 = pyramidBits[at], b1 = pyramidBits[at + 1u];
 			const float share = float( b1 & 7u ) / max( fr.fx2.w, 1.0 );
-			const float p0 = max( uintBitsToFloat( b0 ) - zw, 0.0 ) * slant, p1 = max( uintBitsToFloat( b1 & ~7u ) - zw, 0.0 ) * slant;
+			const float p0 = max( min( uintBitsToFloat( b0 ), hairZ ) - zw, 0.0 ) * slant, p1 = max( min( uintBitsToFloat( b1 & ~7u ), hairZ ) - zw, 0.0 ) * slant;
 			waterPath = mix( p1, p0, share );
 			waterSeen = mix( exp( -p1 / vis ), exp( -p0 / vis ), share );
 		} else {	// (as before r_sceneWaterBed, to the last bit)
-			waterPath = max( waterBed() - zw, 0.0 ) * ( length( vPos - pc.eye.xyz ) / zw ) / UNITS_PER_METRE;
+			waterPath = max( min( waterBed(), hairZ ) - zw, 0.0 ) * ( length( vPos - pc.eye.xyz ) / zw ) / UNITS_PER_METRE;
 			waterSeen = exp( -waterPath / max( gEmissive.x * fr.water2.x, 0.01 ) );
 		}
 		if ( md.w > 0.0 ) {	// foam near the shore: its image at the ripples' tiling, drifting with the first
