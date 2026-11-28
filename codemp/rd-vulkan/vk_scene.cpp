@@ -254,6 +254,7 @@ static cvar_t *r_sceneExactSkips;
 static cvar_t *r_sceneSkyCuts;
 static cvar_t *r_sceneSkyTime;
 static cvar_t *r_sceneSkyCards;
+static cvar_t *r_sceneFogSteps;
 
 // r_sceneSkyCards (draw set binding 34, scene.frag w3Clouds' SkyCards): a header (x the cards, y 1 filled), the bins of
 // directions (azimuth x d.z from 0.02 up: first, count into the references), each card's five vec4s, the references
@@ -8808,7 +8809,8 @@ void R_SceneVkBeginFrame( void )
 	Com_Memset( fr->w3clouds, 0, sizeof( fr->w3clouds ) );
 	Com_Memset( fr->w3clouds2, 0, sizeof( fr->w3clouds2 ) );
 	fr->w3clouds2[0] = Com_Clamp( 0.0f, 1.0f, Env( r_sceneW3CirrusAlong )->value );
-	fr->w3clouds2[1] = r_sceneSkyCuts->integer ? 1.0f : 0.0f;	// r_sceneSkyCuts	// The Witcher 3's clouds: empty or their images missing, off
+	fr->w3clouds2[1] = r_sceneSkyCuts->integer ? 1.0f : 0.0f;	// r_sceneSkyCuts
+	fr->w3clouds2[3] = r_sceneFogSteps->integer ? 1.0f : 0.0f;	// r_sceneFogSteps (scene.frag w3FogShare)	// The Witcher 3's clouds: empty or their images missing, off
 	if ( sc.skyOn && sceneW3CloudImages[0] && Env( r_sceneW3Clouds )->string[0] ) {
 		fr->w3clouds[1] = fr->w3clouds[2] = fr->w3clouds[3] = 1.0f;
 		sscanf( Env( r_sceneW3Clouds )->string, "%f %f %f %f", &fr->w3clouds[0], &fr->w3clouds[1], &fr->w3clouds[2], &fr->w3clouds[3] );
@@ -10499,6 +10501,7 @@ void R_SceneRegister( void )
 	r_sceneSkyCuts		= ri.Cvar_Get( "r_sceneSkyCuts",		"1",					0, "Render scene, r_sceneW3Clouds: the sky's work that changes nothing skipped (the sprites' cells whose cards all lie outside their ring, a card's frame hashed only where it is hit, the cirrus' fog where it is clear): the same image, less work; 0 all of it (A/B)" );
 	r_sceneSkyTime		= ri.Cvar_Get( "r_sceneSkyTime",		"-1",					0, "Render scene: the clouds' and water's clock pinned at this many seconds (frame-identical comparisons); negative: the game's" );
 	r_sceneSkyCards		= ri.Cvar_Get( "r_sceneSkyCards",		"1",					0, "Render scene, r_sceneW3Clouds: the cumulus cards found once a frame and binned by direction, instead of every sky pixel searching nine cells of their grid: the same image, less work; 0 the search (A/B)" );
+	r_sceneFogSteps		= ri.Cvar_Get( "r_sceneFogSteps",		"1",					0, "Render scene, r_sceneW3Fog: the fog's steps along a ray that stay under its offset height (each the density's full share) taken in one power instead of one by one: the same image, less work; 0 every step (A/B)" );
 	r_sceneToneAdjust	= ri.Cvar_Get( "r_sceneToneAdjust",		"0 1",					CVAR_ARCHIVE_ND, "Render scene: \"EV gamma\": the light after exposure scaled by 2^EV and raised to 1 / gamma before the tone curve (ShaderInjector's AdjustImage: -0.45 1.15; gamma over 1 lifts the midtones; the meter and the reflections take it back out). A look value (.xenv)" );
 	r_scenePleRadiance	= ri.Cvar_Get( "r_scenePleRadiance",	"0",					CVAR_ARCHIVE_ND, "Render scene: an FF7 Rebirth probe's reflected light as its deconvolved spherical harmonics blurred by roughness, with its dominant light's occlusion and highlight (ShaderInjector's SampleGI), in place of its irradiance along the mirrored ray; the share (0 off). A look value (.xenv)" );
 	r_sceneCameraFill	= ri.Cvar_Get( "r_sceneCameraFill",		"0",					CVAR_ARCHIVE_ND, "Render scene: the ambient light again from the eye, full within 5 m, by the inverse square past it, on what faces the eye (ShaderInjector's camera ambient light); its brightness (0 off). A look value (.xenv)" );

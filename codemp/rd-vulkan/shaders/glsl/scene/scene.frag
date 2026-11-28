@@ -920,7 +920,15 @@ float w3FogShare( const vec3 C, const vec3 u, const float D, const float dens, c
 	const float kk = mix( k.y, k.x, clamp( ( mu + r ) / ( 1.0 + r ), 0.0, 1.0 ) );
 	const float s = D / 16.0, h0 = C.z + fr.w3fogFront.w;
 	float T = 1.0;
-	for ( int i = 1; i <= 16; i++ )
+	int first = 1;
+	if ( fr.w3clouds2.w > 0.5 && kk >= 0.0 && h0 <= 0.0 ) {
+		// r_sceneFogSteps: the steps at or under the offset (h <= 0: the density's full share each) taken at once
+		const float rise = s * u.z;
+		first = rise > 0.0 ? int( clamp( floor( -h0 / rise ), 0.0, 16.0 ) ) + 1 : 17;
+		if ( first > 1 )
+			T = pow( 1.0 - clamp( s * dens, 0.0, 1.0 ), float( first - 1 ) );
+	}
+	for ( int i = first; i <= 16; i++ )
 		T *= 1.0 - clamp( s * dens / ( 1.0 + max( 0.0, kk * ( h0 + float( i ) * s * u.z ) ) ), 0.0, 1.0 );
 	return 1.0 - T;
 }
