@@ -117,6 +117,7 @@ qhandle_t R_RegisterMD3(const char *name, model_t *mod)
 			mod->data.mdv[lod] = mod->data.mdv[lod + 1];
 		}
 
+		R_SceneMirrorRegister( mod );	// (vk_scene.cpp: <name>.mirror beside it, r_sceneWaterMirror)
 		return mod->index;
 	}
 
@@ -1223,6 +1224,7 @@ void R_ModelInit( void )
 	tr.numModels = 0;
 
 	CModelCache->DeleteAll();
+	R_SceneMirrorReset();	// (the proxies name models by index)
 
 	mod = R_AllocModel();
 	mod->type = MOD_BAD;

@@ -363,7 +363,13 @@ typedef struct {
 	float		contact[4];		// xyz: toward the sun; w: the contact shadow's length (units; 0 off)
 	float		contact2[4];	// x: its steps, y: the thickness past the depth's rounding (units), z: the eye distance it fades out by
 	float		gloss[4];		// x: 1 to trace every dry texel (r_sceneSsrGlossy), y: its roughness, z: 1 for r_sceneBounce
+	float		mirror[4];		// r_sceneWaterMirror (binding 10, mirrorProxy): xyz the mirrored model's origin, w 1 when there is one
+	float		mirrorAxis[3][4];	// world to model: each axis over its length squared
+	float		mirrorBox[2][4];	// its proxy's box in model units: x0 y0 z0, x1 y1 z1
+	float		mirrorLight[3][4];	// the model's light as its diffuse takes it: ambient, directed (0..1), the light in model space
 } sceneSsrParams_t;
+
+const struct image_s *Scene_MirrorParams( sceneSsrParams_t *sp );	// r_sceneWaterMirror: this frame's model (vk_scene.cpp)
 
 typedef struct {
 	qboolean		loaded;

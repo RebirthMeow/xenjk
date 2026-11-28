@@ -997,9 +997,10 @@ void vk_scene_capture( qboolean haveDepthExtract )
 		sp->gloss[3] = 0.0f;
 	}
 
-	VkDescriptorImageInfo si[10];
+	VkDescriptorImageInfo si[11];
 	VkDescriptorBufferInfo sb;
-	VkWriteDescriptorSet sw[10];
+	VkWriteDescriptorSet sw[11];
+	Scene_TextureInfo( (const image_t *)Scene_MirrorParams( sp ), &si[10] );	// r_sceneWaterMirror
 	si[8].sampler = VK_NULL_HANDLE;	// r_sceneBounce's: this frame's (written), last frame's (read)
 	si[8].imageView = sc.bounceView[cur];
 	si[8].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -1028,7 +1029,7 @@ void vk_scene_capture( qboolean haveDepthExtract )
 	sb.buffer = sc.ssrParams[f].buf;
 	sb.offset = 0;
 	sb.range = VK_WHOLE_SIZE;
-	for ( int i = 0; i < 10; i++ ) {
+	for ( int i = 0; i < 11; i++ ) {
 		Com_Memset( &sw[i], 0, sizeof( sw[i] ) );
 		sw[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		sw[i].dstSet = sc.ssrSet[f];
@@ -1041,7 +1042,7 @@ void vk_scene_capture( qboolean haveDepthExtract )
 		else
 			sw[i].pBufferInfo = &sb;
 	}
-	qvkUpdateDescriptorSets( vk.device, 10, sw, 0, NULL );
+	qvkUpdateDescriptorSets( vk.device, 11, sw, 0, NULL );
 	vk_gputime_section_end( timed );
 	// async compute (r_sceneAsync): the trace on the compute queue, after this frame's commands so far are submitted
 	const qboolean async = ( sc.asyncReady && r_sceneAsync->integer ) ? qtrue : qfalse;

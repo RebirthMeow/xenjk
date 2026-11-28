@@ -254,6 +254,7 @@ static cvar_t *r_sceneExactSkips;
 static cvar_t *r_sceneSkyCuts;
 static cvar_t *r_sceneSkyTime;
 static cvar_t *r_sceneSkyCards;
+static cvar_t *r_sceneWaterMirror;
 static cvar_t *r_sceneFogSteps;
 
 // r_sceneSkyCards (draw set binding 34, scene.frag w3Clouds' SkyCards): a header (x the cards, y 1 filled), the bins of
@@ -1210,14 +1211,15 @@ static qboolean Scene_CreatePipelines( void )
 	// the history's depth alone: ssr 4, capture 3
 	// 5, 6: r_sceneAO's image this frame and last frame's; 7: the area's baked reflection capture (maps/<map>_refl.dds,
 	// white when none): what a ray that misses takes
-	// 8, 9: r_sceneBounce's image this frame and last frame's
-	static const VkDescriptorType ssrTypes[10] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+	// 8, 9: r_sceneBounce's image this frame and last frame's; 10: the water-mirror proxy's image (r_sceneWaterMirror,
+	// white when none)
+	static const VkDescriptorType ssrTypes[11] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-		VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER };
-	static const VkShaderStageFlags ssrStages[10] = { VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT,
+		VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER };
+	static const VkShaderStageFlags ssrStages[11] = { VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT,
 		VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT,
-		VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT };
+		VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT };
 	static const VkDescriptorType captureTypes[4] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE };
 	static const VkShaderStageFlags captureStages[4] = { VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT,
@@ -1245,7 +1247,7 @@ static qboolean Scene_CreatePipelines( void )
 	sc.sortLayout = Scene_SetLayout( sortTypes, sortStages, 5 );
 	sc.occLayout = Scene_SetLayout( occTypes, occStages, 2 );
 	sc.drawLayout = Scene_SetLayout( drawTypes, drawStages, 35 );
-	sc.ssrLayout = Scene_SetLayout( ssrTypes, ssrStages, 10 );
+	sc.ssrLayout = Scene_SetLayout( ssrTypes, ssrStages, 11 );
 	sc.fogLayout = Scene_SetLayout( fogTypes, fogStages, 16 );
 	sc.captureLayout = Scene_SetLayout( captureTypes, captureStages, 4 );
 	if ( !sc.cullLayout || !sc.scatterLayout || !sc.groupCullLayout || !sc.sortLayout || !sc.drawLayout || !sc.fogLayout || !sc.captureLayout || !sc.ssrLayout || !sc.occLayout )
@@ -1813,7 +1815,7 @@ static qboolean Scene_CreateViews( void )
 	ps[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	ps[1].descriptorCount = sets + NUM_COMMAND_BUFFERS * 2 + 8;
 	ps[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	ps[2].descriptorCount = sets * 14 + NUM_COMMAND_BUFFERS * 14 + 16;	// (+2 a set, +1 a slot: r_sceneBounce's)	// (+1 a slot: the reflection's capture)	// (+2 a set and a slot: r_sceneAO's)	// draw 8 (the DBuffer's 3 and the waves with them); per slot 10 (the decal pass's depth, the haze's last scatter)
+	ps[2].descriptorCount = sets * 14 + NUM_COMMAND_BUFFERS * 15 + 16;	// (+1 a slot: the water-mirror proxy)	// (+2 a set, +1 a slot: r_sceneBounce's)	// (+1 a slot: the reflection's capture)	// (+2 a set and a slot: r_sceneAO's)	// draw 8 (the DBuffer's 3 and the waves with them); per slot 10 (the decal pass's depth, the haze's last scatter)
 	ps[3].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 	ps[3].descriptorCount = NUM_COMMAND_BUFFERS * 7 + 8;
 	Com_Memset( &dp, 0, sizeof( dp ) );
@@ -8182,6 +8184,131 @@ static qboolean Scene_TreeShadowSplitLayer( int layer )
 	return ( Scene_TreeShadowSplit() && ( r_sceneTreeWindShadows->integer != 2 || layer == 1 ) ) ? qtrue : qfalse;
 }
 
+/*
+r_sceneWaterMirror: models mirrored in the water by a proxy. The water's reflection is screen space, so a model high overhead
+(the Star Destroyer over Beauclair, 18,000 u up) is off screen whenever its reflection is on it. A model with a
+<model>.mirror beside its MD3 (tools/mirror_proxy.py: its underside from below as an image, rgb the albedo and a the height,
+and its box in model units) is found when it loads; each frame the first entity drawing one gives the reflections' trace its
+transform and its light as its diffuse takes it (R_SetupEntityLighting's), and scene_ssr.comp's mirrorProxy marches a ray
+that missed the screen through the height (the trace's binding 10): what the screen holds stays in front of it, and the
+water shifts it with the ripples and settles it over frames like the rest of its reflection
+*/
+#define SCENE_MAX_MIRRORS	8
+typedef struct {
+	int			model;			// tr.models index
+	image_t		*image;
+	float		box[6];			// x0 y0 x1 y1 z0 z1 (model units)
+} sceneMirror_t;
+static sceneMirror_t	sceneMirrors[SCENE_MAX_MIRRORS];
+static int				sceneNumMirrors;
+static struct {
+	qboolean	on;
+	image_t		*image;
+	float		origin[3], axis[3][3], box[6], ambient[3], directed[3], light[3];
+} sceneMirrorFrame;	// the last eye view's (Scene_MirrorPick), read by the trace's params (Scene_MirrorParams)
+
+void R_SceneMirrorReset( void )
+{
+	sceneNumMirrors = 0;
+	sceneMirrorFrame.on = qfalse;
+}
+
+void R_SceneMirrorRegister( const model_t *mod )
+{
+	char path[MAX_QPATH], line[256], img[MAX_QPATH];
+	char *buf = NULL;
+	float box[6];
+	qboolean haveImg = qfalse, haveBox = qfalse;
+
+	if ( sceneNumMirrors >= SCENE_MAX_MIRRORS || Q_stricmp( COM_GetExtension( mod->name ), "md3" ) )
+		return;
+	COM_StripExtension( mod->name, path, sizeof( path ) );
+	Q_strcat( path, sizeof( path ), ".mirror" );
+	if ( ri.FS_ReadFile( path, (void **)&buf ) <= 0 || !buf )
+		return;
+	for ( const char *at = buf; *at; ) {
+		int n = 0;
+		while ( at[n] && at[n] != '\n' && n < (int)sizeof( line ) - 1 ) {
+			line[n] = at[n];
+			n++;
+		}
+		line[n] = '\0';
+		at += n;
+		while ( *at == '\n' || *at == '\r' )
+			at++;
+		if ( !Q_strncmp( line, "image ", 6 ) && sscanf( line + 6, "%63s", img ) == 1 )
+			haveImg = qtrue;
+		else if ( !Q_strncmp( line, "box ", 4 ) && sscanf( line + 4, "%f %f %f %f %f %f", &box[0], &box[1], &box[2], &box[3], &box[4], &box[5] ) == 6 )
+			haveBox = qtrue;
+	}
+	ri.FS_FreeFile( buf );
+	if ( !haveImg || !haveBox || box[2] <= box[0] || box[3] <= box[1] || box[5] < box[4] ) {
+		ri.Printf( PRINT_WARNING, "%s: needs an image and a box (tools/mirror_proxy.py)\n", path );
+		return;
+	}
+	// as the model's textures load (the same light scale), never compressed (a is the height)
+	image_t *image = R_FindImageFile( img, IMGFLAG_MIPMAP | IMGFLAG_CLAMPTOEDGE | IMGFLAG_NO_COMPRESSION | IMGFLAG_NOSCALE, 0 );
+	if ( !image ) {
+		ri.Printf( PRINT_WARNING, "%s: missing image %s (power-of-two sides)\n", path, img );
+		return;
+	}
+	sceneMirror_t *m = &sceneMirrors[sceneNumMirrors++];
+	m->model = mod->index;
+	m->image = image;
+	Com_Memcpy( m->box, box, sizeof( box ) );
+	ri.Printf( PRINT_DEVELOPER, "%s: water-mirror proxy %s\n", mod->name, img );
+}
+
+// the eye view's first entity drawing a model with a proxy (R_SceneAddView: tr.refdef holds this scene's entities)
+static void Scene_MirrorPick( void )
+{
+	sceneMirrorFrame.on = qfalse;
+	if ( !sceneNumMirrors || !r_sceneWaterMirror->integer || ( tr.refdef.rdflags & RDF_NOWORLDMODEL ) )
+		return;
+	for ( int i = 0; i < tr.refdef.num_entities; i++ ) {
+		trRefEntity_t *ent = &tr.refdef.entities[i];
+		if ( ent->e.reType != RT_MODEL )
+			continue;
+		const sceneMirror_t *m = NULL;
+		for ( int k = 0; k < sceneNumMirrors && !m; k++ )
+			if ( sceneMirrors[k].model == ent->e.hModel )
+				m = &sceneMirrors[k];
+		if ( !m )
+			continue;
+		R_SetupEntityLighting( &tr.refdef, ent );	// (its draw takes the same: done once a frame)
+		sceneMirrorFrame.on = qtrue;
+		sceneMirrorFrame.image = m->image;
+		VectorCopy( ent->e.origin, sceneMirrorFrame.origin );
+		for ( int k = 0; k < 3; k++ ) {
+			const float l2 = DotProduct( ent->e.axis[k], ent->e.axis[k] );
+			VectorScale( ent->e.axis[k], l2 > 0.0f ? 1.0f / l2 : 0.0f, sceneMirrorFrame.axis[k] );
+			sceneMirrorFrame.ambient[k] = Com_Clamp( 0.0f, 1.0f, ent->ambientLight[k] / 255.0f );
+			sceneMirrorFrame.directed[k] = MAX( ent->directedLight[k], 0.0f ) / 255.0f;
+		}
+		VectorCopy( ent->modelLightDir, sceneMirrorFrame.light );	// (with a scaled axis, scaled as the diffuse takes it)
+		Com_Memcpy( sceneMirrorFrame.box, m->box, sizeof( m->box ) );
+		return;
+	}
+}
+
+// the trace's params for this frame's mirrored model (w 0: none); its image, white when none
+const struct image_s *Scene_MirrorParams( sceneSsrParams_t *sp )
+{
+	Com_Memset( sp->mirror, 0, sizeof( sp->mirror ) + sizeof( sp->mirrorAxis ) + sizeof( sp->mirrorBox ) + sizeof( sp->mirrorLight ) );
+	if ( !sceneMirrorFrame.on || !r_sceneWaterMirror->integer )
+		return tr.whiteImage;
+	VectorCopy( sceneMirrorFrame.origin, sp->mirror );
+	sp->mirror[3] = 1.0f;
+	for ( int k = 0; k < 3; k++ )
+		VectorCopy( sceneMirrorFrame.axis[k], sp->mirrorAxis[k] );
+	VectorSet( sp->mirrorBox[0], sceneMirrorFrame.box[0], sceneMirrorFrame.box[1], sceneMirrorFrame.box[4] );
+	VectorSet( sp->mirrorBox[1], sceneMirrorFrame.box[2], sceneMirrorFrame.box[3], sceneMirrorFrame.box[5] );
+	VectorCopy( sceneMirrorFrame.ambient, sp->mirrorLight[0] );
+	VectorCopy( sceneMirrorFrame.directed, sp->mirrorLight[1] );
+	VectorCopy( sceneMirrorFrame.light, sp->mirrorLight[2] );
+	return sceneMirrorFrame.image;
+}
+
 int R_SceneAddView( viewParms_t *vp )
 {
 	if ( !sc.loaded || !r_scene->integer )
@@ -8254,6 +8381,7 @@ int R_SceneAddView( viewParms_t *vp )
 	if ( sc.eyeView < 0 ) {
 		// the frame's sun, as the cascades about to be drawn for this view were set up
 		sc.eyeView = sc.numViews;
+		Scene_MirrorPick();	// r_sceneWaterMirror: this view's mirrored model
 		sc.sunOn = ( tr.refdef.sunShadowParams[0] != 0.0f && tr.refdef.sunDir[3] != 0.0f ) ? qtrue : qfalse;
 		if ( sc.sunOn ) {
 			Com_Memcpy( sc.sunMvp, tr.refdef.sunShadowMvp, sizeof( sc.sunMvp ) );
@@ -10501,6 +10629,7 @@ void R_SceneRegister( void )
 	r_sceneSkyCuts		= ri.Cvar_Get( "r_sceneSkyCuts",		"1",					0, "Render scene, r_sceneW3Clouds: the sky's work that changes nothing skipped (the sprites' cells whose cards all lie outside their ring, a card's frame hashed only where it is hit, the cirrus' fog where it is clear): the same image, less work; 0 all of it (A/B)" );
 	r_sceneSkyTime		= ri.Cvar_Get( "r_sceneSkyTime",		"-1",					0, "Render scene: the clouds' and water's clock pinned at this many seconds (frame-identical comparisons); negative: the game's" );
 	r_sceneSkyCards		= ri.Cvar_Get( "r_sceneSkyCards",		"1",					0, "Render scene, r_sceneW3Clouds: the cumulus cards found once a frame and binned by direction, instead of every sky pixel searching nine cells of their grid: the same image, less work; 0 the search (A/B)" );
+	r_sceneWaterMirror	= ri.Cvar_Get( "r_sceneWaterMirror",	"1",					0, "Render scene: models with a water-mirror proxy (<model>.mirror, tools/mirror_proxy.py: the Star Destroyer) in the water's reflection where it misses the screen; 0 off" );
 	r_sceneFogSteps		= ri.Cvar_Get( "r_sceneFogSteps",		"1",					0, "Render scene, r_sceneW3Fog: the fog's steps along a ray that stay under its offset height (each the density's full share) taken in one power instead of one by one: the same image, less work; 0 every step (A/B)" );
 	r_sceneToneAdjust	= ri.Cvar_Get( "r_sceneToneAdjust",		"0 1",					CVAR_ARCHIVE_ND, "Render scene: \"EV gamma\": the light after exposure scaled by 2^EV and raised to 1 / gamma before the tone curve (ShaderInjector's AdjustImage: -0.45 1.15; gamma over 1 lifts the midtones; the meter and the reflections take it back out). A look value (.xenv)" );
 	r_scenePleRadiance	= ri.Cvar_Get( "r_scenePleRadiance",	"0",					CVAR_ARCHIVE_ND, "Render scene: an FF7 Rebirth probe's reflected light as its deconvolved spherical harmonics blurred by roughness, with its dominant light's occlusion and highlight (ShaderInjector's SampleGI), in place of its irradiance along the mirrored ray; the share (0 off). A look value (.xenv)" );

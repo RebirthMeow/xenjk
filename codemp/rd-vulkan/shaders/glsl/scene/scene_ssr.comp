@@ -48,7 +48,12 @@ layout(std140, set = 0, binding = 3) uniform Params {
 	vec4 contact;		// xyz: toward the sun; w: the contact shadow's length (units; 0 off)
 	vec4 contact2;		// x: its steps, y: the thickness a depth is taken to have (units), z: the eye distance it fades out by
 	vec4 gloss;			// x: 1 to trace every dry texel (r_sceneSsrGlossy) at roughness y; z: 1 for the bounce light (r_sceneBounce)
+	vec4 mirror;		// r_sceneWaterMirror (mirrorProxy): xyz the mirrored model's origin, w 1 when there is one
+	vec4 mirrorAxis[3];	// world to model: each axis over its length squared
+	vec4 mirrorBox[2];	// its proxy's box in model units: x0 y0 z0, x1 y1 z1
+	vec4 mirrorLight[3];	// the model's light as its diffuse takes it: ambient, directed (0..1), the light in model space
 } p;
+layout(set = 0, binding = 10) uniform sampler2D mirrorTex;	// the mirrored model's proxy: rgb its albedo from below, a its height
 
 const float UNITS_PER_METRE = 37.5;
 const float WET_ROUGH = 0.2;	// scene.frag's
@@ -137,6 +142,77 @@ bool facesUp( const vec2 uv, const float d )
 	const vec3 P = position( uv, d );
 	const vec3 n = normalize( cross( position( uv + vec2( 0.0, texel.y ), dd ) - P, position( uv + vec2( texel.x, 0.0 ), dr ) - P ) );
 	return abs( n.z ) > 0.7 && dot( n * sign( n.z ), normalize( p.eye.xyz - P ) ) > 0.0;
+}
+
+// r_sceneWaterMirror: a model the water mirrors by its proxy where the ray left the screen (its underside seen from below,
+// tools/mirror_proxy.py: the Star Destroyer over Beauclair, off screen whenever its reflection is on it). The ray from P
+// along R in the model's space, marched between the proxy's lowest and highest heights inside its box (24 steps, then 5
+// halvings), the first point at or above the underside; there its albedo lit as the model's diffuse lights it (the
+// classic generic shader: ambient + N.L x directed, each channel at most 1, N.L by its unnormalised light as the model
+// takes it) on the display scale the model is drawn on, back to linear light. rgb that light, a 1 where the ray hits it
+vec4 mirrorProxy( const vec3 P, const vec3 R )
+{
+	if ( p.mirror.w < 0.5 )
+		return vec4( 0.0 );
+	const vec3 v = P - p.mirror.xyz;
+	const vec3 o = vec3( dot( v, p.mirrorAxis[0].xyz ), dot( v, p.mirrorAxis[1].xyz ), dot( v, p.mirrorAxis[2].xyz ) );
+	const vec3 d = vec3( dot( R, p.mirrorAxis[0].xyz ), dot( R, p.mirrorAxis[1].xyz ), dot( R, p.mirrorAxis[2].xyz ) );
+	const vec3 lo = p.mirrorBox[0].xyz, hi = p.mirrorBox[1].xyz;
+	if ( d.z <= 1e-6 * length( d ) )
+		return vec4( 0.0 );
+	float t0 = ( lo.z - o.z ) / d.z, t1 = ( hi.z - o.z ) / d.z;
+	for ( int k = 0; k < 2; k++ ) {
+		if ( abs( d[k] ) < 1e-9 ) {
+			if ( o[k] < lo[k] || o[k] > hi[k] )
+				return vec4( 0.0 );
+			continue;
+		}
+		const float a = ( lo[k] - o[k] ) / d[k], b = ( hi[k] - o[k] ) / d[k];
+		t0 = max( t0, min( a, b ) );
+		t1 = min( t1, max( a, b ) );
+	}
+	t0 = max( t0, 0.0 );
+	if ( t1 <= t0 )
+		return vec4( 0.0 );
+	const vec2 span = hi.xy - lo.xy;
+	const vec2 size = vec2( textureSize( mirrorTex, 0 ) );
+	// the level: a texel against this texel's footprint there (the eye's path to the water and on to the model)
+	const float world = 1.0 / max( length( p.mirrorAxis[0].xyz ), 1e-9 );	// world units per model unit
+	const float pixel = 2.0 * p.left.w / max( float( textureSize( historyTex, 0 ).y ), 1.0 );
+	const float lod = max( log2( max( ( length( P - p.eye.xyz ) + t0 ) * pixel / ( span.x / size.x * world ), 1e-6 ) ), 0.0 );
+	const float zs = ( hi.z - lo.z ) * 255.0 / 250.0;	// a x 255 / 250 of the way from z0 to z1; 255: no hull
+	float ta = t0, tb = -1.0;
+	for ( int i = 1; i <= 24; i++ ) {
+		const float t = mix( t0, t1, float( i ) / 24.0 );
+		const vec3 q = o + d * t;
+		const float a = textureLod( mirrorTex, ( q.xy - lo.xy ) / span, lod ).a;
+		if ( a < 252.0 / 255.0 && q.z >= lo.z + a * zs ) {
+			tb = t;
+			break;
+		}
+		ta = t;
+	}
+	if ( tb < 0.0 )
+		return vec4( 0.0 );
+	for ( int i = 0; i < 5; i++ ) {
+		const float t = 0.5 * ( ta + tb );
+		const vec3 q = o + d * t;
+		const float a = textureLod( mirrorTex, ( q.xy - lo.xy ) / span, lod ).a;
+		if ( a < 252.0 / 255.0 && q.z >= lo.z + a * zs )
+			tb = t;
+		else
+			ta = t;
+	}
+	const vec2 uv = ( o.xy + d.xy * tb - lo.xy ) / span;
+	const vec4 s = textureLod( mirrorTex, uv, lod );
+	// the underside's normal (facing down) from the height's slope across a texel at this level
+	const vec2 du = exp2( lod ) / size;
+	const float hx = ( textureLod( mirrorTex, uv + vec2( du.x, 0.0 ), lod ).a - textureLod( mirrorTex, uv - vec2( du.x, 0.0 ), lod ).a ) * zs;
+	const float hy = ( textureLod( mirrorTex, uv + vec2( 0.0, du.y ), lod ).a - textureLod( mirrorTex, uv - vec2( 0.0, du.y ), lod ).a ) * zs;
+	const vec3 n = normalize( vec3( hx / ( 2.0 * du.x * span.x ), hy / ( 2.0 * du.y * span.y ), -1.0 ) );
+	const float incoming = dot( n, p.mirrorLight[2].xyz );
+	const vec3 light = incoming > 0.0 ? min( p.mirrorLight[0].rgb + incoming * p.mirrorLight[1].rgb, vec3( 1.0 ) ) : p.mirrorLight[0].rgb;
+	return vec4( fromDisplay( s.rgb * light ), 1.0 );
 }
 
 // a missed ray's sky: the history where its direction meets the frame (a point at infinity: the sky does not move with
@@ -553,6 +629,10 @@ void main()
 		if ( R.z > 0.0 ) {
 			float sky;
 			vec4 hit = trace( P + Ng * 2.0, R, jit.x, rough * rough * 4.0, sky );
+			// r_sceneWaterMirror: a miss's share takes the mirrored model where the ray meets it (in front of the sky)
+			const vec4 m = hit.a < 1.0 ? mirrorProxy( P, R ) : vec4( 0.0 );
+			if ( m.a > 0.0 )
+				hit = vec4( hit.rgb * hit.a + m.rgb * ( 1.0 - hit.a ), 1.0 );
 			if ( p.refl.x > 0.5 ) {	// (a miss: the area's baked reflection capture, where one is loaded)
 				cur += hit.rgb * hit.a + reflSky( R, rough ) * ( 1.0 - hit.a );
 			} else {
