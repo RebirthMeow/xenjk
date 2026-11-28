@@ -630,6 +630,8 @@ typedef struct {
 	VkCommandPool			asyncPool;
 	qboolean				asyncReady;		// every async resource made (a partial set is freed with the scene, unused)
 	VkCommandBuffer			asyncCb[NUM_COMMAND_BUFFERS], splitCb[NUM_COMMAND_BUFFERS], ownCb[NUM_COMMAND_BUFFERS];
+	VkCommandBuffer			earlyCb[NUM_COMMAND_BUFFERS];	// r_sceneEarlySubmit: the frame's part after the prepass
+	VkCommandBuffer			earlyFrom[NUM_COMMAND_BUFFERS];	// the command buffer the frame began in (own or split)
 	VkSemaphore				captured[NUM_COMMAND_BUFFERS], traced[NUM_COMMAND_BUFFERS];
 	VkFence					asyncFence[NUM_COMMAND_BUFFERS];
 	qboolean				asyncFenceUsed[NUM_COMMAND_BUFFERS];

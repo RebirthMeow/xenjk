@@ -452,6 +452,7 @@ static cvar_t *r_sceneVrs;
 static cvar_t *r_sceneTerrainFlat;
 static cvar_t *r_sceneTerrainFar;
 cvar_t *r_sceneAsync;
+cvar_t *r_sceneEarlySubmit;
 static void Scene_InvocationsFrame( VkCommandBuffer cb, int f );
 static VkQueryPool	invPool[NUM_COMMAND_BUFFERS];		// r_sceneInvocations (Scene_InvocationsFrame)
 static qboolean		invRecorded[NUM_COMMAND_BUFFERS];
@@ -3676,6 +3677,9 @@ void R_SceneFree( void )
 			vk.tess[f].command_buffer = sc.ownCb[f];	// the slot's own (it may hold the split one)
 		if ( sc.splitCb[f] )
 			qvkFreeCommandBuffers( vk.device, vk.command_pool, 1, &sc.splitCb[f] );
+		if ( sc.earlyCb[f] )
+			qvkFreeCommandBuffers( vk.device, vk.command_pool, 1, &sc.earlyCb[f] );
+		sc.earlyCb[f] = sc.earlyFrom[f] = VK_NULL_HANDLE;
 		if ( sc.captured[f] ) qvkDestroySemaphore( vk.device, sc.captured[f], NULL );
 		if ( sc.traced[f] ) qvkDestroySemaphore( vk.device, sc.traced[f], NULL );
 		if ( sc.asyncFence[f] ) qvkDestroyFence( vk.device, sc.asyncFence[f], NULL );
@@ -4147,6 +4151,8 @@ static qboolean Scene_CreateAsync( void )
 		ca.commandPool = vk.command_pool;
 		if ( qvkAllocateCommandBuffers( vk.device, &ca, &sc.splitCb[f] ) != VK_SUCCESS )
 			return qfalse;
+		if ( qvkAllocateCommandBuffers( vk.device, &ca, &sc.earlyCb[f] ) != VK_SUCCESS )
+			return qfalse;
 		sc.ownCb[f] = vk.tess[f].command_buffer;
 		if ( qvkCreateSemaphore( vk.device, &si, NULL, &sc.captured[f] ) != VK_SUCCESS
 			|| qvkCreateSemaphore( vk.device, &si, NULL, &sc.traced[f] ) != VK_SUCCESS
@@ -4194,7 +4200,10 @@ void Scene_SplitFrame( int f )
 	sc.pendingWait = VK_NULL_HANDLE;
 
 	// the slot's fence (vk_end_frame's submit, after this one on the queue) covers both of its command buffers
-	vk.cmd->command_buffer = ( done == sc.splitCb[f] ) ? sc.ownCb[f] : sc.splitCb[f];
+	if ( done == sc.earlyCb[f] )	// (r_sceneEarlySubmit) the one of the two the frame did not begin in
+		vk.cmd->command_buffer = ( sc.earlyFrom[f] == sc.splitCb[f] ) ? sc.ownCb[f] : sc.splitCb[f];
+	else
+		vk.cmd->command_buffer = ( done == sc.splitCb[f] ) ? sc.ownCb[f] : sc.splitCb[f];
 	VkCommandBufferBeginInfo bi;
 	Com_Memset( &bi, 0, sizeof( bi ) );
 	bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -4204,6 +4213,37 @@ void Scene_SplitFrame( int f )
 	vk.cmd->last_pipeline = VK_NULL_HANDLE;
 	Com_Memset( &vk.cmd->scissor_rect, 0, sizeof( vk.cmd->scissor_rect ) );
 	vk_restore_draw_state( qfalse );	// the bound descriptor sets again, viewport and scissor forced
+}
+
+// r_sceneEarlySubmit: the frame's commands up to the lit pass (cull, shadows, the prepass, the occlusion pyramid) submitted
+// before the rest, with no wait. Scene_SplitFrame's submit waits for the last frame's trace at the fragment stage, which
+// held the shadow and prepass fragments too: the graphics queue sat idle until the trace (run beside the last frame's
+// post passes) was done. Submitted here, they run beside it; the lit pass, which reads it, still waits.
+static void Scene_EarlySubmit( int f )
+{
+	VkCommandBuffer done = vk.cmd->command_buffer;
+	if ( !r_sceneEarlySubmit->integer || !sc.asyncReady || !r_sceneAsync->integer || !sc.pendingWait || sc.pendingFresh
+		|| !sc.earlyCb[f] || done == sc.earlyCb[f] || vk.cmd->swapchain_first_use || ri.VK_IsMinimized() )
+		return;
+	VK_CHECK( qvkEndCommandBuffer( done ) );
+	VkSubmitInfo s;
+	Com_Memset( &s, 0, sizeof( s ) );
+	s.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	s.commandBufferCount = 1;
+	s.pCommandBuffers = &done;
+	vk_upload_flush();	// this frame's buffer uploads (vk_upload.cpp) before the draws in this part of it
+	VK_CHECK( qvkQueueSubmit( vk.queue, 1, &s, VK_NULL_HANDLE ) );
+	sc.earlyFrom[f] = done;
+	vk.cmd->command_buffer = sc.earlyCb[f];
+	VkCommandBufferBeginInfo bi;
+	Com_Memset( &bi, 0, sizeof( bi ) );
+	bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	VK_CHECK( qvkBeginCommandBuffer( vk.cmd->command_buffer, &bi ) );
+	vk.cmd->curr_index_buffer = VK_NULL_HANDLE;
+	vk.cmd->last_pipeline = VK_NULL_HANDLE;
+	Com_Memset( &vk.cmd->scissor_rect, 0, sizeof( vk.cmd->scissor_rect ) );
+	vk_restore_draw_state( qfalse );
 }
 
 // vk_end_frame: a trace an earlier frame submitted that no submit waited for yet (a frame without the scene's async
@@ -9897,6 +9937,7 @@ qboolean vk_scene_occlusion( void )
 	qvkCmdPipelineBarrier( cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | ( decals ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT : 0 ),
 		VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, 0, 0, NULL, 0, NULL, 1, &db );
 
+	Scene_EarlySubmit( f );
 	vk_gputime_next_label( "main reload" );
 	vk_begin_main_reload_render_pass();
 	vk_restore_draw_state( qfalse );
@@ -10318,6 +10359,7 @@ void R_SceneRegister( void )
 	r_sceneGradeExposure = ri.Cvar_Get( "r_sceneGradeExposure",	"1.5",					CVAR_ARCHIVE_ND, "Render scene: scales the light the colour grade is given (the tone curve's input, after r_sceneExposure; 1.5 matches Kabuki's reference brightness)" );
 	r_sceneHdr			= ri.Cvar_Get( "r_sceneHdr",			"1",					CVAR_ARCHIVE_ND, "Render scene: a map with a colour grade turns r_hdr 0's 8-bit colour target into r_hdr 2's float one at load, so its highlights reach the grade unclipped (0 keeps r_hdr's; read at map load)" );
 	r_sceneAsync		= ri.Cvar_Get( "r_sceneAsync",			"1",					CVAR_ARCHIVE_ND, "Render scene: the wet ground's reflections traced on the compute queue beside the frame's post passes (a device with a compute-only queue; 0: in the frame)" );
+	r_sceneEarlySubmit	= ri.Cvar_Get( "r_sceneEarlySubmit",	"1",					CVAR_ARCHIVE_ND, "Render scene, r_sceneAsync: the frame up to the lit pass (shadows, prepass, occlusion) submitted first, beside the last frame's trace on the compute queue; only the lit pass, which reads it, waits for it (0: the whole first part waits)" );
 	r_sceneInvocations	= ri.Cvar_Get( "r_sceneInvocations",	"0",					CVAR_TEMP, "Render scene (bench): print each frame the eye view's lit pass's vertex and fragment shader invocations and clipped primitives (SCENEINV lines)" );
 	r_sceneShadowNearReach = ri.Cvar_Get( "r_sceneShadowNearReach", "0",				CVAR_ARCHIVE_ND, "Render scene: the nearest sun cascade (drawn every frame) draws only casters within this many units toward the light past its box; the farther ones shade its receivers from the kept middle cascade (r_sunShadowMidCache) at its coarser texels. A low sun or moon's caster column otherwise runs through whole hillsides of buildings and trees every frame. 0 off" );
 	r_sceneShadowReceivers = ri.Cvar_Get( "r_sceneShadowReceivers", "1",				CVAR_ARCHIVE_ND, "Render scene: the near sun cascades leave out casters outside the eye's view whose shadows fall away from it (0: every caster in the cascade)" );
@@ -10330,7 +10372,7 @@ void R_SceneRegister( void )
 	r_sceneViewCull		= ri.Cvar_Get( "r_sceneViewCull",		"1",						CVAR_ARCHIVE_ND, "Render scene: the haze volumes that may reach the eye's view found once a frame, so the haze walks only those (0: every one, in order; the same image)" );
 	r_sceneShaderStats	= ri.Cvar_Get( "r_sceneShaderStats",	"0",					CVAR_TEMP, "Render scene: print the driver's statistics (registers, occupancy) of its pipelines as they are made at map load" );
 	r_sceneGpuDriven	= ri.Cvar_Get( "r_sceneGpuDriven",		"1",					CVAR_ARCHIVE_ND, "Render scene: GPU-driven draws (a Vulkan 1.2 device): each view's culled commands packed into lists drawn with one call each, every image in one array (0: a call per material)" );
-	r_sceneDebug		= ri.Cvar_Get( "r_sceneDebug",			"0",					CVAR_TEMP | CVAR_CHEAT, "Render scene: 1 albedo, 2 normals, 3 lights per cell, 4 sun shadow; lighting shares 5 ambient, 6 the source's lights, 7 sun; 8 material index (4 bits per channel); 9 wet (red) and puddles (yellow); 10 reflections; 11 window rooms (dim: unlit), 12 window instances; 17 roughness dry (red) and wet (green), porosity (blue); 13 and 14 the world position modulo 256 and 65536 game units, 8 exact bits a channel; 15 the instance index, 16 the material index, 24 exact bits; 18 the albedo UV (fraction; blue outside [0, 1]), 19 the albedo texel as sampled, 20 the albedo's GPU-driven image index (24 bits; sceneimage names it)" );
+	r_sceneDebug		= ri.Cvar_Get( "r_sceneDebug",			"0",					CVAR_TEMP | CVAR_CHEAT, "Render scene: 1 albedo, 2 normals, 3 lights per cell, 4 sun shadow; lighting shares 5 ambient, 6 the source's lights, 7 sun; 8 material index (4 bits per channel); 9 wet (red) and puddles (yellow); 10 reflections; 11 window rooms (dim: unlit), 12 window instances; 17 roughness dry (red) and wet (green), porosity (blue); 13 and 14 the world position modulo 256 and 65536 game units, 8 exact bits a channel; 15 the instance index, 16 the material index, 24 exact bits; 18 the albedo UV (fraction; blue outside [0, 1]), 19 the albedo texel as sampled, 20 the albedo's GPU-driven image index (24 bits; sceneimage names it); 21 quad occupancy (GPU-driven lit pass: 63, 127, 191, 255 for 1-4 of the 2x2 quad's lanes doing real work)" );
 	r_sceneVrs			= ri.Cvar_Get( "r_sceneVrs",			"0 0 0",				CVAR_ARCHIVE_ND, "Render scene: coarse shading of far surfaces, the distances in metres past which they shade once per 2 x 2 pixels: terrain, SpeedTree leaves, every other surface (0: never). The output stays at full resolution: edges and depth per pixel, only the colour within a block shared. Needs VK_KHR_fragment_shading_rate's primitive rates and the GPU-driven draws" );
 	r_sceneTerrainFlat	= ri.Cvar_Get( "r_sceneTerrainFlat",	"0",					CVAR_TEMP | CVAR_CHEAT, "Render scene (bench): 1 draws Witcher 3 terrain in one colour, no texture reads (its geometry unchanged), to time its shading" );
 	r_sceneTerrainFar	= ri.Cvar_Get( "r_sceneTerrainFar",	"0",					CVAR_ARCHIVE_ND, "Render scene: metres past which Witcher 3 terrain shades without its normal maps, in its facing's main projection only (faded in over the next quarter); 0 never" );

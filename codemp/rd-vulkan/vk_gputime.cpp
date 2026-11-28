@@ -17,6 +17,8 @@ render pass serving two jobs); vk_gputime_split closes the open pass and times t
 
 #define GPUTIME_MAX_QUERIES		256
 #define GPUTIME_MAX_PASSES		256
+#define GPUTIME_HEAD			( GPUTIME_MAX_QUERIES - 2 )	// r_gpuTimes 2: the command buffer's first and last stamps
+#define GPUTIME_TAIL			( GPUTIME_MAX_QUERIES - 1 )
 
 typedef struct {
 	VkRenderPass	handle;
@@ -151,6 +153,21 @@ static void print_results( int slot )
 	ri.Printf( PRINT_ALL, "%s\n", line );
 	if ( r_gpuTimes->integer < 2 )
 		return;
+	// r_gpuTimes 2: the frame's edges on the one queue: head = its command buffer's first stamp to its first pass, tail =
+	// its last pass to the end of its last command buffer, idle = the last frame's end to this one's start (the GPU with
+	// none of the frame's work; a present's copy would sit there), period = start to start
+	// VKEDGE <head> tail <tail> idle <idle> period <period>
+	static uint64_t prevHead, prevTail;
+	uint64_t edge[2];
+	if ( pGetQueryPoolResults( vk.device, pools[slot], GPUTIME_HEAD, 2, sizeof( edge ), edge, sizeof( uint64_t ),
+			VK_QUERY_RESULT_64_BIT ) == VK_SUCCESS ) {
+		const double ms = nsPerTick / 1e6;
+		if ( prevTail && edge[0] > prevTail )
+			ri.Printf( PRINT_ALL, "VKEDGE %.3f tail %.3f idle %.3f period %.3f\n", (double)( ticks[0] - edge[0] ) * ms,
+				(double)( edge[1] - ticks[f->numQueries - 1] ) * ms, (double)( edge[0] - prevTail ) * ms, (double)( edge[0] - prevHead ) * ms );
+		prevHead = edge[0];
+		prevTail = edge[1];
+	}
 	// r_gpuTimes 2: the time between each pass's end and the next one's begin (the untimed work there, barriers, waits),
 	// summed by the two passes' names: VKGAP <sum> | Gap <before> > <after>: <ms>ms ...
 	const char *ga[GPUTIME_MAX_QUERIES / 2], *gb[GPUTIME_MAX_QUERIES / 2];
@@ -191,6 +208,15 @@ void vk_gputime_begin_frame( void )
 	f->recorded = qfalse;
 	pCmdResetQueryPool( vk.cmd->command_buffer, pools[slot], 0, GPUTIME_MAX_QUERIES );
 	active = qtrue;
+	if ( r_gpuTimes->integer >= 2 )
+		pCmdWriteTimestamp( vk.cmd->command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, pools[slot], GPUTIME_HEAD );
+}
+
+// before the frame's last vkEndCommandBuffer (r_gpuTimes 2): its tail stamp, after all its work
+void vk_gputime_end_frame( void )
+{
+	if ( active && r_gpuTimes->integer >= 2 )
+		pCmdWriteTimestamp( vk.cmd->command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, pools[vk.cmd_index], GPUTIME_TAIL );
 }
 
 static void write_stamp( void )

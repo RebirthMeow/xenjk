@@ -1547,6 +1547,7 @@ void		vk_begin_render_pass( VkRenderPass renderPass, VkFramebuffer frameBuffer, 
 void		vk_end_render_pass( void );
 void		vk_gputime_register_pass( VkRenderPass handle, const char *name );
 void		vk_gputime_begin_frame( void );
+void		vk_gputime_end_frame( void );
 void		vk_gputime_pass_begin( VkRenderPass handle );
 void		vk_gputime_pass_end( void );
 void		vk_gputime_unregister_pass( VkRenderPass handle );

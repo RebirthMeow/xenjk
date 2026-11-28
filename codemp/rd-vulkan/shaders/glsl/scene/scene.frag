@@ -1,4 +1,7 @@
 #version 450
+#if !defined( NO_DEBUG_VIEWS ) && defined( GPU_DRIVEN_LIT )	// (r_sceneDebug 21: Vulkan 1.1 quad operations)
+#extension GL_KHR_shader_subgroup_quad : require
+#endif
 #ifdef GPU_DRIVEN
 #extension GL_EXT_nonuniform_qualifier : require
 #endif
@@ -2918,6 +2921,17 @@ void main()
 		outColor = vec4( ( vec3( float( m & 15u ), float( ( m >> 4u ) & 15u ), float( ( m >> 8u ) & 15u ) ) * 16.0 + 8.0 ) / 255.0, 1.0 );
 		return;
 	}
+#ifdef GPU_DRIVEN_LIT
+	if ( debugView == 21 ) {
+		// quad occupancy: the lanes of this pixel's 2x2 quad doing real work for this triangle (the rest are helper
+		// lanes: off the triangle or behind the prepass's depth), as 64 x lanes in every channel; a shaded lane costs
+		// as much as a live one, so the quads' 4 / lanes over the screen is the lit pass's overshading
+		const uint live = gl_HelperInvocation ? 0u : 1u;
+		const uint lanes = live + subgroupQuadSwapHorizontal( live ) + subgroupQuadSwapVertical( live ) + subgroupQuadSwapDiagonal( live );
+		outColor = vec4( vec3( float( lanes ) * 64.0 - 1.0 ) / 255.0, 1.0 );
+		return;
+	}
+#endif
 	if ( debugView == 1 ) {
 		outColor = vec4( pow( albedo, vec3( 1.0 / 2.2 ) ), 1.0 );	// the material's own colour, no exposure or tone curve
 		return;

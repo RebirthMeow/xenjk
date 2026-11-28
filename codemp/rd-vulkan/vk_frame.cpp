@@ -841,6 +841,7 @@ void vk_end_frame( void )
     if ( ( backEnd.screenshotMask & SCREENSHOT_AVI ) && vk_video_record() )
         backEnd.screenshotMask &= ~SCREENSHOT_AVI;
 
+    vk_gputime_end_frame();
     VK_CHECK( qvkEndCommandBuffer( vk.cmd->command_buffer ) );
 
     // Queue submission and synchronization
