@@ -1803,10 +1803,10 @@ static qboolean Scene_CreateViews( void )
 	if ( !Scene_CreateFogVolume() || !Scene_CreateWavesImage() )
 		return qfalse;
 	ps[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-	// cull 15, draw 16, sort 5 (and 4 spare) a set; per slot the packing set's 3 x SCENE_MAX_VIEWS + 4, the haze's 10, two
+	// cull 16, draw 20, sort 5 (and 1 spare) a set; per slot the packing set's 3 x SCENE_MAX_VIEWS + 4, the haze's 10, two
 	// clusters' 9 (with the view's lights), the pyramid's 1, the touched sort's 5, the light fade's 5, the volume cull's
 	// 3, the stand-ins' 4; then headroom for every type (a binding added to a set must not fail the scene's load)
-	ps[0].descriptorCount = sets * 40 + NUM_COMMAND_BUFFERS * ( 42 + 3 * SCENE_MAX_VIEWS + 4 ) + 64
+	ps[0].descriptorCount = sets * 42 + NUM_COMMAND_BUFFERS * ( 42 + 3 * SCENE_MAX_VIEWS + 4 ) + 64
 		+ NUM_COMMAND_BUFFERS * ( 4 + SCENE_MAX_VIEWS )	// (the count-then-scan cull's scatter set a slot)
 		+ sets * 2;	// (the group lists' sets)
 	ps[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
