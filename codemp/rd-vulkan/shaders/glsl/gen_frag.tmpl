@@ -1981,8 +1981,9 @@ void main() {
 			float L2H2 = clamp( dot( sunL, H2 ), 0.0, 1.0 );
 			float NH2  = clamp( dot( N, H2 ), 0.0, 1.0 );
 			float VH2  = clamp( dot( E, H ), 0.0, 1.0 );
-			vec3 sunReflectance = CalcDiffuse( diffuse.rgb, NE, NL2, L2H2, roughness )
-				+ CalcSpecular( specular.rgb, NH2, NL2, NE, L2H2, VH2, roughness );
+			// (r_charTerms 1 drops its specular too: the sun is the direct light of a character in a render scene)
+			const vec3 sunSpec = ( CharTerms() & 1 ) != 0 ? vec3( 0.0 ) : CalcSpecular( specular.rgb, NH2, NL2, NE, L2H2, VH2, roughness );
+			vec3 sunReflectance = CalcDiffuse( diffuse.rgb, NE, NL2, L2H2, roughness ) + sunSpec;
 			if ( ( material_mode & 16 ) != 0 ) {
 				// toon: the cascades' shadow moves the step (sunShadowValue carries N.L, divided out); the sun lights both sides
 				toonShadow = NL2 > 0.0 ? clamp( sunShadowValue / NL2, 0.0, 1.0 ) : 1.0;
@@ -1991,7 +1992,7 @@ void main() {
 			}
 			else if ( material_mode != 0 )
 				out_color.rgb += u_camera.sunCol.rgb * sunShadowValue * MaterialLight( N, sunL, E, NE, CalcDiffuse( diffuse.rgb, NE, NL2, L2H2, roughness ),
-					CalcSpecular( specular.rgb, NH2, NL2, NE, L2H2, VH2, roughness ), diffuse.rgb, specular.rgb, matMask );
+					sunSpec, diffuse.rgb, specular.rgb, matMask );
 			else
 			out_color.rgb += u_camera.sunCol.rgb * sunShadowValue * sunReflectance * NL2;
 		}
