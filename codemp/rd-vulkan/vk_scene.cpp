@@ -9572,9 +9572,12 @@ qboolean R_SceneCharSun( vec3_t col )
 	auto display = [exposure]( float v ) { return Scene_ToneDisplay( v, exposure ); };	// (R_SceneLightPoint's)
 	const float strength = MAX( Env( r_sceneSun )->value, 0.0f ) / (float)M_PI;
 	const float s = (float)M_PI * r_sceneCharLight->value * Env( r_sceneCharSun )->value;
+	const qboolean linearFeed = R_SceneCharToneOn();
 	for ( int k = 0; k < 3; k++ ) {
 		const float amb = sky[k] * 0.5f * ( 1.0f + 0.35f );
-		col[k] = s * MAX( display( amb + tr.sunLight[k] / m * strength ) - display( amb ), 0.0f );
+		// r_charLinear 3: the sun's light after exposure, linear (the shader adds it as it is and tones the result)
+		col[k] = linearFeed ? s * tr.sunLight[k] / m * strength * exposure
+			: s * MAX( display( amb + tr.sunLight[k] / m * strength ) - display( amb ), 0.0f );
 	}
 	return qtrue;
 }
@@ -9673,12 +9676,49 @@ qboolean R_SceneLightPoint( const vec3_t P, vec3_t ambient, vec3_t directed, vec
 	const float exposure = Scene_Exposure();
 	auto display = [exposure]( float v ) { return Scene_ToneDisplay( v, exposure ); };
 	const float s = 255.0f * r_sceneCharLight->value;
+	// r_charLinear 3: the light after exposure, linear, sRGB-encoded (the shader decodes it exactly) and toned by the
+	// shader with the scene's curve after it lights (R_SceneCharTone): toned before, the frame's grade (which takes the
+	// tone curve back off every pixel) lifted a dark albedo's light several times more than a bright one's
+	auto enc = []( float v ) { v = MAX( v, 0.0f ); return v <= 0.0031308f ? v * 12.92f : 1.055f * powf( v, 1.0f / 2.4f ) - 0.055f; };
+	const qboolean linearFeed = R_SceneCharToneOn();
 	for ( int k = 0; k < 3; k++ ) {
+		if ( linearFeed ) {
+			ambient[k] = s * enc( amb[k] * exposure );
+			directed[k] = s * enc( dirLight[k] * exposure );
+			continue;
+		}
 		const float a = display( amb[k] );
 		ambient[k] = s * a;
 		directed[k] = s * MAX( display( amb[k] + dirLight[k] ) - a, 0.0f );
 	}
 	return qtrue;
+}
+
+// r_charLinear 3: characters in a render scene lit by its light before the tone curve and toned like the scene's own
+// surfaces (scene.frag's toDisplay after exposure: r_sceneToneAdjust, the curve, its headroom past the top, gamma 2.2)
+qboolean R_SceneCharToneOn( void )
+{
+	return ( sc.loaded && r_scene->integer && r_sceneCharLight->value > 0.0f && r_charLinear->integer >= 3 ) ? qtrue : qfalse;
+}
+
+// the camera block's charTone: x the curve (scene.frag's params2.z) + 1, 0 off; y, z r_sceneToneAdjust's gain and
+// gamma (0: none)
+void R_SceneCharTone( float tone[4], float sky[4], float ground[4] )
+{
+	for ( int k = 0; k < 4; k++ )
+		tone[k] = sky[k] = ground[k] = 0.0f;
+	if ( !R_SceneCharToneOn() )
+		return;
+	// the hemisphere the scene's surfaces mirror (R_SceneVkBeginFrame's skyAmbient, groundAmbient), after exposure
+	const float exposure = Scene_Exposure();
+	sscanf( Env( r_sceneAmbient )->string, "%f %f %f", &sky[0], &sky[1], &sky[2] );
+	for ( int k = 0; k < 3; k++ ) {
+		sky[k] = MAX( sky[k], 0.0f ) * exposure;
+		ground[k] = sky[k] * 0.35f;
+	}
+	tone[0] = 1.0f + ( Env( r_sceneTonemap )->integer >= 2 ? 3.0f
+		: Env( r_sceneTonemap )->integer ? 1.0f + 0.5f * Com_Clamp( 0.0f, 1.0f, Env( r_sceneToneHue )->value ) : 0.0f );
+	Scene_ToneAdjust( &tone[1], &tone[2] );
 }
 
 static int Scene_Pipe( uint32_t kind, int pass )

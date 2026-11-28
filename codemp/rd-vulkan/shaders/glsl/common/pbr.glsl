@@ -204,10 +204,18 @@
 	vec3 CalcIBLContribution( in float roughness, in vec3 N, in vec3 E,
 		in float NE, in vec3 specular, in vec3 P )
 	{
-		vec3 cubeLightColor = SampleProbes( P, reflect( -E, N ), roughness );
-		// characters lit in linear space (r_charLinear): the probes hold sRGB-encoded light (r_charTerms 8: added raw, as before)
-		if ( mod( u_entity.ambientLight.w, 10.0 ) > 0.5 && ( int( u_entity.ambientLight.w * 0.1 + 0.05 ) & 8 ) == 0 )
-			cubeLightColor = mix( cubeLightColor / 12.92, pow( ( cubeLightColor + 0.055 ) / 1.055, vec3( 2.4 ) ), step( vec3( 0.04045 ), cubeLightColor ) );
+		vec3 cubeLightColor;
+		// r_charLinear 3 in a render scene: the scene's own sky and ground hemisphere along the reflected ray, after its
+		// exposure, as its surfaces mirror it (the BSP's probes are drawn without the scene: a bare, bright world)
+		if ( mod( u_entity.ambientLight.w, 10.0 ) > 2.5 && u_camera.charTone.x > 0.5 ) {
+			const vec3 R = reflect( -E, N );
+			cubeLightColor = mix( u_camera.charGround.rgb, u_camera.charSky.rgb, R.z * 0.5 + 0.5 );
+		} else {
+			cubeLightColor = SampleProbes( P, reflect( -E, N ), roughness );
+			// characters lit in linear space (r_charLinear): the probes hold sRGB-encoded light (r_charTerms 8: added raw, as before)
+			if ( mod( u_entity.ambientLight.w, 10.0 ) > 0.5 && ( int( u_entity.ambientLight.w * 0.1 + 0.05 ) & 8 ) == 0 )
+				cubeLightColor = mix( cubeLightColor / 12.92, pow( ( cubeLightColor + 0.055 ) / 1.055, vec3( 2.4 ) ), step( vec3( 0.04045 ), cubeLightColor ) );
+		}
 		vec2 EnvBRDF = texture(brdflut_texture, vec2(NE, 1.0 - roughness)).rg;
 
 		return cubeLightColor * (specular.rgb * EnvBRDF.x + EnvBRDF.y);

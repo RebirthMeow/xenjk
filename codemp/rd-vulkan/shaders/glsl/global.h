@@ -229,6 +229,10 @@ STRUCT(
     FLOAT( a2cDiscard )         // r_a2cDiscard: alpha-to-coverage fragments with zero coverage discard before lighting
     FLOAT( charFastBits )       // r_charFast bits
     FLOAT( charAmbientFloor )   // r_charAmbientFloor: characters' ambient at least this share of the grid's light
+    VEC4( charTone )            // r_charLinear 3 (R_SceneCharTone): x the render scene's tone curve + 1 (0 off), y, z
+                                // r_sceneToneAdjust's gain and gamma (0 none)
+    VEC4( charSky )             // r_charLinear 3: the scene's sky and ground ambient after exposure (linear), what its
+    VEC4( charGround )          // own surfaces mirror (scene.frag hemiR); the characters' reflections in place of the probes
 , vkUniformCamera_t)
 
 // fog

@@ -459,6 +459,88 @@ layout (constant_id = 31) const int debug_views = 0;
 		return mix( color, vec3( newPeak ), g );
 	}
 
+	// r_charLinear 3 (camera charTone, R_SceneCharTone): a render scene's tone curve as scene.frag's toDisplay gives it
+	// (r_sceneToneAdjust, the curve, the headroom past its top, gamma 2.2), so its grade (scene_grade.frag, which takes
+	// the curve back off every pixel) gets back the light the character was lit with; the light came after exposure
+	const float SC_TONE_TOP = 0.999, SC_TONE_LOG = 0.1;
+	vec3 scAcesFit( vec3 c ) { return clamp( ( c * ( 2.51 * c + 0.03 ) ) / ( c * ( 2.43 * c + 0.59 ) + 0.14 ), 0.0, 1.0 ); }
+	float scGt7Curve( const float x )
+	{
+		if ( x <= 0.0 )
+			return 0.0;
+		if ( x < 0.444 ) {
+			const float wl = smoothstep( 0.0, 0.538, x );
+			return ( 1.0 - wl ) * 0.538 * pow( x / 0.538, 1.28 ) + wl * x;
+		}
+		return min( 1.185333 - 1.349340 * exp( x * -1.348921 ), 1.0 );
+	}
+	float scGt7PQ( const float v )
+	{
+		const float ym = pow( max( v * 0.01, 0.0 ), 0.1593017578125 );
+		return pow( ( 0.8359375 + 18.8515625 * ym ) / ( 1.0 + 18.6875 * ym ), 78.84375 );
+	}
+	float scGt7PQInverse( const float n )
+	{
+		const float np = pow( clamp( n, 0.0, 1.0 ), 1.0 / 78.84375 );
+		return pow( max( np - 0.8359375, 0.0 ) / ( 18.8515625 - 18.6875 * np ), 1.0 / 0.1593017578125 ) * 100.0;
+	}
+	vec3 scGt7ICtCp( const vec3 c )
+	{
+		const float l = scGt7PQ( dot( c, vec3( 1688.0, 2146.0, 262.0 ) ) / 4096.0 );
+		const float m = scGt7PQ( dot( c, vec3( 683.0, 2951.0, 462.0 ) ) / 4096.0 );
+		const float s = scGt7PQ( dot( c, vec3( 99.0, 309.0, 3688.0 ) ) / 4096.0 );
+		return vec3( 0.5 * ( l + m ), ( 6610.0 * l - 13613.0 * m + 7003.0 * s ) / 4096.0, ( 17933.0 * l - 17390.0 * m - 543.0 * s ) / 4096.0 );
+	}
+	vec3 scGt7ICtCpInverse( const vec3 i )
+	{
+		const float l = scGt7PQInverse( i.x + 0.00860904 * i.y + 0.11103 * i.z );
+		const float m = scGt7PQInverse( i.x - 0.00860904 * i.y - 0.11103 * i.z );
+		const float s = scGt7PQInverse( i.x + 0.560031 * i.y - 0.320627 * i.z );
+		return max( vec3( 3.43661 * l - 2.50645 * m + 0.0698454 * s, -0.79133 * l + 1.9836 * m - 0.192271 * s,
+			-0.0259499 * l - 0.0989137 * m + 1.12486 * s ), vec3( 0.0 ) );
+	}
+	vec3 scToneCurve( vec3 c, const float mode )
+	{
+		if ( mode > 2.5 ) {
+			const vec3 skew = vec3( scGt7Curve( c.r ), scGt7Curve( c.g ), scGt7Curve( c.b ) );
+			const vec3 u = scGt7ICtCp( max( c, vec3( 0.0 ) ) ), su = scGt7ICtCp( skew );
+			const float chroma = 1.0 - smoothstep( 0.98, 1.16, u.x / scGt7ICtCp( vec3( 1.0 ) ).x );
+			c = min( mix( skew, scGt7ICtCpInverse( vec3( su.x, u.yz * chroma ) ), 0.6 ), vec3( 1.0 ) );
+		} else if ( mode > 0.5 ) {
+			const vec3 p = scAcesFit( c );
+			const float share = clamp( ( mode - 1.0 ) * 2.0, 0.0, 1.0 );
+			if ( share > 0.0 ) {
+				const float L = max( dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ), 1e-6 );
+				const vec3 h = clamp( c * ( scAcesFit( vec3( L ) ).x / L ), 0.0, 1.0 );
+				c = mix( p, h, share * ( 1.0 - smoothstep( 0.1, 0.8, L ) ) );
+			} else {
+				c = p;
+			}
+		} else {
+			c = vec3( 1.0 ) - exp( -c );
+		}
+		return pow( c, vec3( 1.0 / 2.2 ) );
+	}
+	float scToneTop( const float mode )	// toneInverse( TONE_TOP )
+	{
+		const float y = pow( SC_TONE_TOP, 2.2 );
+		if ( mode > 2.5 )
+			return log( max( ( min( y, 0.99999 ) - 1.185333 ) / -1.349340, 1e-6 ) ) / -1.348921;
+		if ( mode > 0.5 ) {
+			const float a = 2.51 - 2.43 * y, b = 0.03 - 0.59 * y, c = -0.14 * y;
+			return ( -b + sqrt( b * b - 4.0 * a * c ) ) / ( 2.0 * a );
+		}
+		return -log( 1.0 - y );
+	}
+	vec3 SceneToneDisplay( vec3 c )
+	{
+		const float mode = u_camera.charTone.x - 1.0;
+		if ( u_camera.charTone.z > 0.0 )
+			c = pow( max( c * u_camera.charTone.y, vec3( 0.0 ) ), vec3( 1.0 / u_camera.charTone.z ) );
+		const float top = scToneTop( mode );
+		return mix( scToneCurve( c, mode ), SC_TONE_TOP + SC_TONE_LOG * log( max( c, vec3( 1e-6 ) ) / top ), greaterThan( c, vec3( top ) ) );
+	}
+
 	// character occlusion (r_charAO, r_charContactShadows; vk_charocc.cpp RB_CharOcclusion): the opaque depth prepass's
 	// ambient occlusion and linear depth, screen-sized; white when the view did not compute them (charOccParams 0)
 	layout (set = VK_DESC_MATERIAL,	binding = VK_MAT_SCREEN_AO) uniform sampler2D screen_ao_texture;
@@ -1918,8 +2000,12 @@ void main() {
 			out_color.rgb = ToonExposure( out_color.rgb, diffuse.rgb );
 
 		// r_charLinear: back to the sRGB-encoded target (reflections and the sun stay as they were added)
-		if ( linearLight )
-			out_color.rgb = LinearToSRGB( mod( u_entity.ambientLight.w, 10.0 ) > 1.5 ? PBRNeutral( max( out_color.rgb, 0.0 ) ) : clamp( out_color.rgb, 0.0, 1.0 ) );
+		// (3, in a render scene: its own tone curve, R_SceneCharTone)
+		if ( linearLight ) {
+			const float lm = mod( u_entity.ambientLight.w, 10.0 );
+			out_color.rgb = lm > 2.5 && u_camera.charTone.x > 0.5 ? SceneToneDisplay( max( out_color.rgb, 0.0 ) )
+				: LinearToSRGB( lm > 1.5 ? PBRNeutral( max( out_color.rgb, 0.0 ) ) : clamp( out_color.rgb, 0.0, 1.0 ) );
+		}
 
 		if ( selfDbgColor.x >= 0.0 )
 			out_color.rgb = selfDbgColor;

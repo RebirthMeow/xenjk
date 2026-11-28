@@ -437,6 +437,7 @@ static void vk_update_camera_constants( const trRefdef_t *refdef, const viewParm
 	uniform.a2cDiscard = r_a2cDiscard->integer ? 1.0f : 0.0f;
 	uniform.charFastBits = (float)( r_charFast->integer & 3 );
 	uniform.charAmbientFloor = Q_max( r_charAmbientFloor->value, 0.0f );
+	R_SceneCharTone( uniform.charTone, uniform.charSky, uniform.charGround );
 	// shading switches (global.h charReviewFix)
 	uniform.charReviewFix = (float)( 0
 		// the RGBA16F hair map holds normalised depth (r_charHairMap16 2: the old world units, to show the overflow)
@@ -518,7 +519,8 @@ static void vk_update_entity_light_constants( vkUniformEntity_t &uniform, const 
 	if ( refEntity->e.ghoul2 && refdef && ( refdef->rdflags & RDF_STAGE ) )
 		uniform.ambientLight[3] = 2.0f + 10.0f * (float)( r_charTerms->integer & 15 );
 	else
-		uniform.ambientLight[3] = ( refEntity->e.ghoul2 && r_charLinear->integer > 0 ) ? ( r_charLinear->integer >= 2 ? 2.0f : 1.0f )
+		uniform.ambientLight[3] = ( refEntity->e.ghoul2 && r_charLinear->integer > 0 ) ? ( r_charLinear->integer >= 3 && R_SceneCharToneOn() ? 3.0f
+			: r_charLinear->integer >= 2 ? 2.0f : 1.0f )
 			+ 10.0f * (float)( r_charTerms->integer & 15 ) : 0.0f;
 
 	uniform.localLightOrigin[3] = 0.0f;

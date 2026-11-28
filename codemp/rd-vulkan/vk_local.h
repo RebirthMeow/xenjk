@@ -1727,6 +1727,8 @@ void		vk_scene_char_bed_descriptors( void );
 qboolean	vk_scene_decals( void );
 void		vk_scene_grade( void );
 qboolean	R_SceneLightPoint( const vec3_t P, vec3_t ambient, vec3_t directed, vec3_t lightDir );
+qboolean	R_SceneCharToneOn( void );
+void		R_SceneCharTone( float tone[4], float sky[4], float ground[4] );
 void		R_SceneMirrorRegister( const struct model_s *mod );	// an MD3 loaded: its water-mirror proxy, if it has one
 void		R_SceneMirrorReset( void );
 
