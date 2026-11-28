@@ -251,6 +251,19 @@ cvar_t *r_sceneFogFarDensity;
 cvar_t *r_sceneBounce;
 cvar_t *r_sceneSsrGlossy;
 static cvar_t *r_sceneExactSkips;
+static cvar_t *r_sceneSkyCuts;
+static cvar_t *r_sceneSkyTime;
+static cvar_t *r_sceneSkyCards;
+
+// r_sceneSkyCards (draw set binding 34, scene.frag w3Clouds' SkyCards): a header (x the cards, y 1 filled), the bins of
+// directions (azimuth x d.z from 0.02 up: first, count into the references), each card's five vec4s, the references
+#define SKY_BINS_AZ		128
+#define SKY_BINS_Z		64
+#define SKY_BINS		( SKY_BINS_AZ * SKY_BINS_Z )
+#define SKY_MAX_CARDS	256
+#define SKY_CARD_VEC4	5
+#define SKY_MAX_REFS	32768
+#define SKY_CARDS_BYTES	( 16 + SKY_BINS * 8 + SKY_MAX_CARDS * SKY_CARD_VEC4 * 16 + SKY_MAX_REFS * 4 )
 
 // scene.frag's tone curve on the CPU, per channel: light after exposure -> display light (before gamma) and back;
 // r_sceneTonemap 0 exponential, 1 the ACES fit, 2 GT7's per-channel curve (scene.frag's gt7Curve; its chroma blend
@@ -1169,7 +1182,7 @@ static qboolean Scene_CreatePipelines( void )
 	// GPU-driven draws: 14 each list slot's material, 15 the materials (written by Scene_CreateGpuDriven); 16 the light
 	// clusters; 17 the lights' fades (scene_lightfade.comp); 18 the stand-ins; 19 the meshes (scene.vert: the hide fade's centre);
 	// 20, 21, 22 the DBuffer (mesh decals: albedo, normal, the receiver's depth); 23 the occlusion pyramids (the water's bed)
-	static const VkDescriptorType drawTypes[34] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+	static const VkDescriptorType drawTypes[35] = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -1182,16 +1195,17 @@ static qboolean Scene_CreatePipelines( void )
 		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,	// 28, 29: r_sceneAO's two images
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,	// 30: the trees' wind this frame (r_sceneTreeWind, scene.vert)
 		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,	// 31: maps/<map>.xple's probe GI (vk_scene_ple.cpp)
-		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER };	// 32, 33: r_sceneBounce's two images
+		VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,	// 32, 33: r_sceneBounce's two images
+		VK_DESCRIPTOR_TYPE_STORAGE_BUFFER };	// 34: the sky's cumulus cards this frame (r_sceneSkyCards)
 	// (2, 3, 4, 13 and 17 also the vertex stage's: the particles' light, records and light fades, scene_fx.vert)
-	static const VkShaderStageFlags drawStages[34] = { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+	static const VkShaderStageFlags drawStages[35] = { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT,
 		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT,
-		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT };	// 15: the materials (scene.vert reads the kind); 18: the stand-ins; 24, 25: the DBuffer's surface and emission; 26: the water's waves
+		VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT };	// 15: the materials (scene.vert reads the kind); 18: the stand-ins; 24, 25: the DBuffer's surface and emission; 26: the water's waves
 	// the history's depth alone: ssr 4, capture 3
 	// 5, 6: r_sceneAO's image this frame and last frame's; 7: the area's baked reflection capture (maps/<map>_refl.dds,
 	// white when none): what a ray that misses takes
@@ -1229,7 +1243,7 @@ static qboolean Scene_CreatePipelines( void )
 	sc.groupCullLayout = Scene_SetLayout( cullTypes, cullStages, 2 );	// scene_groupcull.comp: the groups, the view's list
 	sc.sortLayout = Scene_SetLayout( sortTypes, sortStages, 5 );
 	sc.occLayout = Scene_SetLayout( occTypes, occStages, 2 );
-	sc.drawLayout = Scene_SetLayout( drawTypes, drawStages, 34 );
+	sc.drawLayout = Scene_SetLayout( drawTypes, drawStages, 35 );
 	sc.ssrLayout = Scene_SetLayout( ssrTypes, ssrStages, 10 );
 	sc.fogLayout = Scene_SetLayout( fogTypes, fogStages, 16 );
 	sc.captureLayout = Scene_SetLayout( captureTypes, captureStages, 4 );
@@ -1901,6 +1915,11 @@ static qboolean Scene_CreateViews( void )
 			return qfalse;
 		VK_CHECK( qvkMapMemory( vk.device, sc.wind[f].mem, 0, VK_WHOLE_SIZE, 0, &sc.windPtr[f] ) );
 		Com_Memset( sc.windPtr[f], 0, SCENE_WIND_VEC4 * 16 );	// (the header: off)
+		if ( !Scene_CreateBuffer( &sc.skyCards[f], SKY_CARDS_BYTES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, "scene sky cards" ) )
+			return qfalse;
+		VK_CHECK( qvkMapMemory( vk.device, sc.skyCards[f].mem, 0, VK_WHOLE_SIZE, 0, &sc.skyCardsPtr[f] ) );
+		Com_Memset( sc.skyCardsPtr[f], 0, 16 );	// (the header: none)
 		if ( !Scene_CreateBuffer( &sc.frame[f], sizeof( sceneFrame_t ), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, "scene frame" ) )
 			return qfalse;
@@ -2166,6 +2185,9 @@ static qboolean Scene_CreateViews( void )
 				qvkUpdateDescriptorSets( vk.device, 1, &w, 0, NULL );
 				bi.buffer = sc.ple.buf;	// 31: maps/<map>.xple's probe GI (scene.frag)
 				w.dstBinding = 31;
+				qvkUpdateDescriptorSets( vk.device, 1, &w, 0, NULL );
+				bi.buffer = sc.skyCards[f].buf;	// 34: the sky's cumulus cards this frame (scene.frag w3Clouds)
+				w.dstBinding = 34;
 				qvkUpdateDescriptorSets( vk.device, 1, &w, 0, NULL );
 			}
 		}
@@ -3503,6 +3525,10 @@ void R_SceneFree( void )
 			qvkUnmapMemory( vk.device, sc.wind[f].mem );
 		sc.windPtr[f] = NULL;
 		Scene_DestroyBuffer( &sc.wind[f] );
+		if ( sc.skyCardsPtr[f] )
+			qvkUnmapMemory( vk.device, sc.skyCards[f].mem );
+		sc.skyCardsPtr[f] = NULL;
+		Scene_DestroyBuffer( &sc.skyCards[f] );
 		if ( sc.occStatsPtr[f] )
 			qvkUnmapMemory( vk.device, sc.occStats[f].mem );
 		sc.occStatsPtr[f] = NULL;
@@ -8339,6 +8365,145 @@ static void Scene_CullPoolCheck( int f )
 }
 
 // vk_begin_frame, before any render pass: cull every view the front end registered into this frame's commands
+// r_sceneSkyCards: scene.frag w3Clouds' cumulus sprites found once a frame instead of by every sky pixel. Each cell of the
+// 1250 m grid that can hold a card in the ring (1 to 7 km round the eye) gets its card as the shader's search builds it
+// (the same hashes, clock, life and frame); its card is binned by the directions its quad covers (corners and edge
+// midpoints, a bin's margin), the bins' cards far to near: the order the shader blends them in. The shader keeps a card
+// only where the pixel's own search would have reached its cell (within one of the ray's cell), so the image is the same
+static uint32_t Scene_Pcg( uint32_t v )
+{
+	const uint32_t st = v * 747796405u + 2891336453u;
+	const uint32_t w = ( ( st >> ( ( st >> 28u ) + 4u ) ) ^ st ) * 277803737u;
+	return ( w >> 22u ) ^ w;
+}
+static void Scene_Hash4( int x, int y, int z, float out[4] )
+{
+	const uint32_t h = Scene_Pcg( (uint32_t)x + Scene_Pcg( (uint32_t)y + Scene_Pcg( (uint32_t)z ) ) );
+	out[0] = (float)( h & 255u ) / 255.0f;
+	out[1] = (float)( ( h >> 8u ) & 255u ) / 255.0f;
+	out[2] = (float)( ( h >> 16u ) & 255u ) / 255.0f;
+	out[3] = (float)( h >> 24u ) / 255.0f;
+}
+static float Scene_W3SpriteLife( float t )	// scene.frag w3Life( t, false )
+{
+	static const float sprite[8] = { 0.0f, 0.517f, 0.834f, 0.979f, 0.972f, 0.796f, 0.464f, 0.0f };
+	const float x = Com_Clamp( 0.0f, 1.0f, t ) * 7.0f;
+	const int i = MIN( (int)x, 6 );
+	return sprite[i] + ( sprite[i + 1] - sprite[i] ) * ( x - (float)i );
+}
+static qboolean Scene_SkyCardsFrame( byte *buf, const sceneFrame_t *fr )
+{
+	typedef struct { float v[SKY_CARD_VEC4][4]; float L; int bin[4]; } skyCard_t;	// bin: az0, az1 (may pass the end), z0, z1
+	static skyCard_t cards[SKY_MAX_CARDS];
+	static uint32_t counts[SKY_BINS], first[SKY_BINS];
+	const float G = 1250.0f, H = 1500.0f, time = fr->water[0];
+	const float wind[2] = { fr->clouds2[0] * time, fr->clouds2[1] * time };
+	vec3_t sun;
+	int n = 0;
+
+	VectorNormalize2( fr->sunDir, sun );
+	const int x0 = (int)floorf( ( wind[0] - 7000.0f ) / G ) - 1, x1 = (int)floorf( ( wind[0] + 7000.0f ) / G ) + 1;
+	const int y0 = (int)floorf( ( wind[1] - 7000.0f ) / G ) - 1, y1 = (int)floorf( ( wind[1] + 7000.0f ) / G ) + 1;
+	for ( int cy = y0; cy <= y1; cy++ )
+		for ( int cx = x0; cx <= x1; cx++ ) {
+			float h[4], h2[4], hx[4];
+			Scene_Hash4( cx, cy, 11, hx );
+			const float tt = time / 100.0f + hx[0];
+			const int gen = (int)floorf( tt );
+			Scene_Hash4( cx * 7 + gen, cy * 13 - gen, 23, h );
+			if ( h[3] > fr->w3clouds[3] )
+				continue;
+			Scene_Hash4( cx, cy, gen + 101, h2 );
+			const vec3_t C = { ( (float)cx + 0.15f + 0.7f * h[0] ) * G - wind[0], ( (float)cy + 0.15f + 0.7f * h[1] ) * G - wind[1], H };
+			const float R = sqrtf( C[0] * C[0] + C[1] * C[1] );
+			if ( R < 1000.0f || R > 7000.0f )
+				continue;
+			if ( n >= SKY_MAX_CARDS )
+				return qfalse;
+			skyCard_t *k = &cards[n++];
+			const float size = 200.0f + 100.0f * h[2];
+			const float L = VectorLength( C );
+			vec3_t cd, right, up;
+			VectorScale( C, 1.0f / L, cd );
+			VectorSet( right, cd[1], -cd[0], 0.0f );
+			VectorNormalize( right );
+			CrossProduct( right, cd, up );
+			k->L = L;
+			VectorCopy( C, k->v[0] ); k->v[0][3] = L;
+			VectorCopy( cd, k->v[1] ); k->v[1][3] = size;
+			VectorCopy( right, k->v[2] ); k->v[2][3] = Com_Clamp( 0.0f, 1.0f, -DotProduct( sun, cd ) );	// mu
+			VectorCopy( up, k->v[3] ); k->v[3][3] = Scene_W3SpriteLife( tt - floorf( tt ) );
+			k->v[4][0] = (float)cx; k->v[4][1] = (float)cy;
+			k->v[4][2] = (float)(int)( 0.1f + ( 15.9f - 0.1f ) * h2[0] );	// the atlas frame
+			k->v[4][3] = h2[1] < 0.5f ? 1.0f : 0.0f;							// 1: u runs with q.x
+			// the directions its quad covers: azimuth and d.z over its corners and edge midpoints
+			float azMin = 1e9f, azMax = -1e9f, zMin = 1e9f, zMax = -1e9f, az0 = 0.0f;
+			for ( int e = 0; e < 8; e++ ) {
+				static const float ea[8] = { -1, 0, 1, 1, 1, 0, -1, -1 }, eb[8] = { -1, -1, -1, 0, 1, 1, 1, 0 };
+				vec3_t P;
+				VectorMA( C, ea[e] * size, right, P );
+				VectorMA( P, eb[e] * 0.5f * size, up, P );
+				VectorNormalize( P );
+				float az = atan2f( P[1], P[0] );
+				if ( e == 0 )
+					az0 = az;
+				else if ( az - az0 > M_PI )	// (one side of the wrap)
+					az -= 2.0f * M_PI;
+				else if ( az0 - az > M_PI )
+					az += 2.0f * M_PI;
+				azMin = MIN( azMin, az ); azMax = MAX( azMax, az );
+				zMin = MIN( zMin, P[2] ); zMax = MAX( zMax, P[2] );
+			}
+			k->bin[0] = (int)floorf( ( azMin / ( 2.0f * M_PI ) + 0.5f ) * SKY_BINS_AZ ) - 1;
+			k->bin[1] = (int)floorf( ( azMax / ( 2.0f * M_PI ) + 0.5f ) * SKY_BINS_AZ ) + 1;
+			k->bin[2] = MAX( (int)floorf( ( zMin - 0.02f ) / 0.98f * SKY_BINS_Z ) - 1, 0 );
+			k->bin[3] = MIN( (int)floorf( ( zMax - 0.02f ) / 0.98f * SKY_BINS_Z ) + 1, SKY_BINS_Z - 1 );
+		}
+	// far to near (insertion sort: a few hundred at most)
+	for ( int i = 1; i < n; i++ ) {
+		const skyCard_t t = cards[i];
+		int j = i - 1;
+		while ( j >= 0 && cards[j].L < t.L ) {
+			cards[j + 1] = cards[j];
+			j--;
+		}
+		cards[j + 1] = t;
+	}
+	uint32_t *head = (uint32_t *)buf, *bins = (uint32_t *)( buf + 16 );
+	uint32_t *refs = (uint32_t *)( buf + 16 + SKY_BINS * 8 + SKY_MAX_CARDS * SKY_CARD_VEC4 * 16 );
+	float *out = (float *)( buf + 16 + SKY_BINS * 8 );
+	Com_Memset( counts, 0, sizeof( counts ) );
+	uint32_t total = 0;
+	for ( int i = 0; i < n; i++ )
+		for ( int z = cards[i].bin[2]; z <= cards[i].bin[3]; z++ )
+			for ( int a = cards[i].bin[0]; a <= cards[i].bin[1]; a++ ) {
+				counts[z * SKY_BINS_AZ + ( ( a % SKY_BINS_AZ ) + SKY_BINS_AZ ) % SKY_BINS_AZ]++;
+				total++;
+			}
+	if ( total > SKY_MAX_REFS )
+		return qfalse;
+	uint32_t at = 0;
+	for ( int b = 0; b < SKY_BINS; b++ ) {
+		first[b] = at;
+		bins[b * 2] = at;
+		bins[b * 2 + 1] = counts[b];
+		at += counts[b];
+	}
+	for ( int i = 0; i < n; i++ ) {
+		Com_Memcpy( out + i * SKY_CARD_VEC4 * 4, cards[i].v, sizeof( cards[i].v ) );
+		for ( int z = cards[i].bin[2]; z <= cards[i].bin[3]; z++ )
+			for ( int a = cards[i].bin[0]; a <= cards[i].bin[1]; a++ ) {
+				const int b = z * SKY_BINS_AZ + ( ( a % SKY_BINS_AZ ) + SKY_BINS_AZ ) % SKY_BINS_AZ;
+				refs[first[b]++] = (uint32_t)i;
+			}
+	}
+	head[0] = (uint32_t)n;
+	head[1] = 1u;
+	head[2] = total;
+	head[3] = 0u;
+	return qtrue;
+}
+
 void R_SceneVkBeginFrame( void )
 {
 	const int f = vk.cmd_index;
@@ -8539,7 +8704,9 @@ void R_SceneVkBeginFrame( void )
 		r_simWindMs[1] = sinf( yaw ) * ms;
 		r_simWindMs[2] = 0.0f;
 	}
-	fr->water[0] = (float)( ( (uint32_t)sc.signalTime % 86400000u ) * 0.001 );	// the game's clock (a replayed frame repeats), a day round (an hour made every effect jump at once; 8 ms steps at its end)
+	fr->water[0] = (float)( ( (uint32_t)sc.signalTime % 86400000u ) * 0.001 );
+	if ( r_sceneSkyTime->value >= 0.0f )	// (r_sceneSkyTime: the clouds' and water's clock pinned, frame-identical comparisons)
+		fr->water[0] = r_sceneSkyTime->value;	// the game's clock (a replayed frame repeats), a day round (an hour made every effect jump at once; 8 ms steps at its end)
 	fr->water[1] = sc.waterLo;
 	fr->water[2] = sc.waterHi;
 	fr->water[3] = MAX( r_sceneWaterRipple->value, 0.0f );
@@ -8640,7 +8807,8 @@ void R_SceneVkBeginFrame( void )
 	fr->cards[1] = fr->cards[2] = fr->cards[3] = 0.0f;
 	Com_Memset( fr->w3clouds, 0, sizeof( fr->w3clouds ) );
 	Com_Memset( fr->w3clouds2, 0, sizeof( fr->w3clouds2 ) );
-	fr->w3clouds2[0] = Com_Clamp( 0.0f, 1.0f, Env( r_sceneW3CirrusAlong )->value );	// The Witcher 3's clouds: empty or their images missing, off
+	fr->w3clouds2[0] = Com_Clamp( 0.0f, 1.0f, Env( r_sceneW3CirrusAlong )->value );
+	fr->w3clouds2[1] = r_sceneSkyCuts->integer ? 1.0f : 0.0f;	// r_sceneSkyCuts	// The Witcher 3's clouds: empty or their images missing, off
 	if ( sc.skyOn && sceneW3CloudImages[0] && Env( r_sceneW3Clouds )->string[0] ) {
 		fr->w3clouds[1] = fr->w3clouds[2] = fr->w3clouds[3] = 1.0f;
 		sscanf( Env( r_sceneW3Clouds )->string, "%f %f %f %f", &fr->w3clouds[0], &fr->w3clouds[1], &fr->w3clouds[2], &fr->w3clouds[3] );
@@ -8697,6 +8865,10 @@ void R_SceneVkBeginFrame( void )
 		// cascade is kept (its blend into the far one is measured from the eye)
 		fr->sunTexel[3] = floorf( MAX( r_shadowCascadeZFar->value, vk_scene_shadow_far() ) ) + ( vk_sun_shadow_kept( 1 ) ? 0.5f : 0.0f );
 	}
+	// r_sceneSkyCards: the cumulus cards found and binned here (after the sun and the clock); off, too many or no
+	// clouds: the shader searches its cells itself
+	fr->w3clouds2[2] = ( r_sceneSkyCards->integer && fr->w3clouds[0] > 0.0f && fr->w3clouds[3] > 0.0f && sc.skyCardsPtr[f]
+		&& Scene_SkyCardsFrame( (byte *)sc.skyCardsPtr[f], fr ) ) ? 1.0f : 0.0f;
 
 	VkCommandBuffer cb = vk.cmd->command_buffer;
 	const VkDeviceSize cmdBytes = (VkDeviceSize)sc.numCmds * sizeof( VkDrawIndexedIndirectCommand );
@@ -10324,6 +10496,9 @@ void R_SceneRegister( void )
 	r_sceneBounce		= ri.Cvar_Get( "r_sceneBounce",			"0",					CVAR_ARCHIVE_ND, "Render scene: screen-space bounce light: r_sceneAO's hidden samples bring back the light the frame shows there, times the surface's colour, after the occlusion (ShaderInjector's SSGI bounce light); its strength (0 off; needs r_sceneAO). A look value (.xenv)" );
 	r_sceneSsrGlossy	= ri.Cvar_Get( "r_sceneSsrGlossy",		"0",					CVAR_ARCHIVE_ND, "Render scene: \"share roughness\": screen-space reflections on dry glossy surfaces too, traced at that roughness (GGX importance sampled, one ray a texel, settled over frames), over the probes' reflection where a ray hits, fading out toward that roughness (ShaderInjector's stochastic SSR); 0 off. A look value (.xenv)" );
 	r_sceneExactSkips	= ri.Cvar_Get( "r_sceneExactSkips",	"1",					0, "Render scene: reads that weigh 0 skipped (terrain layers its slope blend leaves out, the near-reach shadow lookup on a fully shadowed point, the W3 fog nearer than it appears): the same image, less work; 0 every read (A/B)" );
+	r_sceneSkyCuts		= ri.Cvar_Get( "r_sceneSkyCuts",		"1",					0, "Render scene, r_sceneW3Clouds: the sky's work that changes nothing skipped (the sprites' cells whose cards all lie outside their ring, a card's frame hashed only where it is hit, the cirrus' fog where it is clear): the same image, less work; 0 all of it (A/B)" );
+	r_sceneSkyTime		= ri.Cvar_Get( "r_sceneSkyTime",		"-1",					0, "Render scene: the clouds' and water's clock pinned at this many seconds (frame-identical comparisons); negative: the game's" );
+	r_sceneSkyCards		= ri.Cvar_Get( "r_sceneSkyCards",		"1",					0, "Render scene, r_sceneW3Clouds: the cumulus cards found once a frame and binned by direction, instead of every sky pixel searching nine cells of their grid: the same image, less work; 0 the search (A/B)" );
 	r_sceneToneAdjust	= ri.Cvar_Get( "r_sceneToneAdjust",		"0 1",					CVAR_ARCHIVE_ND, "Render scene: \"EV gamma\": the light after exposure scaled by 2^EV and raised to 1 / gamma before the tone curve (ShaderInjector's AdjustImage: -0.45 1.15; gamma over 1 lifts the midtones; the meter and the reflections take it back out). A look value (.xenv)" );
 	r_scenePleRadiance	= ri.Cvar_Get( "r_scenePleRadiance",	"0",					CVAR_ARCHIVE_ND, "Render scene: an FF7 Rebirth probe's reflected light as its deconvolved spherical harmonics blurred by roughness, with its dominant light's occlusion and highlight (ShaderInjector's SampleGI), in place of its irradiance along the mirrored ray; the share (0 off). A look value (.xenv)" );
 	r_sceneCameraFill	= ri.Cvar_Get( "r_sceneCameraFill",		"0",					CVAR_ARCHIVE_ND, "Render scene: the ambient light again from the eye, full within 5 m, by the inverse square past it, on what faces the eye (ShaderInjector's camera ambient light); its brightness (0 off). A look value (.xenv)" );

@@ -251,6 +251,11 @@ layout(set = 2, binding = 0) uniform sampler2D normalTex;
 layout(set = 3, binding = 0) uniform sampler2D ormTex;
 layout(set = 4, binding = 0) uniform sampler2DArrayShadow sunShadowTex;	// layers 0..2: the cascades
 layout(set = 5, binding = 0) uniform sampler2D detailTex;	// a multilayered material's main layer, tiled (white: none)
+// r_sceneSkyCards (vk_scene.cpp Scene_SkyCardsFrame): the cumulus cards this frame, binned by direction (azimuth x d.z
+// from 0.02): each bin's first reference and count; five vec4s a card
+#define SKY_BINS_AZ	128
+#define SKY_BINS_Z	64
+layout(std430, set = 0, binding = 34) readonly buffer SkyCards { uvec4 skyHead; uvec2 skyBins[SKY_BINS_AZ * SKY_BINS_Z]; vec4 skyCard[256 * 5]; uint skyRefs[]; };
 #define ALBEDO_TEX	albedoTex
 #define NORMAL_TEX	normalTex
 #define ORM_TEX		ormTex
@@ -1486,7 +1491,7 @@ vec4 w3Clouds( const vec3 d )
 		const float fadeAlong = 1.0 - clamp( fr.w3clouds2.x, 0.0, 1.0 ) * along * along * along * along;
 		const float alpha = clamp( clamp( 5.0 * cover, 0.0, 1.0 ) * a, 0.0, 1.0 ) * fr.w3clouds.y * fadeAlong;	// alpha_contrast 5
 		vec3 col = light * lit * 0.25;
-		if ( fr.w3fog.x > 0.0 )
+		if ( fr.w3fog.x > 0.0 && ( alpha > 0.0 || fr.w3clouds2.y <= 0.5 ) )	// (r_sceneSkyCuts: none where it is clear)
 			col = w3SkyFogAt( col, d, t );
 		acc = vec4( col * alpha, alpha );
 	}
@@ -1526,18 +1531,59 @@ vec4 w3Clouds( const vec3 d )
 		const vec2 wind = fr.clouds2.xy * time;
 		const vec2 F = d.xy * ( H / d.z ) + wind;	// the ray's point on the plane, in the drifting field
 		const ivec2 c0 = ivec2( floor( F / G ) );
+		if ( fr.w3clouds2.z > 0.5 ) {	// r_sceneSkyCards: the cards binned toward d (vk_scene.cpp Scene_SkyCardsFrame), far to near
+			const int ba = clamp( int( floor( ( atan( d.y, d.x ) / 6.2831853 + 0.5 ) * float( SKY_BINS_AZ ) ) ), 0, SKY_BINS_AZ - 1 );
+			const int bz = clamp( int( floor( ( d.z - 0.02 ) / 0.98 * float( SKY_BINS_Z ) ) ), 0, SKY_BINS_Z - 1 );
+			const uvec2 bin = skyBins[bz * SKY_BINS_AZ + ba];
+			for ( uint r = 0u; r < bin.y; r++ ) {
+				const int k = int( skyRefs[bin.x + r] ) * 5;
+				const vec4 e4 = skyCard[k + 4];	// its cell, atlas frame, 1 when u runs with q.x
+				if ( any( greaterThan( abs( ivec2( e4.xy ) - c0 ), ivec2( 1 ) ) ) )	// (beyond this pixel's own search)
+					continue;
+				const vec4 e0 = skyCard[k], e1 = skyCard[k + 1];	// C and L; cd and its size
+				const float den = dot( d, e1.xyz );
+				if ( den <= 0.0 )
+					continue;
+				const vec4 e2 = skyCard[k + 2], e3 = skyCard[k + 3];	// right and mu; up and its life's alpha
+				const float L = e0.w, size = e1.w;
+				const vec3 P = d * ( L / den ) - e0.xyz;
+				const vec2 q = vec2( dot( P, e2.xyz ) / ( 2.0 * size ), dot( P, e3.xyz ) / size );
+				if ( abs( q.x ) >= 0.5 || abs( q.y ) >= 0.5 )
+					continue;
+				const float u = e4.w > 0.5 ? q.x + 0.5 : 0.5 - q.x, v = 0.5 - q.y;
+				const int frame = int( e4.z );
+				const vec2 at = ( vec2( frame & 3, frame >> 2 ) + vec2( u, v ) ) * 0.25;
+				const vec2 t2 = textureLod( normalTex, at, log2( max( 512.0 * pix * L / ( 2.0 * size ), 1e-3 ) ) ).rg;
+				const float Cn = textureLod( ormTex, vec2( fract( u - 0.004 * time ) * 0.25, v ),
+											 log2( max( 256.0 * pix * L / ( 2.0 * size ), 1e-3 ) ) ).b;
+				const vec2 m = w3CloudMat( t2.r, t2.g, Cn, v, e3.w, e2.w, 2.0, 1.0, 0.5 );
+				if ( m.y <= 0.0 )
+					continue;
+				vec3 c = light * m.x;
+				if ( fr.w3fog.x > 0.0 )
+					c = w3SkyFogAt( c, d, L / den );
+				acc = acc * ( 1.0 - m.y ) + vec4( c * m.y, m.y );
+			}
+			return acc;
+		}
 		float dist[9];
 		vec4 col[9];
 		int n = 0;
 		for ( int j = -1; j <= 1; j++ )
 			for ( int i = -1; i <= 1; i++ ) {
 				const ivec2 cell = c0 + ivec2( i, j );
+				if ( fr.w3clouds2.y > 0.5 ) {	// r_sceneSkyCuts: a cell whose whole box of card centres lies outside the
+												// ring (1 to 7 km, a metre's margin) holds none: skipped before its hashes
+					const vec2 lo = ( vec2( cell ) + 0.15 ) * G - wind, hi = ( vec2( cell ) + 0.85 ) * G - wind;
+					if ( length( clamp( vec2( 0.0 ), lo, hi ) ) > 7001.0 || length( max( abs( lo ), abs( hi ) ) ) < 999.0 )
+						continue;
+				}
 				const float tt = time / 100.0 + hash4( ivec3( cell, 11 ) ).x;
 				const int gen = int( floor( tt ) );
 				const vec4 h = hash4( ivec3( cell.x * 7 + gen, cell.y * 13 - gen, 23 ) );
 				if ( h.w > fr.w3clouds.w )
 					continue;
-				const vec4 h2 = hash4( ivec3( cell, gen + 101 ) );
+				vec4 h2 = fr.w3clouds2.y > 0.5 ? vec4( 0.0 ) : hash4( ivec3( cell, gen + 101 ) );	// (r_sceneSkyCuts: once it is hit)
 				const vec3 C = vec3( ( vec2( cell ) + 0.15 + 0.7 * h.xy ) * G - wind, H );
 				const float R = length( C.xy );
 				if ( R < 1000.0 || R > 7000.0 )
@@ -1554,6 +1600,8 @@ vec4 w3Clouds( const vec3 d )
 				const vec2 q = vec2( dot( P, right ) / ( 2.0 * size ), dot( P, up ) / size );
 				if ( abs( q.x ) >= 0.5 || abs( q.y ) >= 0.5 )
 					continue;
+				if ( fr.w3clouds2.y > 0.5 )
+					h2 = hash4( ivec3( cell, gen + 101 ) );
 				const float u = h2.y < 0.5 ? q.x + 0.5 : 0.5 - q.x, v = 0.5 - q.y;
 				const int frame = int( mix( 0.1, 15.9, h2.x ) );
 				const vec2 at = ( vec2( frame & 3, frame >> 2 ) + vec2( u, v ) ) * 0.25;

@@ -392,6 +392,8 @@ typedef struct {
 	void			*receiversPtr[NUM_COMMAND_BUFFERS];
 	sceneBuffer_t	wind[NUM_COMMAND_BUFFERS];			// r_sceneTreeWind: the header, then each SpeedTree's wind constants this frame
 	void			*windPtr[NUM_COMMAND_BUFFERS];		// (draw set binding 30, scene.vert; SCENE_WIND_VEC4 vec4s each)
+	sceneBuffer_t	skyCards[NUM_COMMAND_BUFFERS];		// r_sceneSkyCards: The Witcher 3's cumulus cards this frame, binned by
+	void			*skyCardsPtr[NUM_COMMAND_BUFFERS];	// direction (draw set binding 34, scene.frag w3Clouds; Scene_SkyCardsFrame)
 	sceneBuffer_t	indirect[NUM_COMMAND_BUFFERS][SCENE_MAX_VIEWS];
 	sceneBuffer_t	visible[NUM_COMMAND_BUFFERS][SCENE_MAX_VIEWS];	// [f][0]: the slot's visible pool, every view's (the others unused)
 	// the count-then-scan cull (scene_scatter.comp): per slot the pairs and touched LODs (header first), its header read
