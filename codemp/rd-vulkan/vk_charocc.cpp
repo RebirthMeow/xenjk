@@ -24,6 +24,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // shader's lookups (gen_frag.tmpl).
 
 #include "tr_local.h"
+#include <vector>
 
 /*
 =============
@@ -302,18 +303,29 @@ qboolean RB_WaterHairBed( void )
 	if ( !surfs || num <= 0 || r_charOccHair->integer <= 0 || !vk.depth.extract.enabled || !vk.depth.extract.framebuffer
 		|| vk.render_pass.char_occluder.handle == VK_NULL_HANDLE || backEnd.viewParms.portalView != PV_NONE )
 		return qfalse;
-	// (any alpha-tested opaque stage of a Ghoul2 model, as RB_RenderDrawSurfList's occluder pass takes)
-	qboolean any = qfalse;
-	for ( int i = 0; i < num && !any; i++ ) {
+	// the alpha-tested opaque stages of Ghoul2 models (as RB_RenderDrawSurfList's occluder pass takes) on models with
+	// flat water beside them, between their feet and a little over their heads; none (the crowded square), no pass
+	static std::vector<drawSurf_t> bed;	// (not "near": a Windows macro)
+	static byte state[MAX_REFENTITIES];	// 0 untested, 1 near water, 2 not
+	Com_Memset( state, 0, sizeof( state ) );
+	bed.clear();
+	for ( int i = 0; i < num; i++ ) {
 		int entityNum, cubemapIndex;
 		shader_t *shader;
 		R_DecomposeSort( surfs[i].sort, &entityNum, &shader, &cubemapIndex );
-		if ( entityNum != REFENTITYNUM_WORLD && backEnd.refdef.entities[entityNum].e.ghoul2
-			&& !( backEnd.refdef.entities[entityNum].e.renderfx & ( RF_DEPTHHACK | RF_FIRST_PERSON ) )
-			&& shader->sort == SS_OPAQUE && shader->stages[0] && ( shader->stages[0]->stateBits & GLS_ATEST_BITS ) )
-			any = qtrue;
+		if ( entityNum == REFENTITYNUM_WORLD || entityNum >= MAX_REFENTITIES || state[entityNum] == 2 )
+			continue;
+		if ( shader->sort != SS_OPAQUE || !shader->stages[0] || !( shader->stages[0]->stateBits & GLS_ATEST_BITS ) )
+			continue;
+		if ( !state[entityNum] ) {
+			const refEntity_t *e = &backEnd.refdef.entities[entityNum].e;
+			state[entityNum] = e->ghoul2 && !( e->renderfx & ( RF_DEPTHHACK | RF_FIRST_PERSON ) ) && R_SceneWaterNear( e->origin ) ? 1 : 2;
+			if ( state[entityNum] == 2 )
+				continue;
+		}
+		bed.push_back( surfs[i] );
 	}
-	if ( !any )
+	if ( bed.empty() )
 		return qfalse;
 
 	vk_gputime_next_label( "water hair bed" );
@@ -333,7 +345,7 @@ qboolean RB_WaterHairBed( void )
 	}
 	backEnd.isCharOccluderPass = qtrue;
 	vk_restore_draw_state( qfalse );
-	RB_RenderDrawSurfList( surfs, num );
+	RB_RenderDrawSurfList( bed.data(), (int)bed.size() );
 	backEnd.isCharOccluderPass = qfalse;
 	vk_end_render_pass();
 	vk.renderPassIndex = RENDER_PASS_MAIN;
